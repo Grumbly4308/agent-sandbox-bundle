@@ -1,0 +1,116 @@
+# SANDBOX_NAME keeps container and network names unique, so several copies of
+# this bundle (one per project) can run side by side without colliding.
+name: ${SANDBOX_NAME:-agent-sandbox}
+
+services:
+  # The only thing on this compose file with a route to the internet.
+  egress-proxy:
+    build: ./proxy
+    container_name: ${SANDBOX_NAME:-agent-sandbox}-egress-proxy
+    restart: unless-stopped
+    volumes:
+      - ./proxy/allowlist.txt:/etc/squid/allowlist.txt:ro
+    networks: [egress, internet]
+
+    # Start AS the squid user rather than starting as root and calling
+    # setuid() at runtime. Squid opens its logs (/dev/stdout, /dev/stderr)
+    # AFTER dropping privileges, and those streams belong to the identity the
+    # container started with — so a root->squid drop makes squid unable to
+    # open its own log and it dies with:
+    #   FATAL: Cannot open '/dev/stdout' for writing.
+    # Starting as squid means there is no privilege drop and no mismatch.
+    user: "squid:squid"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    pids_limit: 64
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "3128"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  agent:
+    build:
+      context: ./agent
+      args:
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
+        AGENT_CLI: ${AGENT_CLI:-@anthropic-ai/claude-code}
+    depends_on:
+      egress-proxy:
+        condition: service_healthy
+
+    # --- Identity -----------------------------------------------------------
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+
+    # --- Filesystem ---------------------------------------------------------
+    read_only: true                 # / is immutable; nothing survives exit
+    tmpfs:
+      # No uid=/gid= here. Docker accepts them; Podman's --tmpfs parser takes
+      # only a subset of options and rejects them outright:
+      #     Error: unknown mount option "uid=1000": invalid mount option
+      # Without an owner the tmpfs belongs to root, so the mode has to let the
+      # agent write to its own $HOME. 0777 is fine on a per-container tmpfs
+      # that exists for one user and is destroyed on exit.
+      - /tmp:mode=1777,size=1g
+      - /home/agent:mode=0777,size=1g
+    volumes:
+      # workspace/ is a full, self-contained CLONE, not a linked git worktree.
+      # A worktree's .git is a file pointing at project/.git/worktrees/<name>,
+      # and project/ is never mounted here — git inside the container would
+      # fail with "not a git repository".
+      - ./workspace:/workspace/repo        # the ONE folder of yours it sees
+      - ./profile:/opt/profile:ro          # defaults it can read, never edit
+      - ./logs:/logs                       # audit trail, written outside
+      - ./secrets:/run/secrets:ro          # deploy key, if you use one
+      - ./auth:/run/auth                   # saved agent login (rw — see below)
+
+    # --- Privileges ---------------------------------------------------------
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      # Uncomment after running ./scripts/make-seccomp.sh (Part 12):
+      # - seccomp=./agent-seccomp.json
+
+    # --- Resources ----------------------------------------------------------
+    pids_limit: 512
+    mem_limit: ${AGENT_MEMORY:-4g}
+    cpus: ${AGENT_CPUS:-2}
+
+    # --- Network ------------------------------------------------------------
+    # `egress` is internal: there is no default route. The proxy env vars below
+    # are the only way out, and the proxy only speaks to allowlist.txt.
+    networks: [egress]
+    environment:
+      HTTP_PROXY: http://egress-proxy:3128
+      HTTPS_PROXY: http://egress-proxy:3128
+      http_proxy: http://egress-proxy:3128    # lowercase too: curl, pip, git
+      https_proxy: http://egress-proxy:3128
+      NO_PROXY: localhost,127.0.0.1
+      no_proxy: localhost,127.0.0.1
+
+      PROFILE_DIR: /opt/profile
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Set by `./sandbox login`; makes the entrypoint save the session back to
+      # auth/ on exit. Unset for normal runs: the login is read, never rewritten.
+      SANDBOX_PERSIST_AUTH: ${SANDBOX_PERSIST_AUTH:-}
+      # Optional: a long-lived token instead of an interactive login.
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+
+      GIT_TOKEN: ${GIT_TOKEN:-}
+      GIT_AUTHOR_NAME: ${GIT_AUTHOR_NAME:-agent}
+      GIT_AUTHOR_EMAIL: ${GIT_AUTHOR_EMAIL:-agent@sandbox.local}
+      # Self-hosted git over SSH on a non-standard port (see docs/06).
+      GIT_SSH_HOST: ${GIT_SSH_HOST:-}
+      GIT_SSH_PORT: ${GIT_SSH_PORT:-443}
+
+    stdin_open: true
+    tty: true
+
+networks:
+  egress:
+    internal: true      # no route to the internet, at all
+  internet: {}          # only the proxy is attached to this

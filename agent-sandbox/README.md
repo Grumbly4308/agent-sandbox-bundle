@@ -1,0 +1,86 @@
+# agent-sandbox
+
+A disposable, network-restricted container to run an AI coding agent in.
+
+**New here? Read [`../README.md`](../README.md) instead** — it is a step-by-step
+setup guide starting from a fresh VM. This file is the reference for what each
+piece in this directory is.
+
+```bash
+./sandbox init git@github.com:you/project.git
+./sandbox login                   # log in once — or put a key in .env
+./sandbox new fix-login           # fresh clone on branch agent/fix-login
+./sandbox verify                  # confirm the walls are actually there
+./sandbox go                      # start the agent
+./sandbox review                  # diff + attribution check + secret scan, on the host
+./sandbox push                    # push from YOUR environment
+./sandbox pr                      # ...or push and open the PR / MR
+./sandbox destroy                 # burn it down
+```
+
+Self-hosted git on a non-standard SSH port needs the `ssh://` form —
+`ssh://git@host:2222/group/repo.git`. `init` rewrites the scp-style version and
+tells you it did.
+
+Full explanation: `../sandboxing-ai-coding-agent.md`.
+Something broken: `./sandbox doctor`, then `../docs/08-troubleshooting.md`.
+
+## What's here
+
+| Path | What it is |
+| --- | --- |
+| `sandbox` | The CLI. Every command you need. |
+| `docker-compose.yml` | Two services: the locked-down agent, and the egress proxy. |
+| `docker-compose.podman.yml` | Applied on top when `SANDBOX_RUNTIME=podman`. |
+| `agent/` | The agent image and the entrypoint that rebuilds `$HOME` from `profile/`. |
+| `proxy/` | A stock Squid configured as a default-deny allowlist. No third-party image. |
+| `profile/` | **Your defaults, version-controlled.** Survives every sandbox regeneration. |
+| `scripts/verify.sh` | Self-test: read-only rootfs, dropped caps, blocked egress, mounts. |
+| `scripts/make-seccomp.sh` | Optional Layer 4 — a tightened seccomp profile. |
+| `project/` | The canonical clone. Never mounted into the container. |
+| `workspace/` | A clone of `project/` that **is** mounted. The only host dir the agent sees. |
+| `auth/` | A saved agent login, if you use one. `chmod 700`, gitignored. |
+| `secrets/` | A deploy key, if you use one. Mounted read-only. |
+
+## The profile
+
+`profile/` is the answer to "I don't want to re-configure this every time."
+It is mounted **read-only** at `/opt/profile`, and the entrypoint copies it
+into the container's ephemeral `$HOME` at every start:
+
+| Profile file | Becomes | Purpose |
+| --- | --- | --- |
+| `claude/settings.json` | `~/.claude/settings.json` | Permission allow/ask/deny lists, attribution, hooks |
+| `claude/CLAUDE.md` | `~/.claude/CLAUDE.md` | Standing instructions for the agent |
+| `bin/*` | `~/.local/bin/*` | Custom commands on `PATH` (e.g. `qa`) |
+| `shellrc.sh` | `~/.bashrc` | Aliases, prompt, env |
+| `setup.sh` | runs at start | Per-session bootstrap (`npm ci`, venv, …) |
+
+Read-only is the point: the agent uses its own permission rules but cannot
+rewrite them. Commit `profile/` to git and changes to it become reviewable
+policy changes rather than undocumented local drift.
+
+Shipped defaults worth knowing about: `attribution.commit` and `attribution.pr`
+are empty strings, and `CLAUDE.md` forbids `Co-Authored-By` and every other AI
+trailer — the tool is a tool, you are the author. `./sandbox verify` checks both
+are in place and `./sandbox review` greps outgoing commits for them.
+
+## Several projects
+
+One repo per bundle. Copy the directory per project and let `init` set a
+distinct `SANDBOX_NAME` in each `.env` — that is what keeps two projects from
+sharing one egress proxy. See `../docs/09-multiple-projects.md`.
+
+## Podman
+
+Set `SANDBOX_RUNTIME=podman` in `.env` and everything else stays the same.
+Rootless Podman has no root daemon, so a container escape lands in your own
+unprivileged account rather than on the host as root. See
+`../docs/11-podman.md` for the two things that differ (user namespaces and
+SELinux labels), both of which the overlay handles.
+
+## Requirements
+
+Docker, or Podman with `podman-compose`, and git. Optionally `gitleaks` on the host for
+`./sandbox review`, `gh`/`glab` for `./sandbox pr`, and `jq` for
+`make-seccomp.sh`.

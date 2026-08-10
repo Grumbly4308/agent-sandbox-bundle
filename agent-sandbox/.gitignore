@@ -1,0 +1,17 @@
+# Secrets — never commit these.
+.env
+secrets/*
+!secrets/.gitkeep
+
+# A saved agent login is a live credential. Same rules as secrets/.
+auth/
+
+# Per-session state.
+project/
+workspace/
+logs/*
+!logs/.gitkeep
+agent-seccomp.json
+
+# Everything else in this directory IS the artifact: commit it, review it in
+# PRs, and treat changes to profile/ and proxy/allowlist.txt as policy changes.

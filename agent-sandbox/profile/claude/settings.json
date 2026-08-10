@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+
+  "permissions": {
+    "defaultMode": "acceptEdits",
+
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(npm run test:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npm run build:*)",
+      "Bash(pytest:*)",
+      "Bash(ruff:*)",
+      "Bash(make test:*)",
+      "Bash(qa:*)",
+      "Read(//workspace/repo/**)",
+      "Edit(//workspace/repo/**)",
+      "Write(//workspace/repo/**)"
+    ],
+
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(git reset:*)",
+      "Bash(git clean:*)",
+      "Bash(npm install:*)",
+      "Bash(npm ci:*)",
+      "Bash(pip install:*)",
+      "Bash(uv pip install:*)",
+      "WebFetch"
+    ],
+
+    "deny": [
+      "Bash(sudo:*)",
+      "Bash(su:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(nc:*)",
+      "Bash(ssh:*)",
+      "Bash(chmod 777:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Read(//run/secrets/**)",
+      "Read(//run/auth/**)",
+      "Read(//home/agent/.claude/.credentials.json)",
+      "Read(//home/agent/.ssh/**)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(**/*.pem)",
+      "Read(**/id_rsa*)",
+      "Read(**/id_ed25519*)"
+    ]
+  },
+
+  "env": {
+    "DISABLE_TELEMETRY": "1",
+    "DISABLE_AUTOUPDATER": "1"
+  },
+
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '\"[\\(now|todate)] \\(.tool_input.command)\"' >> /logs/commands.log"
+          }
+        ]
+      }
+    ]
+  }
+}

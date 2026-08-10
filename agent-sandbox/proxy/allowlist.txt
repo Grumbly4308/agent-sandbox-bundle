@@ -1,0 +1,47 @@
+# Egress allowlist. One host per line; `#` comments and blank lines are fine.
+# A leading dot matches the domain and every subdomain beneath it.
+#
+# Edit and apply with:   ./sandbox allow <domain>     (or edit + ./sandbox reload)
+# Everything not listed here is unreachable from the agent container.
+
+# --- Model API --------------------------------------------------------------
+api.anthropic.com
+# statsig.anthropic.com      # uncomment if the CLI's feature-flag calls hang
+
+# --- Claude Code: login, updates and connectors -----------------------------
+# Needed only if you authenticate the CLI interactively (`./sandbox login`) or
+# let it update itself. On an API-key-only setup you can delete this block —
+# every line is a destination data could leave through.
+claude.ai
+claude.com
+code.claude.com
+platform.claude.com
+downloads.claude.ai
+bridge.claudeusercontent.com
+mcp-proxy.anthropic.com
+
+# The CLI's release artifacts are served from Google's object storage. This is
+# a shared bucket host, so it is the loosest entry on this list: anyone can
+# create a bucket there. Comment it out unless you need self-update to work.
+storage.googleapis.com
+
+# Homebrew's formula index — only needed if the agent installs via brew.
+# formulae.brew.sh
+
+# --- Source hosting ---------------------------------------------------------
+# .github.com covers github.com, api.github.com, codeload.github.com and
+# ssh.github.com (the SSH-over-443 endpoint used by deploy keys).
+.github.com
+.githubusercontent.com
+# .gitlab.com covers gitlab.com and altssh.gitlab.com.
+.gitlab.com
+
+# --- Package registries -----------------------------------------------------
+.npmjs.org
+pypi.org
+files.pythonhosted.org
+
+# Add your own below — private registries, internal APIs the tests need, docs
+# sites you want the agent to be able to read. Keep this list boring and short:
+# every entry is a channel a prompt injection could exfiltrate through.
+# `./sandbox init` appends your repo's own host here automatically.

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# The one command the agent is told to run before claiming something works.
+#
+# Point it at whatever your project actually uses. Because it lives in the
+# profile, it is identical in every sandbox you ever regenerate, and because
+# it is a stable name, CLAUDE.md can reference it without knowing your stack.
+set -uo pipefail
+cd /workspace/repo || exit 1
+
+status=0
+run() { echo; echo "── $* ──"; "$@" || status=1; }
+
+if [ -f package.json ]; then
+  jq -e '.scripts.lint'  package.json >/dev/null 2>&1 && run npm run lint
+  jq -e '.scripts.test'  package.json >/dev/null 2>&1 && run npm run test
+  jq -e '.scripts.build' package.json >/dev/null 2>&1 && run npm run build
+fi
+
+if [ -f pyproject.toml ] || [ -f setup.py ] || [ -d tests ]; then
+  command -v ruff   >/dev/null && run ruff check .
+  command -v pytest >/dev/null && run pytest -q
+fi
+
+[ -f Makefile ] && grep -qE '^test:' Makefile && run make test
+
+echo
+[ $status -eq 0 ] && echo "qa: PASS" || echo "qa: FAIL"
+exit $status

@@ -1,0 +1,1023 @@
+#!/usr/bin/env bash
+# sandbox — drive a disposable, network-restricted AI coding agent.
+#
+#   ./sandbox init git@github.com:you/project.git   # one-time, per project
+#   ./sandbox new fix-login                         # fresh clone + branch
+#   ./sandbox go                                    # start the agent
+#   ./sandbox review                                # diff + secret scan (host)
+#   ./sandbox push                                  # push from YOUR env
+#   ./sandbox pr                                    # push + open a PR / MR
+#   ./sandbox destroy                               # burn it down
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+PROJECT_DIR="$ROOT/project"
+WORKTREE_DIR="$ROOT/workspace"
+ALLOWLIST="$ROOT/proxy/allowlist.txt"
+ENV_FILE="$ROOT/.env"
+AUTH_DIR="$ROOT/auth"
+
+bold() { printf '\033[1m%s\033[0m\n' "$*"; }
+info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+
+need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but not installed"; }
+
+# --------------------------------------------------------------------------
+# Container runtime — docker or podman
+#
+# SANDBOX_RUNTIME in .env pins it; otherwise we take whichever is installed,
+# preferring podman because rootless is the stronger default. Podman adds a
+# compose override file (userns + SELinux labels) and an explicit health wait,
+# because `depends_on: condition: service_healthy` is not honoured by every
+# podman-compose implementation.
+# --------------------------------------------------------------------------
+RUNTIME=""
+COMPOSE_ARGS=()
+
+env_get() {
+  [ -f "$ENV_FILE" ] || return 0
+  grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true
+}
+
+env_set() {
+  local k="$1" v="$2"
+  [ -f "$ENV_FILE" ] || return 0
+  if grep -qE "^$k=" "$ENV_FILE"; then
+    # -i.bak works on both GNU and BSD sed; plain -i does not.
+    sed -i.bak "s|^$k=.*|$k=$v|" "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+  else
+    printf '%s=%s\n' "$k" "$v" >> "$ENV_FILE"
+  fi
+}
+
+# --------------------------------------------------------------------------
+# Identity — resolved at run time, not frozen at init time
+#
+# HOST_UID/HOST_GID used to be written into .env once by `init` and then
+# trusted forever. That goes stale the moment the bundle is copied to another
+# machine, another account, or a container with a different uid — and it fails
+# in ways that do not mention uids at all:
+#
+#   install: cannot open '/run/secrets/deploy_key' for reading: Permission denied
+#   files in workspace/ owned by "nobody"
+#
+# So take them from the process actually running the script. They are exported
+# for compose interpolation AND written back to .env, because a bare
+# `docker compose up` reads .env directly, and podman-compose's precedence
+# between the process environment and .env has varied between versions.
+# --------------------------------------------------------------------------
+IDENTITY_RESOLVED=""
+resolve_identity() {
+  [ -z "$IDENTITY_RESOLVED" ] || return 0
+  IDENTITY_RESOLVED=1
+
+  HOST_UID="$(id -u)"
+  HOST_GID="$(id -g)"
+  export HOST_UID HOST_GID
+
+  if [ -f "$ENV_FILE" ]; then
+    local old_uid old_gid
+    old_uid="$(env_get HOST_UID)"
+    old_gid="$(env_get HOST_GID)"
+    if [ "$old_uid" != "$HOST_UID" ] || [ "$old_gid" != "$HOST_GID" ]; then
+      info "identity: ${old_uid:-unset}:${old_gid:-unset} -> $HOST_UID:$HOST_GID ($(id -un)) — updating .env"
+      env_set HOST_UID "$HOST_UID"
+      env_set HOST_GID "$HOST_GID"
+      # The agent user is created at build time from these, so the build args
+      # change and the image layer cache invalidates itself. No action needed.
+      info "the agent image will rebuild on the next run to match"
+    fi
+
+    if [ -z "$(env_get SANDBOX_NAME)" ]; then
+      SANDBOX_NAME="$(basename "$ROOT")"
+      env_set SANDBOX_NAME "$SANDBOX_NAME"
+      info "SANDBOX_NAME was unset; using '$SANDBOX_NAME' (from the directory name)"
+      warn "containers created under the previous default name are now orphans:"
+      warn "    $(basename "${0}") down   # then start again"
+    else
+      SANDBOX_NAME="$(env_get SANDBOX_NAME)"
+    fi
+  else
+    SANDBOX_NAME="$(basename "$ROOT")"
+  fi
+  export SANDBOX_NAME
+}
+
+detect_runtime() {
+  [ -z "$RUNTIME" ] || return 0
+  resolve_identity
+  RUNTIME="${SANDBOX_RUNTIME:-$(env_get SANDBOX_RUNTIME)}"
+  if [ -z "$RUNTIME" ]; then
+    # Podman first: rootless means no root daemon, so a container escape lands
+    # in an unprivileged account rather than on the host as root.
+    if command -v podman >/dev/null 2>&1; then RUNTIME=podman
+    elif command -v docker >/dev/null 2>&1; then RUNTIME=docker
+    else die "neither podman nor docker is installed"
+    fi
+  fi
+  case "$RUNTIME" in
+    docker|podman) ;;
+    *) die "SANDBOX_RUNTIME must be 'docker' or 'podman', got '$RUNTIME'" ;;
+  esac
+  COMPOSE_ARGS=(-f "$ROOT/docker-compose.yml")
+  if [ "$RUNTIME" = podman ]; then
+    COMPOSE_ARGS+=(-f "$ROOT/docker-compose.podman.yml")
+    # keep-id is separable: some podman-compose versions cannot combine a
+    # per-container userns with their shared pod. SANDBOX_USERNS=off skips it.
+    local userns; userns="${SANDBOX_USERNS:-$(env_get SANDBOX_USERNS)}"
+    if [ "$userns" != "off" ]; then
+      COMPOSE_ARGS+=(-f "$ROOT/docker-compose.podman-userns.yml")
+    fi
+  fi
+}
+
+# Which compose implementation to drive Podman with.
+#
+# `podman compose` is only a dispatcher: if the docker-compose plugin is
+# installed it delegates to that, and docker-compose talks to the Podman *API
+# socket* rather than to the podman CLI. If that socket is not running you get
+# a build failure that looks like a Dockerfile problem but is not:
+#
+#   Can't add file .../proxy/Dockerfile to tar: io: read/write on closed pipe
+#   failed to connect to the docker API at unix:///run/user/1000/podman/podman.sock
+#
+# podman-compose (the native Python one) drives the CLI directly and needs no
+# socket, so it is preferred here. Override with SANDBOX_COMPOSE in .env.
+PODMAN_PROVIDER=""
+
+podman_provider() {
+  [ -z "$PODMAN_PROVIDER" ] || return 0
+  PODMAN_PROVIDER="${SANDBOX_COMPOSE:-$(env_get SANDBOX_COMPOSE)}"
+  if [ -z "$PODMAN_PROVIDER" ]; then
+    if command -v podman-compose >/dev/null 2>&1; then
+      PODMAN_PROVIDER="podman-compose"
+    elif podman compose version >/dev/null 2>&1; then
+      PODMAN_PROVIDER="podman compose"
+    else
+      die "podman is installed but no compose provider is.
+  install one:  sudo dnf install podman-compose   (or apt / pacman / pipx)
+  or use the docker-compose plugin via 'podman compose' (needs podman.socket)"
+    fi
+  fi
+}
+
+podman_sock() {
+  printf '%s/podman/podman.sock' "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+}
+
+# Only needed for the socket-based provider.
+ensure_podman_socket() {
+  local sock; sock="$(podman_sock)"
+  if [ -S "$sock" ]; then
+    export DOCKER_HOST="unix://$sock"
+    return 0
+  fi
+
+  info "podman API socket is not running — starting it"
+  if command -v systemctl >/dev/null 2>&1 && systemctl --user start podman.socket 2>/dev/null; then
+    local i
+    for i in 1 2 3 4 5; do
+      [ -S "$sock" ] && { export DOCKER_HOST="unix://$sock"; return 0; }
+      sleep 1
+    done
+  fi
+
+  # No user systemd session (containers, minimal images): run it directly.
+  mkdir -p "$(dirname "$sock")" 2>/dev/null || true
+  nohup podman system service --time=0 "unix://$sock" >/dev/null 2>&1 &
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    [ -S "$sock" ] && { export DOCKER_HOST="unix://$sock"; return 0; }
+    sleep 1
+  done
+
+  die "could not start the podman API socket at $sock. Either:
+  systemctl --user enable --now podman.socket
+  podman system service --time=0 unix://$sock &
+or install podman-compose, which needs no socket at all:
+  sudo dnf install podman-compose      # apt / pacman / pipx also fine"
+}
+
+# podman-compose puts every service into one shared pod, and a pod owns its own
+# user namespace — so a per-container `userns_mode: keep-id` collides with it:
+#
+#   Error: --userns and --pod cannot be set together
+#
+# `--in-pod=false` gives each service its own container instead. The pod bought
+# us nothing here anyway: the isolation comes from the `internal:` network and
+# the container flags, not from co-locating services in a pod.
+PODMAN_EXTRA=()
+podman_compose_extra() {
+  [ "${#PODMAN_EXTRA[@]}" -eq 0 ] || return 0
+  local userns; userns="${SANDBOX_USERNS:-$(env_get SANDBOX_USERNS)}"
+  [ "$userns" = "off" ] && return 0
+  if podman-compose --help 2>&1 | grep -q -- '--in-pod'; then
+    PODMAN_EXTRA=(--in-pod=false)
+  else
+    warn "this podman-compose has no --in-pod flag, so it will put every service"
+    warn "in one pod, which cannot be combined with keep-id. Either upgrade it,"
+    warn "or set SANDBOX_USERNS=off in .env and fix ownership afterwards with:"
+    warn "    podman unshare chown -R 0:0 workspace"
+  fi
+}
+
+dc() {
+  detect_runtime
+  if [ "$RUNTIME" = podman ]; then
+    need podman
+    podman_provider
+    if [ "$PODMAN_PROVIDER" = "podman compose" ]; then
+      ensure_podman_socket
+      podman compose "${COMPOSE_ARGS[@]}" "$@"
+    else
+      podman_compose_extra
+      $PODMAN_PROVIDER "${PODMAN_EXTRA[@]}" "${COMPOSE_ARGS[@]}" "$@"
+    fi
+  else
+    need docker
+    docker compose "${COMPOSE_ARGS[@]}" "$@"
+  fi
+}
+
+# `run --build` is a docker compose convenience; build separately elsewhere.
+dc_run() {
+  detect_runtime
+  if [ "$RUNTIME" = podman ]; then
+    dc build agent >/dev/null
+    dc run --rm "$@"
+  else
+    dc run --rm --build "$@"
+  fi
+}
+
+sandbox_name() {
+  resolve_identity
+  printf '%s' "${SANDBOX_NAME:-agent-sandbox}"
+}
+
+# SELinux relabelling suffix for ad-hoc mounts (podman on Fedora/RHEL).
+mount_ro_opts() {
+  detect_runtime
+  if [ "$RUNTIME" = podman ] && command -v getenforce >/dev/null 2>&1 \
+     && [ "$(getenforce 2>/dev/null)" != "Disabled" ]; then
+    printf 'ro,z'
+  else
+    printf 'ro'
+  fi
+}
+
+# podman-compose does not reliably wait on `condition: service_healthy`, so the
+# agent can start before the proxy is listening and fail its first request.
+wait_proxy() {
+  detect_runtime
+  [ "$RUNTIME" = podman ] || return 0
+  local name; name="$(sandbox_name)-egress-proxy"
+  local i
+  for i in $(seq 1 30); do
+    if podman exec "$name" nc -z 127.0.0.1 3128 >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  warn "egress proxy is not answering on 3128 after 30s — check: ./sandbox logs proxy"
+  return 1
+}
+
+require_init() {
+  [ -d "$PROJECT_DIR/.git" ] || die "no project yet — run: ./sandbox init <repo-url>"
+}
+
+current_branch() {
+  git -C "$WORKTREE_DIR" branch --show-current 2>/dev/null || true
+}
+
+default_branch() {
+  git -C "$PROJECT_DIR" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null \
+    | sed 's|^origin/||' \
+    || echo main
+}
+
+upstream_url() {
+  git -C "$PROJECT_DIR" remote get-url origin 2>/dev/null || true
+}
+
+# --------------------------------------------------------------------------
+# URL handling
+#
+# git's scp-like syntax (user@host:path) has NO port field — everything after
+# the first colon is the PATH. So `git@host:2222/org/repo.git` silently means
+# "connect on port 22, ask for the repo named 2222/org/repo.git", which fails
+# with GitLab's deliberately vague "could not be found or you don't have
+# permission". Only the ssh:// form can carry a port.
+# --------------------------------------------------------------------------
+normalize_repo_url() {
+  local url="$1"
+  if [[ "$url" =~ ^(([^@/:]+)@)?([A-Za-z0-9._-]+):([0-9]+)/(.+)$ ]]; then
+    local user="${BASH_REMATCH[2]:-git}"
+    local host="${BASH_REMATCH[3]}"
+    local port="${BASH_REMATCH[4]}"
+    local path="${BASH_REMATCH[5]}"
+    warn "scp-style URLs cannot carry a port; rewriting to the ssh:// form"
+    warn "  reading '$port' as an SSH port — if it is really the first path"
+    warn "  segment, pass ssh://$user@$host/$port/$path instead"
+    printf 'ssh://%s@%s:%s/%s' "$user" "$host" "$port" "$path"
+    return
+  fi
+  printf '%s' "$url"
+}
+
+url_host() {
+  printf '%s' "$1" | sed -E 's|^[a-z+]+://||; s|^[^@/]*@||; s|[:/].*$||'
+}
+
+url_port() {
+  # ssh://user@host:PORT/path -> PORT, otherwise empty
+  printf '%s' "$1" | sed -nE 's|^[a-z+]+://[^@/]*@?[A-Za-z0-9._-]+:([0-9]+)/.*$|\1|p'
+}
+
+# --------------------------------------------------------------------------
+# init — clone the repo, wire the allowlist, write .env
+# --------------------------------------------------------------------------
+cmd_init() {
+  local raw="${1:-}"
+  [ -n "$raw" ] || die "usage: ./sandbox init <repo-url>"
+  need git
+
+  local url; url="$(normalize_repo_url "$raw")"
+  [ "$url" = "$raw" ] || info "using $url"
+
+  mkdir -p "$ROOT/logs" "$ROOT/secrets" "$AUTH_DIR"
+  chmod 700 "$AUTH_DIR"
+  touch "$ROOT/secrets/.gitkeep"
+
+  if [ -d "$PROJECT_DIR/.git" ]; then
+    info "project already cloned; fetching"
+    git -C "$PROJECT_DIR" remote set-url origin "$url"
+    git -C "$PROJECT_DIR" fetch --all --prune
+  else
+    info "cloning $url"
+    git clone "$url" "$PROJECT_DIR"
+  fi
+
+  # Make sure the repo's own host can be reached from inside the sandbox.
+  local host; host="$(url_host "$url")"
+  if [ -n "$host" ] && ! grep -qF "$host" "$ALLOWLIST"; then
+    info "allowlisting $host"
+    printf '\n# added by ./sandbox init\n.%s\n' "${host#www.}" >> "$ALLOWLIST"
+  fi
+
+  if [ ! -f "$ENV_FILE" ]; then
+    info "writing .env (fill in your tokens)"
+    sed -e "s/^HOST_UID=.*/HOST_UID=$(id -u)/" \
+        -e "s/^HOST_GID=.*/HOST_GID=$(id -g)/" \
+        -e "s|^SANDBOX_NAME=.*|SANDBOX_NAME=$(basename "$ROOT")|" \
+        "$ROOT/.env.example" > "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+  fi
+
+  # A non-standard SSH port needs a CONNECT carve-out in the proxy before the
+  # agent can use a deploy key against this host. Say so now, not at push time.
+  local port; port="$(url_port "$url")"
+  if [ -n "$port" ] && [ "$port" != "22" ] && [ "$port" != "443" ]; then
+    echo
+    warn "this remote uses SSH port $port"
+    warn "if you plan to give the agent a deploy key, set in .env:"
+    warn "    GIT_SSH_HOST=$host"
+    warn "    GIT_SSH_PORT=$port"
+    warn "and add '$port' to the SSH_ports ACL in proxy/squid.conf (see docs/06)."
+    warn "If you push from the host with ./sandbox push, ignore this."
+  fi
+
+  echo
+  bold "Next:"
+  echo "  1. Authenticate the agent, once:"
+  echo "       ./sandbox login                    # OAuth, saved in auth/"
+  echo "     or put a key in .env  (ANTHROPIC_API_KEY)"
+  echo "  2. ./sandbox new <task-name>"
+  echo "  3. ./sandbox go"
+}
+
+# --------------------------------------------------------------------------
+# new — a fresh, self-contained clone on a throwaway branch
+#
+# This used to be a `git worktree`. It is a clone now, for two reasons:
+#   1. A linked worktree's .git is a FILE pointing at an absolute host path
+#      (project/.git/worktrees/<name>). That path does not exist inside the
+#      container, because project/ is deliberately never mounted — so every
+#      git command the agent ran died with "not a git repository".
+#   2. Worktree state is split across two directories. Delete or re-clone one
+#      side and you get "missing but already registered" / "not a git
+#      repository" errors that neither `prune` nor `remove` fully clears.
+# A clone is self-contained: it works in the container, and `rm -rf` is a
+# complete uninstall.
+# --------------------------------------------------------------------------
+cmd_new() {
+  require_init
+  local task="${1:-}"
+  [ -n "$task" ] || die "usage: ./sandbox new <task-name>"
+  need git
+
+  local base; base="$(default_branch)"
+  local branch="agent/$task"
+  local upstream; upstream="$(upstream_url)"
+
+  info "fetching origin"
+  git -C "$PROJECT_DIR" fetch origin --prune
+
+  # Clear any leftovers from the old worktree-based layout.
+  git -C "$PROJECT_DIR" worktree prune >/dev/null 2>&1 || true
+
+  if [ -e "$WORKTREE_DIR" ]; then
+    local old; old="$(current_branch)"
+    warn "replacing existing workspace${old:+ (branch $old)}"
+    if [ -n "$old" ] && [ -n "$(git -C "$WORKTREE_DIR" status --porcelain 2>/dev/null)" ]; then
+      warn "it has uncommitted changes"
+    fi
+    read -rp "Discard it? [y/N] " reply
+    [[ "$reply" =~ ^[Yy]$ ]] || die "aborted"
+    rm -rf "$WORKTREE_DIR"
+  fi
+
+  info "cloning project -> workspace"
+  # --no-hardlinks: keep the container's object store physically separate from
+  # project/, so nothing the agent does can reach back into the canonical clone.
+  git clone --quiet --no-hardlinks "$PROJECT_DIR" "$WORKTREE_DIR"
+
+  if [ -n "$upstream" ]; then
+    # Without this, workspace's origin is the local project/ directory and
+    # `./sandbox push` would push into a folder on your disk, not to the remote.
+    git -C "$WORKTREE_DIR" remote set-url origin "$upstream"
+    git -C "$WORKTREE_DIR" fetch --quiet origin "+refs/heads/$base:refs/remotes/origin/$base" \
+      || warn "could not fetch origin/$base from the real remote; using the local copy"
+  fi
+
+  info "creating branch $branch from origin/$base"
+  git -C "$WORKTREE_DIR" checkout --quiet -B "$branch" "origin/$base"
+
+  bold "workspace ready: $WORKTREE_DIR  (branch $branch)"
+}
+
+# --------------------------------------------------------------------------
+# up / go / shell — run things
+# --------------------------------------------------------------------------
+cmd_up() {
+  detect_runtime
+  info "building and starting the egress proxy ($RUNTIME)"
+  if [ "$RUNTIME" = podman ]; then
+    dc build egress-proxy >/dev/null
+    dc up -d egress-proxy
+    wait_proxy || true
+  else
+    dc up -d --build egress-proxy
+  fi
+  dc ps
+}
+
+# Identity is resolved and repaired by resolve_identity(); this only reports.
+check_uid() {
+  resolve_identity
+  echo "  container runs as $HOST_UID:$HOST_GID ($(id -un)) — taken live from id(1)"
+}
+
+# --------------------------------------------------------------------------
+# Privilege — is the account running this actually unprivileged?
+#
+# A sandbox whose escape hatch lands in an account that can become root is
+# mostly decoration. The worst case is passwordless sudo, which every major
+# cloud image ships for its default user (`ubuntu`, `ec2-user`, `azureuser`
+# all get NOPASSWD:ALL in /etc/sudoers.d/) — so the account you are handed on
+# a fresh VM is precisely the wrong one to run an agent as.
+#
+# This is a warning, not a refusal: it is your machine and your call.
+# SANDBOX_ALLOW_PRIVILEGED=1 in .env silences it.
+# --------------------------------------------------------------------------
+check_privilege() {
+  local allow; allow="${SANDBOX_ALLOW_PRIVILEGED:-$(env_get SANDBOX_ALLOW_PRIVILEGED)}"
+  [ "$allow" = "1" ] && return 0
+
+  local groups_list flagged=0
+  groups_list="$(id -nG 2>/dev/null || true)"
+
+  if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    warn "this account can run sudo WITHOUT a password prompt right now."
+    warn "(either NOPASSWD in sudoers, or a cached sudo timestamp from earlier.)"
+    flagged=1
+  elif printf '%s\n' $groups_list | grep -qxE 'sudo|wheel|admin'; then
+    warn "this account is in the $(printf '%s\n' $groups_list | grep -xE 'sudo|wheel|admin' | head -1) group, so it can become root."
+    flagged=1
+  fi
+
+  if [ "$RUNTIME" = docker ] && printf '%s\n' $groups_list | grep -qx docker; then
+    warn "this account is in the 'docker' group. That is equivalent to root on"
+    warn "the host — 'docker run -v /:/host' is a one-line escalation."
+    flagged=1
+  fi
+
+  if [ "$flagged" -eq 1 ]; then
+    warn "an escape from the container would land somewhere that can reach root,"
+    warn "which is most of what this sandbox exists to prevent."
+    warn "Run it as a dedicated account with no sudo instead — see README step 1."
+    warn "Accept the risk and silence this: SANDBOX_ALLOW_PRIVILEGED=1 in .env"
+  fi
+  return 0
+}
+
+check_deploy_key() {
+  local key="$ROOT/secrets/deploy_key"
+  [ -e "$key" ] || return 0
+  local owner mode want
+  owner="$(stat -c %u "$key" 2>/dev/null || stat -f %u "$key" 2>/dev/null || echo "")"
+  mode="$(stat -c %a "$key" 2>/dev/null || stat -f %Lp "$key" 2>/dev/null || echo "")"
+  resolve_identity
+  want="$HOST_UID"
+  if [ -n "$owner" ] && [ "$owner" != "$want" ]; then
+    warn "secrets/deploy_key is owned by uid $owner but the container runs as uid $want"
+    warn "a 0600 file is readable only by its owner, so the entrypoint cannot read it:"
+    warn "    sudo chown $want:$(id -g) secrets/deploy_key && chmod 600 secrets/deploy_key"
+  elif [ -n "$mode" ] && [ "$mode" != "600" ]; then
+    warn "secrets/deploy_key has mode $mode; ssh will refuse it — chmod 600 secrets/deploy_key"
+  fi
+}
+
+check_auth() {
+  local have_key=0 have_oauth=0
+  grep -qE '^ANTHROPIC_API_KEY=.+' "$ENV_FILE" 2>/dev/null && have_key=1
+  grep -qE '^CLAUDE_CODE_OAUTH_TOKEN=.+' "$ENV_FILE" 2>/dev/null && have_oauth=1
+  [ -s "$AUTH_DIR/.credentials.json" ] && have_oauth=1
+  if [ "$have_key" -eq 0 ] && [ "$have_oauth" -eq 0 ]; then
+    warn "no ANTHROPIC_API_KEY in .env and no saved session in auth/"
+    warn "the agent will ask you to log in. To save that login between sessions:"
+    warn "    ./sandbox login"
+  fi
+}
+
+preflight() {
+  require_init
+  [ -d "$WORKTREE_DIR/.git" ] || die "no workspace — run: ./sandbox new <task-name>"
+  [ -f "$ENV_FILE" ] || die "no .env — run: ./sandbox init <repo-url>"
+  mkdir -p "$ROOT/logs" "$ROOT/secrets" "$AUTH_DIR"
+  chmod 700 "$AUTH_DIR"
+  resolve_identity
+  check_privilege
+  check_deploy_key
+  check_auth
+}
+
+cmd_go() {
+  preflight
+  cmd_up >/dev/null
+  info "starting agent on branch $(current_branch)"
+  dc_run agent "$@"
+}
+
+cmd_shell() {
+  preflight
+  cmd_up >/dev/null
+  dc_run agent bash
+}
+
+cmd_verify() {
+  preflight
+  cmd_up >/dev/null
+  dc_run -v "$ROOT/scripts:/opt/scripts:$(mount_ro_opts)" agent bash /opt/scripts/verify.sh
+}
+
+# --------------------------------------------------------------------------
+# login / logout — authenticate once, reuse across containers
+#
+# $HOME in the container is a tmpfs, so a normal login dies with the session.
+# auth/ is a host directory mounted read-write at /run/auth; the entrypoint
+# copies credentials in at start and back out at exit.
+# --------------------------------------------------------------------------
+cmd_login() {
+  require_init
+  [ -f "$ENV_FILE" ] || die "no .env — run: ./sandbox init <repo-url>"
+  mkdir -p "$AUTH_DIR" "$ROOT/logs"
+  chmod 700 "$AUTH_DIR"
+
+  # A workspace is not needed to log in; make a throwaway one if absent.
+  local made_stub=0
+  if [ ! -d "$WORKTREE_DIR/.git" ]; then
+    mkdir -p "$WORKTREE_DIR"
+    made_stub=1
+  fi
+
+  cmd_up >/dev/null
+  echo
+  bold "Inside the agent, run:  /login"
+  echo "Finish the browser flow, then exit. The session is saved to auth/ and"
+  echo "reused by every later ./sandbox go until you run ./sandbox logout."
+  echo
+  SANDBOX_PERSIST_AUTH=1 dc_run agent claude || true
+
+  [ "$made_stub" -eq 1 ] && rmdir "$WORKTREE_DIR" 2>/dev/null || true
+
+  if [ -s "$AUTH_DIR/.credentials.json" ]; then
+    bold "saved: auth/.credentials.json"
+    echo "Treat this like a password: it is a live login to your Claude account."
+  else
+    warn "nothing was saved — did the login complete?"
+  fi
+}
+
+cmd_logout() {
+  rm -f "$AUTH_DIR/.credentials.json" "$AUTH_DIR/.claude.json"
+  info "cleared saved credentials in auth/"
+  echo "Also revoke the session from your Claude account settings if this"
+  echo "machine is shared or not yours."
+}
+
+# --------------------------------------------------------------------------
+# upgrade — the sanctioned way to move the CLI forward
+#
+# In-place auto-update cannot work here and should not: the rootfs is read-only
+# and the agent is not root, so the updater cannot write
+# /usr/local/lib/node_modules and reports `install_failed` every start. Even if
+# it succeeded, the container is destroyed on exit and the update would go with
+# it. The image is the artifact; rebuild it deliberately.
+# --------------------------------------------------------------------------
+cmd_upgrade() {
+  detect_runtime
+  local pinned; pinned="$(env_get AGENT_CLI)"
+  case "$pinned" in
+    *@[0-9]*)
+      warn "AGENT_CLI is pinned to '$pinned' — edit .env to move to a new version" ;;
+  esac
+  info "rebuilding the agent image from scratch ($RUNTIME)"
+  dc build --no-cache --pull agent || dc build --no-cache agent
+  info "version now baked into the image:"
+  dc run --rm --no-deps agent claude --version 2>/dev/null \
+    || warn "could not query it here — run ./sandbox shell and try 'claude --version'"
+}
+
+# --------------------------------------------------------------------------
+# allow / reload — egress policy
+# --------------------------------------------------------------------------
+cmd_allow() {
+  [ $# -gt 0 ] || die "usage: ./sandbox allow <domain> [domain...]"
+  for d in "$@"; do
+    if grep -qxF "$d" "$ALLOWLIST"; then
+      info "$d already allowed"
+    else
+      printf '%s\n' "$d" >> "$ALLOWLIST"
+      info "allowed $d"
+    fi
+  done
+  cmd_reload
+}
+
+cmd_reload() {
+  detect_runtime
+  if [ "$RUNTIME" = podman ]; then
+    # podman-compose has no reliable `kill -s`; signal the container directly.
+    local name; name="$(sandbox_name)-egress-proxy"
+    if podman container exists "$name" 2>/dev/null; then
+      info "reloading proxy"
+      podman kill -s HUP "$name" >/dev/null
+    fi
+    return 0
+  fi
+  if dc ps --status running --services 2>/dev/null | grep -q egress-proxy; then
+    info "reloading proxy"
+    dc kill -s HUP egress-proxy
+  fi
+}
+
+# --------------------------------------------------------------------------
+# review / push / pr — happen on the HOST, in your normal environment
+# --------------------------------------------------------------------------
+cmd_review() {
+  require_init
+  [ -d "$WORKTREE_DIR/.git" ] || die "no workspace to review"
+  local base; base="$(default_branch)"
+
+  git -C "$WORKTREE_DIR" fetch --quiet origin "+refs/heads/$base:refs/remotes/origin/$base" 2>/dev/null \
+    || warn "could not refresh origin/$base; comparing against the last known copy"
+
+  bold "=== files changed vs origin/$base ==="
+  git -C "$WORKTREE_DIR" diff --stat "origin/$base"...HEAD || true
+  echo
+  bold "=== commits ==="
+  git -C "$WORKTREE_DIR" log --oneline "origin/$base"..HEAD || true
+  echo
+  bold "=== attribution check (no AI trailers) ==="
+  if git -C "$WORKTREE_DIR" log --format='%B' "origin/$base"..HEAD 2>/dev/null \
+       | grep -inE 'co-authored-by.*(claude|anthropic|ai)|generated with|🤖'; then
+    warn "attribution trailer found — see the git conventions in profile/claude/CLAUDE.md"
+  else
+    echo "  (clean)"
+  fi
+  echo
+  bold "=== untracked files (the agent's leftovers) ==="
+  git -C "$WORKTREE_DIR" ls-files --others --exclude-standard || true
+  echo
+
+  bold "=== secret scan ==="
+  if command -v gitleaks >/dev/null 2>&1; then
+    gitleaks detect --source "$WORKTREE_DIR" --no-banner --redact -v || warn "gitleaks found something — look before you push"
+  else
+    warn "gitleaks not installed; falling back to a crude grep"
+    grep -rInE '(api[_-]?key|secret|token|password|BEGIN [A-Z ]*PRIVATE KEY)[[:space:]]*[:=]' \
+      "$WORKTREE_DIR" --exclude-dir=.git --exclude-dir=node_modules || echo "  (nothing obvious)"
+  fi
+  echo
+  bold "Read the full diff before pushing:  git -C workspace diff origin/$base...HEAD"
+}
+
+cmd_push() {
+  require_init
+  local branch; branch="$(current_branch)"
+  [ -n "$branch" ] || die "no workspace branch to push"
+  local remote; remote="$(git -C "$WORKTREE_DIR" remote get-url origin 2>/dev/null || true)"
+  case "$remote" in
+    "$PROJECT_DIR"|"$PROJECT_DIR"/*)
+      die "workspace origin still points at project/ — re-run ./sandbox new so it points at the real remote" ;;
+  esac
+  info "pushing $branch to $remote (from your environment, not the sandbox)"
+  git -C "$WORKTREE_DIR" push -u origin "$branch"
+}
+
+# pr — push, then open a pull/merge request against the default branch.
+# Uses gh/glab when present; otherwise falls back to push options or a URL.
+cmd_pr() {
+  require_init
+  local branch; branch="$(current_branch)"
+  [ -n "$branch" ] || die "no workspace branch"
+  local base; base="$(default_branch)"
+  local title="${1:-}"
+  [ -n "$title" ] || title="$(git -C "$WORKTREE_DIR" log -1 --pretty=%s)"
+
+  cmd_push
+
+  local remote host path
+  remote="$(git -C "$WORKTREE_DIR" remote get-url origin)"
+  host="$(url_host "$remote")"
+  path="$(printf '%s' "$remote" \
+          | sed -E 's|^[a-z+]+://||; s|^[^@/]*@||; s|^[^/:]+[:/]||; s|^[0-9]+/||; s|\.git$||')"
+
+  case "$host" in
+    github.com|*.github.com)
+      if command -v gh >/dev/null 2>&1; then
+        info "opening a pull request with gh"
+        ( cd "$WORKTREE_DIR" && gh pr create --base "$base" --head "$branch" --title "$title" --body "" )
+        return
+      fi
+      bold "Open the PR here:"
+      echo "  https://$host/$path/compare/$base...$branch?expand=1"
+      ;;
+    *)
+      if command -v glab >/dev/null 2>&1; then
+        info "opening a merge request with glab"
+        ( cd "$WORKTREE_DIR" && glab mr create --source-branch "$branch" --target-branch "$base" \
+            --title "$title" --description "" --yes )
+        return
+      fi
+      info "no glab — asking the server to open the MR via git push options"
+      if ! git -C "$WORKTREE_DIR" push -o merge_request.create \
+                                       -o merge_request.target="$base" \
+                                       -o merge_request.title="$title" \
+                                       origin "$branch"; then
+        warn "push options not supported by this server"
+        bold "Open the MR here:"
+        echo "  https://$host/$path/-/merge_requests/new?merge_request%5Bsource_branch%5D=$branch"
+      fi
+      ;;
+  esac
+}
+
+# --------------------------------------------------------------------------
+# doctor — check and repair the state that actually breaks in practice
+# --------------------------------------------------------------------------
+cmd_doctor() {
+  local issues=0
+  bold "== host state =="
+
+  if [ -d "$PROJECT_DIR/.git" ]; then
+    echo "  project/: ok ($(upstream_url))"
+  else
+    echo "  project/: MISSING — ./sandbox init <repo-url>"; issues=$((issues+1))
+  fi
+
+  if [ -f "$WORKTREE_DIR/.git" ]; then
+    echo "  workspace/: old-style linked worktree — git will fail inside the container"
+    read -rp "  Re-create it as a clone? [y/N] " reply
+    if [[ "$reply" =~ ^[Yy]$ ]]; then
+      local b; b="$(current_branch)"
+      rm -rf "$WORKTREE_DIR"
+      git -C "$PROJECT_DIR" worktree prune >/dev/null 2>&1 || true
+      [ -n "$b" ] && cmd_new "${b#agent/}"
+    fi
+    issues=$((issues+1))
+  elif [ -e "$WORKTREE_DIR" ] && [ ! -d "$WORKTREE_DIR/.git" ]; then
+    echo "  workspace/: present but not a repository (orphaned)"
+    read -rp "  Remove it? [y/N] " reply
+    if [[ "$reply" =~ ^[Yy]$ ]]; then
+      rm -rf "$WORKTREE_DIR"
+      git -C "$PROJECT_DIR" worktree prune >/dev/null 2>&1 || true
+      echo "  removed"
+    fi
+    issues=$((issues+1))
+  elif [ -d "$WORKTREE_DIR/.git" ]; then
+    echo "  workspace/: ok (branch $(current_branch))"
+  else
+    echo "  workspace/: none — ./sandbox new <task>"
+  fi
+
+  if [ -d "$PROJECT_DIR/.git" ] \
+     && git -C "$PROJECT_DIR" worktree list --porcelain 2>/dev/null | grep -q '^prunable'; then
+    git -C "$PROJECT_DIR" worktree prune -v
+    echo "  pruned stale worktree registrations"
+  fi
+
+  echo
+  bold "== identity =="
+  echo "  host user    = $(id -un) ($(id -u):$(id -g))"
+  check_uid
+  echo "  sandbox name = $(sandbox_name)"
+  if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    echo "  privilege    = CAN SUDO WITHOUT A PASSWORD  <-- see below"
+  elif id -nG 2>/dev/null | tr ' ' '\n' | grep -qxE 'sudo|wheel|admin'; then
+    echo "  privilege    = in a sudo-capable group  <-- see below"
+  else
+    echo "  privilege    = unprivileged (no sudo) — correct"
+  fi
+  check_privilege
+  check_deploy_key
+
+  echo
+  bold "== credentials =="
+  [ -f "$ENV_FILE" ] && check_auth
+  [ -s "$AUTH_DIR/.credentials.json" ] && echo "  saved OAuth session: yes" || echo "  saved OAuth session: no"
+
+  echo
+  bold "== runtime =="
+  detect_runtime
+  echo "  runtime: $RUNTIME"
+  if [ "$RUNTIME" = podman ]; then
+    if podman_provider 2>/dev/null; then
+      echo "  compose: $PODMAN_PROVIDER"
+      if [ "$PODMAN_PROVIDER" = "podman compose" ]; then
+        if [ -S "$(podman_sock)" ]; then
+          echo "  api socket: up ($(podman_sock))"
+        else
+          echo "  api socket: DOWN — this provider needs it:"
+          echo "              systemctl --user enable --now podman.socket"
+          issues=$((issues+1))
+        fi
+      fi
+    else
+      echo "  compose: NONE — install podman-compose or the docker-compose plugin"
+      issues=$((issues+1))
+    fi
+    if podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null | grep -q true; then
+      echo "  rootless: yes"
+    else
+      echo "  rootless: no (running as root defeats most of the point — see docs/11)"
+      issues=$((issues+1))
+    fi
+    # Memory/CPU ceilings silently do nothing on rootless cgroups v1.
+    if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+      echo "  cgroups: v2"
+      if ! grep -qw memory "/sys/fs/cgroup/user.slice/user-$(id -u).slice/memory.max" 2>/dev/null \
+         && ! grep -qw memory /sys/fs/cgroup/cgroup.controllers 2>/dev/null; then
+        echo "  note: memory controller may not be delegated; mem_limit could be ignored"
+      fi
+    else
+      echo "  cgroups: v1 — rootless mem_limit/cpus are IGNORED (see docs/11)"
+      issues=$((issues+1))
+    fi
+    if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce 2>/dev/null)" != "Disabled" ]; then
+      echo "  selinux: enforcing — compose override applies :z labels"
+    fi
+  fi
+
+  echo
+  bold "== containers =="
+  dc ps 2>/dev/null || echo "  (none)"
+
+  echo
+  [ "$issues" -eq 0 ] && bold "no problems found" || bold "$issues issue(s) reported above"
+}
+
+# --------------------------------------------------------------------------
+# status / logs / down / destroy
+# --------------------------------------------------------------------------
+cmd_status() {
+  bold "containers"; dc ps 2>/dev/null || echo "  (none)"
+  echo
+  bold "workspace"
+  if [ -d "$WORKTREE_DIR/.git" ]; then
+    echo "  branch: $(current_branch)"
+    echo "  origin: $(git -C "$WORKTREE_DIR" remote get-url origin 2>/dev/null)"
+    git -C "$WORKTREE_DIR" status -sb | head -20
+  else
+    echo "  (none — ./sandbox new <task>)"
+  fi
+  echo
+  bold "allowlist"; grep -vE '^\s*(#|$)' "$ALLOWLIST" | sed 's/^/  /'
+  echo
+  bold "credentials"
+  [ -f "$ROOT/secrets/deploy_key" ] && echo "  deploy_key present" || echo "  no deploy key"
+  grep -qE '^GIT_TOKEN=.+' "$ENV_FILE" 2>/dev/null && echo "  GIT_TOKEN set" || echo "  GIT_TOKEN empty"
+  grep -qE '^ANTHROPIC_API_KEY=.+' "$ENV_FILE" 2>/dev/null && echo "  ANTHROPIC_API_KEY set" || echo "  ANTHROPIC_API_KEY empty"
+  [ -s "$AUTH_DIR/.credentials.json" ] && echo "  saved OAuth session in auth/" || echo "  no saved OAuth session"
+}
+
+cmd_logs() {
+  case "${1:-proxy}" in
+    proxy)    dc logs -f egress-proxy ;;
+    commands) tail -f "$ROOT/logs/commands.log" ;;
+    *)        die "usage: ./sandbox logs [proxy|commands]" ;;
+  esac
+}
+
+cmd_down() {
+  info "stopping containers"
+  dc down --remove-orphans
+}
+
+cmd_destroy() {
+  local branch; branch="$(current_branch)"
+  bold "This will:"
+  echo "  - stop and delete all sandbox containers, networks and volumes"
+  echo "  - remove the workspace at $WORKTREE_DIR${branch:+ (branch $branch)}"
+  echo "  - leave project/, logs/, auth/, .env and secrets/ alone"
+  read -rp "Proceed? [y/N] " reply
+  [[ "$reply" =~ ^[Yy]$ ]] || die "aborted"
+
+  dc down -v --remove-orphans || true
+  git -C "$PROJECT_DIR" worktree prune >/dev/null 2>&1 || true
+  rm -rf "$WORKTREE_DIR"
+
+  echo
+  bold "Now do the part no script can do for you:"
+  echo "  - revoke GIT_TOKEN         (GitHub: Settings > Developer settings > Fine-grained tokens)"
+  echo "  - revoke ANTHROPIC_API_KEY (console.anthropic.com)"
+  echo "  - delete secrets/deploy_key and the deploy key in the repo's settings"
+  echo "  - auth/ still holds a live Claude login: ./sandbox logout clears it"
+  echo "  - logs/ still holds the session audit trail; archive or delete it"
+}
+
+usage() {
+  cat <<'USAGE'
+sandbox — a disposable, network-restricted home for an AI coding agent
+
+Setup
+  init <repo-url>      Clone the repo, allowlist its host, write .env
+  login                Log the agent in once; the session is saved in auth/
+  logout               Delete the saved session
+  new <task-name>      Fresh clone of project/ on branch agent/<task-name>
+
+Run
+  go [args...]         Start the agent (default command: claude)
+  shell                Drop into bash inside the sandbox
+  verify               Run the sandbox self-test (walls, egress, mounts)
+
+Maintenance
+  upgrade              Rebuild the agent image to pick up a newer CLI
+
+Policy
+  allow <domain>...    Add hosts to the egress allowlist and reload
+  reload               Reload the proxy after editing proxy/allowlist.txt
+
+Review (runs on the host, in your environment)
+  review               Diff, untracked files, attribution check, secret scan
+  push                 Push the agent's branch from your environment
+  pr [title]           Push and open a pull request / merge request
+
+Housekeeping
+  status               Containers, workspace, allowlist, credentials
+  doctor               Diagnose and repair stale workspace / uid / key state
+  logs [proxy|commands]  Follow proxy traffic or the agent's command log
+  down                 Stop containers
+  destroy              Stop everything and remove the workspace
+USAGE
+}
+
+case "${1:-}" in
+  init)    shift; cmd_init "$@" ;;
+  login)   shift; cmd_login ;;
+  logout)  shift; cmd_logout ;;
+  new)     shift; cmd_new "$@" ;;
+  up)      shift; cmd_up ;;
+  go)      shift; cmd_go "$@" ;;
+  shell)   shift; cmd_shell ;;
+  verify)  shift; cmd_verify ;;
+  upgrade) shift; cmd_upgrade ;;
+  allow)   shift; cmd_allow "$@" ;;
+  reload)  shift; cmd_reload ;;
+  review)  shift; cmd_review ;;
+  push)    shift; cmd_push ;;
+  pr)      shift; cmd_pr "$@" ;;
+  doctor)  shift; cmd_doctor ;;
+  status)  shift; cmd_status ;;
+  logs)    shift; cmd_logs "$@" ;;
+  down)    shift; cmd_down ;;
+  destroy) shift; cmd_destroy ;;
+  ""|-h|--help|help) usage ;;
+  *)       die "unknown command: $1 (try ./sandbox help)" ;;
+esac

@@ -1,0 +1,45 @@
+# Podman overlay: SELinux mount labels. Applied automatically on top of
+# docker-compose.yml when SANDBOX_RUNTIME=podman.
+#
+# On Fedora/RHEL/CentOS, a bind mount without a label is unreadable inside the
+# container — "Permission denied" on files that are plainly there and plainly
+# world-readable. `:z` relabels the host directory as shared container content.
+#
+# `:z` (shared) rather than `:Z` (private) so that a second sandbox, or the
+# host, can still read the same paths. Note that this relabels the real
+# directory on your disk — harmless for these paths, worth knowing before you
+# point a mount at something else.
+#
+# On a non-SELinux system the `z` suffix is accepted and ignored, so this file
+# is safe to apply on Debian/Ubuntu/Arch too.
+#
+# The user-namespace half lives in docker-compose.podman-userns.yml, because it
+# is the part that some setups have to switch off.
+
+# podman-compose puts every service into one shared pod by default, and a pod
+# owns its own user namespace — so the agent's `userns_mode: keep-id` collides
+# with it and container creation dies with:
+#
+#     Error: --userns and --pod cannot be set together
+#
+# `./sandbox` also passes --in-pod=false on the command line, but this key makes
+# a direct `podman-compose -f ... up` behave the same way. Unknown `x-` keys are
+# extension fields and are ignored by providers that do not implement them.
+#
+# The pod was buying nothing: the isolation comes from the `internal:` network
+# and the per-container flags, not from co-locating services in a pod.
+x-podman:
+  in_pod: false
+
+services:
+  egress-proxy:
+    volumes:
+      - ./proxy/allowlist.txt:/etc/squid/allowlist.txt:ro,z
+
+  agent:
+    volumes:
+      - ./workspace:/workspace/repo:z
+      - ./profile:/opt/profile:ro,z
+      - ./logs:/logs:z
+      - ./secrets:/run/secrets:ro,z
+      - ./auth:/run/auth:z

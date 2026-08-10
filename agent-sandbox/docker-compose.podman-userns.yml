@@ -1,0 +1,35 @@
+# Podman overlay: user namespace mapping. Applied on top of
+# docker-compose.yml + docker-compose.podman.yml unless SANDBOX_USERNS=off.
+#
+# Rootless Podman maps container uid 0 to *your* host user, and container uid
+# 1000 to a subuid (100999 or similar). The agent runs as uid 1000 to match
+# you, so under the default mapping every file it writes into the mounted
+# workspace comes back owned by a uid you have never heard of — the host
+# renders it as "nobody" and you cannot commit it.
+#
+# `keep-id` maps your host uid to the same uid inside the container, which is
+# what the image was already built to expect (HOST_UID/HOST_GID build args).
+#
+# Only the agent gets it. The proxy runs as `squid` (uid 31) — not your uid, so
+# there is nothing to keep — and only ever reads one world-readable file.
+#
+# ---------------------------------------------------------------------------
+# Why this is a separate file
+#
+# podman-compose puts every service into a shared pod, and a pod owns its own
+# user namespace, so a per-container userns setting collides:
+#
+#     Error: --userns and --pod cannot be set together
+#
+# `./sandbox` passes `--in-pod=false` to podman-compose when that flag exists,
+# which resolves it. If your podman-compose is too old to have the flag, set
+# SANDBOX_USERNS=off in .env to skip this file, and repair ownership after the
+# fact with:
+#
+#     podman unshare chown -R 0:0 workspace     # 0 inside the userns == you
+#
+# ---------------------------------------------------------------------------
+
+services:
+  agent:
+    userns_mode: "keep-id"
