@@ -235,7 +235,7 @@ dc() {
       podman compose "${COMPOSE_ARGS[@]}" "$@"
     else
       podman_compose_extra
-      $PODMAN_PROVIDER "${PODMAN_EXTRA[@]}" "${COMPOSE_ARGS[@]}" "$@"
+      $PODMAN_PROVIDER "${PODMAN_EXTRA[@]}" "${PODMAN_REPLACE[@]}" "${COMPOSE_ARGS[@]}" "$@"
     fi
   else
     need docker
@@ -267,6 +267,41 @@ mount_ro_opts() {
     printf 'ro,z'
   else
     printf 'ro'
+  fi
+}
+
+# --------------------------------------------------------------------------
+# Leftover proxy container — the one collision `up` cannot talk its way past
+#
+# The proxy has a fixed container_name, so a copy left behind by an unclean
+# stop (host reboot, podman-compose killed mid-run, a renamed bundle) makes
+# the next start die with:
+#
+#   Error: creating container storage: the container name
+#   "<name>-egress-proxy" is already in use by <id>. You have to remove that
+#   container to be able to reuse that name ... or use --replace
+#
+# docker compose reconciles existing containers itself; podman-compose does
+# not. So check for the leftover first: forward --replace to podman create/run
+# when this podman-compose can carry it, otherwise remove the dead container
+# directly — which is exactly what --replace would have done. A *running*
+# proxy is healthy state from a previous `up`, not a collision, and is left
+# alone.
+# --------------------------------------------------------------------------
+PODMAN_REPLACE=()
+replace_stale_proxy() {
+  local name; name="$(sandbox_name)-egress-proxy"
+  podman container exists "$name" 2>/dev/null || return 0
+  [ "$(podman inspect --format '{{.State.Running}}' "$name" 2>/dev/null)" = "true" ] && return 0
+  podman_provider
+  if [ "$PODMAN_PROVIDER" = "podman-compose" ] \
+     && podman-compose --help 2>&1 | grep -q -- '--podman-create-args'; then
+    info "proxy container '$name' already exists — recreating it with --replace"
+    PODMAN_REPLACE=(--podman-create-args=--replace --podman-run-args=--replace)
+  else
+    info "proxy container '$name' already exists — removing the stale copy"
+    podman rm -f "$name" >/dev/null \
+      || die "could not remove it; do it by hand:  podman rm -f $name"
   fi
 }
 
@@ -469,6 +504,7 @@ cmd_up() {
   info "building and starting the egress proxy ($RUNTIME)"
   if [ "$RUNTIME" = podman ]; then
     dc build egress-proxy >/dev/null
+    replace_stale_proxy
     dc up -d egress-proxy
     wait_proxy || true
   else

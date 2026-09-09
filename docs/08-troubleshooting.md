@@ -276,6 +276,32 @@ afterwards:
 podman unshare chown -R 0:0 workspace     # 0 inside the userns == you outside
 ```
 
+### `the container name "<name>-egress-proxy" is already in use by <id>`
+
+```
+Error: creating container storage: the container name
+"agent-sandbox-egress-proxy" is already in use by 74abc3d4. You have to
+remove that container to be able to reuse that name ... or use --replace
+```
+
+Not two sandboxes fighting over one name (that case is a distinct
+`SANDBOX_NAME` per `.env`, see below) — it is a *leftover*: the proxy has a
+fixed `container_name`, and an unclean stop (host reboot, podman-compose
+killed mid-run, a renamed bundle) leaves the old container registered.
+docker compose reconciles an existing container on the next `up`;
+podman-compose just tries to create a new one and collides.
+
+`./sandbox up` now checks for this before starting: if the container exists
+but is not running, it forwards `--replace` to podman when the installed
+podman-compose can carry it, and removes the dead container directly when it
+cannot. A proxy that is *running* is left alone. On an older copy of the
+bundle, do it by hand:
+
+```bash
+podman rm -f <name>-egress-proxy
+./sandbox up
+```
+
 ### `npm WARN EBADENGINE ... required: { node: '>=22.0.0' }`
 
 ```
