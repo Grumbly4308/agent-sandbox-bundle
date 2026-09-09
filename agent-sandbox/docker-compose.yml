@@ -38,7 +38,9 @@ services:
       args:
         HOST_UID: ${HOST_UID:-1000}
         HOST_GID: ${HOST_GID:-1000}
+        # Both are kept in step by `./sandbox agent <name>`; claude by default.
         AGENT_CLI: ${AGENT_CLI:-@anthropic-ai/claude-code}
+        AGENT_BIN: ${AGENT_BIN:-claude}
     depends_on:
       egress-proxy:
         condition: service_healthy
@@ -93,7 +95,11 @@ services:
       no_proxy: localhost,127.0.0.1
 
       PROFILE_DIR: /opt/profile
+      # Which agent this sandbox runs; verify.sh branches on it.
+      SANDBOX_AGENT: ${SANDBOX_AGENT:-claude}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Codex (SANDBOX_AGENT=codex): key auth instead of the interactive login.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # Set by `./sandbox login`; makes the entrypoint save the session back to
       # auth/ on exit. Unset for normal runs: the login is read, never rewritten.
       SANDBOX_PERSIST_AUTH: ${SANDBOX_PERSIST_AUTH:-}

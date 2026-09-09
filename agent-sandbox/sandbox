@@ -117,6 +117,9 @@ resolve_identity() {
 # behind your back.
 # --------------------------------------------------------------------------
 AGENT=""
+agent_pkg() { case "$1" in codex) printf '@openai/codex' ;; *) printf '@anthropic-ai/claude-code' ;; esac; }
+agent_bin() { case "$1" in codex) printf 'codex' ;; *) printf 'claude' ;; esac; }
+
 resolve_agent() {
   [ -z "$AGENT" ] || return 0
   AGENT="${SANDBOX_AGENT:-$(env_get SANDBOX_AGENT)}"
@@ -125,6 +128,19 @@ resolve_agent() {
     claude|codex) ;;
     *) die "SANDBOX_AGENT must be 'claude' or 'codex', got '$AGENT'" ;;
   esac
+
+  # Compose interpolates these into the image build args and the container
+  # env; export them so a script-driven run does not depend on every key
+  # having been written to .env.
+  AGENT_CLI="${AGENT_CLI:-$(env_get AGENT_CLI)}"
+  [ -n "$AGENT_CLI" ] || AGENT_CLI="$(agent_pkg "$AGENT")"
+  case "$AGENT_CLI" in
+    "$(agent_pkg "$AGENT")"|"$(agent_pkg "$AGENT")"@*) ;;
+    *) warn "AGENT_CLI='$AGENT_CLI' does not look like the $AGENT CLI package;"
+       warn "    ./sandbox agent $AGENT   # rewrites it" ;;
+  esac
+  AGENT_BIN="$(agent_bin "$AGENT")"
+  export SANDBOX_AGENT="$AGENT" AGENT_CLI AGENT_BIN
 }
 
 # --------------------------------------------------------------------------
@@ -642,7 +658,18 @@ check_deploy_key() {
 }
 
 check_auth() {
+  resolve_agent
   local have_key=0 have_oauth=0
+  if [ "$AGENT" = codex ]; then
+    grep -qE '^OPENAI_API_KEY=.+' "$ENV_FILE" 2>/dev/null && have_key=1
+    [ -s "$AUTH_DIR/codex-auth.json" ] && have_oauth=1
+    if [ "$have_key" -eq 0 ] && [ "$have_oauth" -eq 0 ]; then
+      warn "no OPENAI_API_KEY in .env and no saved codex session in auth/"
+      warn "the agent will ask you to sign in. To save that login between sessions:"
+      warn "    ./sandbox login"
+    fi
+    return 0
+  fi
   grep -qE '^ANTHROPIC_API_KEY=.+' "$ENV_FILE" 2>/dev/null && have_key=1
   grep -qE '^CLAUDE_CODE_OAUTH_TOKEN=.+' "$ENV_FILE" 2>/dev/null && have_oauth=1
   [ -s "$AUTH_DIR/.credentials.json" ] && have_oauth=1
@@ -706,27 +733,34 @@ cmd_login() {
 
   cmd_up >/dev/null
   echo
-  bold "Inside the agent, run:  /login"
+  resolve_agent
+  if [ "$AGENT" = codex ]; then
+    bold "Inside the agent, follow the sign-in flow (codex offers it on first run)."
+  else
+    bold "Inside the agent, run:  /login"
+  fi
   echo "Finish the browser flow, then exit. The session is saved to auth/ and"
   echo "reused by every later ./sandbox go until you run ./sandbox logout."
   echo
-  SANDBOX_PERSIST_AUTH=1 dc_run agent claude || true
+  SANDBOX_PERSIST_AUTH=1 dc_run agent agent-cli || true
 
   [ "$made_stub" -eq 1 ] && rmdir "$WORKTREE_DIR" 2>/dev/null || true
 
-  if [ -s "$AUTH_DIR/.credentials.json" ]; then
-    bold "saved: auth/.credentials.json"
-    echo "Treat this like a password: it is a live login to your Claude account."
+  local saved="$AUTH_DIR/.credentials.json" vendor=Claude
+  [ "$AGENT" = codex ] && { saved="$AUTH_DIR/codex-auth.json"; vendor=OpenAI; }
+  if [ -s "$saved" ]; then
+    bold "saved: auth/$(basename "$saved")"
+    echo "Treat this like a password: it is a live login to your $vendor account."
   else
     warn "nothing was saved — did the login complete?"
   fi
 }
 
 cmd_logout() {
-  rm -f "$AUTH_DIR/.credentials.json" "$AUTH_DIR/.claude.json"
+  rm -f "$AUTH_DIR/.credentials.json" "$AUTH_DIR/.claude.json" "$AUTH_DIR/codex-auth.json"
   info "cleared saved credentials in auth/"
-  echo "Also revoke the session from your Claude account settings if this"
-  echo "machine is shared or not yours."
+  echo "Also revoke the session from your Claude / OpenAI account settings if"
+  echo "this machine is shared or not yours."
 }
 
 # --------------------------------------------------------------------------
@@ -746,7 +780,7 @@ cmd_upgrade() {
   detect_runtime
   local want="${1:-}"
   local cur; cur="$(env_get AGENT_CLI)"
-  [ -n "$cur" ] || cur="@anthropic-ai/claude-code"
+  [ -n "$cur" ] || cur="${AGENT_CLI:-$(agent_pkg "$AGENT")}"
 
   # Split off a version (or dist-tag) pin: whatever follows the LAST @, as
   # long as that @ is not the scope's leading one — the name before it must be
@@ -763,12 +797,14 @@ cmd_upgrade() {
     case "$want" in
       latest)
         env_set AGENT_CLI "$base"
+        export AGENT_CLI="$base"     # the exported copy would shadow .env
         info "unpinned AGENT_CLI ($base) — building whatever npm calls latest" ;;
       *[!A-Za-z0-9._+-]*)
         # $want lands in env_set's sed replacement, where & \ and | are live.
         die "version may only contain letters, digits and . _ + - (got '$want')" ;;
       [0-9]*)
         env_set AGENT_CLI "$base@$want"
+        export AGENT_CLI="$base@$want"
         info "pinned AGENT_CLI=$base@$want" ;;
       *)
         die "usage: ./sandbox upgrade [latest|<version>]   (got '$want')" ;;
@@ -781,8 +817,43 @@ cmd_upgrade() {
   info "rebuilding the agent image from scratch ($RUNTIME)"
   dc build --no-cache --pull agent || dc build --no-cache agent
   info "version now baked into the image:"
-  dc run --rm --no-deps agent claude --version 2>/dev/null \
-    || warn "could not query it here — run ./sandbox shell and try 'claude --version'"
+  dc run --rm --no-deps agent agent-cli --version 2>/dev/null \
+    || warn "could not query it here — run ./sandbox shell and try '$AGENT_BIN --version'"
+}
+
+# --------------------------------------------------------------------------
+# agent — which coding agent this project runs
+#
+# One CLI in the image and one vendor block on the allowlist at a time.
+# Switching rewrites .env and the generated allowlist and reloads the proxy —
+# the egress swap is immediate; the CLI swap is the rebuild it asks you for.
+# --------------------------------------------------------------------------
+cmd_agent() {
+  local want="${1:-}"
+  if [ -z "$want" ]; then
+    resolve_agent
+    bold "agent: $AGENT ($AGENT_CLI)"
+    echo "switch with:  ./sandbox agent claude   |   ./sandbox agent codex"
+    return 0
+  fi
+  case "$want" in
+    claude|codex) ;;
+    *) die "usage: ./sandbox agent [claude|codex]" ;;
+  esac
+  [ -f "$ENV_FILE" ] || die "no .env — run: ./sandbox init <repo-url>"
+
+  env_set SANDBOX_AGENT "$want"
+  # Any version pin belonged to the previous agent's package; reset it.
+  env_set AGENT_CLI "$(agent_pkg "$want")"
+  AGENT="$want"
+  AGENT_CLI="$(agent_pkg "$want")"
+  AGENT_BIN="$(agent_bin "$want")"
+  export SANDBOX_AGENT="$want" AGENT_CLI AGENT_BIN
+
+  regen_allowlist
+  cmd_reload
+  info "agent is now $want — the allowlist carries only the $want endpoints"
+  bold "bake the $want CLI into the image:  ./sandbox upgrade"
 }
 
 # --------------------------------------------------------------------------
@@ -1041,6 +1112,9 @@ cmd_doctor() {
 # status / logs / down / destroy
 # --------------------------------------------------------------------------
 cmd_status() {
+  resolve_agent
+  bold "agent"; echo "  $AGENT ($AGENT_CLI)"
+  echo
   bold "containers"; dc ps 2>/dev/null || echo "  (none)"
   echo
   bold "workspace"
@@ -1057,8 +1131,13 @@ cmd_status() {
   bold "credentials"
   [ -f "$ROOT/secrets/deploy_key" ] && echo "  deploy_key present" || echo "  no deploy key"
   grep -qE '^GIT_TOKEN=.+' "$ENV_FILE" 2>/dev/null && echo "  GIT_TOKEN set" || echo "  GIT_TOKEN empty"
-  grep -qE '^ANTHROPIC_API_KEY=.+' "$ENV_FILE" 2>/dev/null && echo "  ANTHROPIC_API_KEY set" || echo "  ANTHROPIC_API_KEY empty"
-  [ -s "$AUTH_DIR/.credentials.json" ] && echo "  saved OAuth session in auth/" || echo "  no saved OAuth session"
+  if [ "$AGENT" = codex ]; then
+    grep -qE '^OPENAI_API_KEY=.+' "$ENV_FILE" 2>/dev/null && echo "  OPENAI_API_KEY set" || echo "  OPENAI_API_KEY empty"
+    [ -s "$AUTH_DIR/codex-auth.json" ] && echo "  saved codex session in auth/" || echo "  no saved codex session"
+  else
+    grep -qE '^ANTHROPIC_API_KEY=.+' "$ENV_FILE" 2>/dev/null && echo "  ANTHROPIC_API_KEY set" || echo "  ANTHROPIC_API_KEY empty"
+    [ -s "$AUTH_DIR/.credentials.json" ] && echo "  saved OAuth session in auth/" || echo "  no saved OAuth session"
+  fi
 }
 
 cmd_logs() {
@@ -1091,8 +1170,9 @@ cmd_destroy() {
   bold "Now do the part no script can do for you:"
   echo "  - revoke GIT_TOKEN         (GitHub: Settings > Developer settings > Fine-grained tokens)"
   echo "  - revoke ANTHROPIC_API_KEY (console.anthropic.com)"
+  echo "  - revoke OPENAI_API_KEY    (platform.openai.com), if you used codex"
   echo "  - delete secrets/deploy_key and the deploy key in the repo's settings"
-  echo "  - auth/ still holds a live Claude login: ./sandbox logout clears it"
+  echo "  - auth/ still holds a live agent login: ./sandbox logout clears it"
   echo "  - logs/ still holds the session audit trail; archive or delete it"
 }
 
@@ -1116,8 +1196,10 @@ Maintenance
                        'latest' drops a version pin, '2.1.0' sets one
 
 Policy
+  agent [claude|codex] Show or switch the coding agent; swaps the vendor
+                       block of the allowlist and asks for a rebuild
   allow <domain>...    Add hosts to the egress allowlist and reload
-  reload               Reload the proxy after editing proxy/allowlist.txt
+  reload               Regenerate the allowlist and reload the proxy
 
 Review (runs on the host, in your environment)
   review               Diff, untracked files, attribution check, secret scan
@@ -1143,6 +1225,7 @@ case "${1:-}" in
   shell)   shift; cmd_shell ;;
   verify)  shift; cmd_verify ;;
   upgrade) shift; cmd_upgrade "$@" ;;
+  agent)   shift; cmd_agent "$@" ;;
   allow)   shift; cmd_allow "$@" ;;
   reload)  shift; cmd_reload ;;
   review)  shift; cmd_review ;;

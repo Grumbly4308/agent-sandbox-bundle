@@ -17,6 +17,11 @@ install -d -m 0700 "$HOME_DIR/.claude" "$HOME_DIR/.ssh" "$HOME_DIR/.local/bin"
 if [ -d "$PROFILE_DIR/claude" ]; then
   cp -a "$PROFILE_DIR/claude/." "$HOME_DIR/.claude/"
 fi
+# Codex reads ~/.codex (AGENTS.md, config.toml) the way Claude reads ~/.claude.
+if [ -d "$PROFILE_DIR/codex" ]; then
+  install -d -m 0700 "$HOME_DIR/.codex"
+  cp -a "$PROFILE_DIR/codex/." "$HOME_DIR/.codex/"
+fi
 
 # --- 2. Custom commands on PATH ---------------------------------------------
 if [ -d "$PROFILE_DIR/bin" ]; then
@@ -46,6 +51,12 @@ restore_auth() {
     cp "$AUTH_DIR/.claude.json" "$HOME_DIR/.claude.json"
     chmod 600 "$HOME_DIR/.claude.json"
   fi
+  # Codex keeps its session in ~/.codex/auth.json; same dance, one file.
+  if [ -s "$AUTH_DIR/codex-auth.json" ] && [ -r "$AUTH_DIR/codex-auth.json" ]; then
+    install -d -m 0700 "$HOME_DIR/.codex"
+    cp "$AUTH_DIR/codex-auth.json" "$HOME_DIR/.codex/auth.json"
+    chmod 600 "$HOME_DIR/.codex/auth.json"
+  fi
 }
 
 save_auth() {
@@ -60,6 +71,10 @@ save_auth() {
   if [ -f "$HOME_DIR/.claude.json" ]; then
     cp -f "$HOME_DIR/.claude.json" "$AUTH_DIR/.claude.json"
     chmod 600 "$AUTH_DIR/.claude.json"
+  fi
+  if [ -f "$HOME_DIR/.codex/auth.json" ]; then
+    cp -f "$HOME_DIR/.codex/auth.json" "$AUTH_DIR/codex-auth.json"
+    chmod 600 "$AUTH_DIR/codex-auth.json"
   fi
   return 0
 }
