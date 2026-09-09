@@ -1,0 +1,26 @@
+# Claude (Anthropic) endpoints — on the generated allowlist only while
+# SANDBOX_AGENT=claude. Swap agents with:  ./sandbox agent codex
+
+# --- Model API --------------------------------------------------------------
+api.anthropic.com
+# statsig.anthropic.com      # uncomment if the CLI's feature-flag calls hang
+
+# --- Claude Code: login, updates and connectors -----------------------------
+# Needed only if you authenticate the CLI interactively (`./sandbox login`) or
+# let it update itself. On an API-key-only setup you can delete this block —
+# every line is a destination data could leave through.
+claude.ai
+claude.com
+code.claude.com
+platform.claude.com
+downloads.claude.ai
+bridge.claudeusercontent.com
+mcp-proxy.anthropic.com
+
+# The CLI's release artifacts are served from Google's object storage. This is
+# a shared bucket host, so it is the loosest entry on this list: anyone can
+# create a bucket there. Comment it out unless you need self-update to work.
+storage.googleapis.com
+
+# Homebrew's formula index — only needed if the agent installs via brew.
+# formulae.brew.sh
