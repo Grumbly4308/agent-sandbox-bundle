@@ -14,6 +14,7 @@ grep -q 'uid=' docker-compose.yml            && no "docker-compose.yml is OLD �
 grep -q 'resolve_identity' sandbox           && ok "uid/gid resolved live from id(1)"    || no "sandbox is OLD — uid/gid frozen in .env"
 grep -q 'replace_stale_proxy' sandbox        && ok "stale proxy containers are replaced" || no "sandbox is OLD — 'name already in use' will bite"
 grep -q 'USER squid' proxy/Dockerfile        && ok "proxy starts unprivileged"              || no "proxy/Dockerfile is OLD"
+grep -q 'resolve_agent' sandbox              && ok "per-agent allowlists (claude/codex)"    || no "sandbox is OLD — no ./sandbox agent"
 grep -q 'attribution' profile/claude/settings.json && ok "attribution suppressed"           || no "settings.json is OLD"
 grep -q '^SANDBOX_NAME=' .env 2>/dev/null    && ok "SANDBOX_NAME set ($(grep '^SANDBOX_NAME=' .env | cut -d= -f2))" || no ".env has no SANDBOX_NAME"
 grep -q '^SANDBOX_USERNS=' .env 2>/dev/null  && ok "SANDBOX_USERNS present"                 || no ".env predates SANDBOX_USERNS (add it, or copy .env.example keys)"
