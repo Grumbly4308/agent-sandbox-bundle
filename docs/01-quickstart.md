@@ -185,7 +185,7 @@ That is genuinely all. Everything else is either optional or filled in for you:
 |---|---|
 | `HOST_UID` / `HOST_GID` | Read live from `id -u` / `id -g` on every run and written back here automatically. |
 | `SANDBOX_NAME` | Taken from this directory's name, so each project copy gets its own containers. |
-| `ANTHROPIC_API_KEY` | Not needed if you log in in step 5. Add one later for unattended runs, with a spend limit. |
+| `ANTHROPIC_API_KEY` | Not needed if you log in in step 5. Add one later for unattended runs, with a spend limit. (Running codex instead? `OPENAI_API_KEY` is its equivalent.) |
 | `GIT_TOKEN` | Not needed. You push from your own shell, so the container never holds repo credentials. |
 | `AGENT_MEMORY`, `AGENT_CPUS`, everything else | Sensible defaults (4 GB, 2 CPUs) are built in. |
 
@@ -217,9 +217,10 @@ container), adds its host to the egress allowlist, and writes the rest of `.env`
 > have permission".
 
 **`login`** starts the agent once so you can authenticate. Type `/login` at the
-prompt, finish in the browser, then exit. The session is saved to `auth/` and
-reused by every later run — without this you would log in again every session,
-because the container's home directory is wiped each time.
+prompt (codex offers its sign-in on first run), finish in the browser, then
+exit. The session is saved to `auth/` and reused by every later run — without
+this you would log in again every session, because the container's home
+directory is wiped each time.
 
 > Headless VM with no browser? The flow prints a URL. Open it on your laptop and
 > paste the code back into the terminal.
@@ -336,7 +337,8 @@ cp .env.example .env && chmod 600 .env && nano .env
 | `./sandbox logs proxy` | Watch every request the agent makes, allowed or blocked |
 | `./sandbox status` | What's running, which branch, which credentials are set |
 | `./sandbox doctor` | Diagnose and repair a broken setup |
-| `./sandbox upgrade` | Rebuild the image with a newer agent CLI |
+| `./sandbox upgrade [ver]` | Rebuild the image with a newer agent CLI; pin or unpin a version |
+| `./sandbox agent <name>` | Switch the coding agent (claude / codex) and swap the allowlist |
 | `./sandbox destroy` | Tear it all down |
 
 ---

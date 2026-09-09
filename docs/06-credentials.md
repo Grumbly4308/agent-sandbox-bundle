@@ -186,6 +186,22 @@ and is mounted into a container that runs model-directed code. Accordingly:
 The compose file already passes it through. Same caveats as (2): treat it as a
 password, prefer an API key where a spend limit matters.
 
+### Running codex instead
+
+The same three shapes exist under `SANDBOX_AGENT=codex` (see the agent-sandbox
+README for the switch itself): `OPENAI_API_KEY` in `.env` is the key option,
+and `./sandbox login` saves the ChatGPT sign-in as `auth/codex-auth.json`, the
+codex counterpart of `.credentials.json`.
+
+Two hygiene points the swap enforces, and one it cannot:
+
+- the entrypoint materialises **only the active vendor's** saved login into
+  `$HOME`, and drops the inactive vendor's API keys from the environment before
+  the repo's own install hooks run;
+- but `auth/` itself is one read-write mount, so a saved login for the *other*
+  vendor stays readable from inside the container until `./sandbox logout`
+  removes it. Switching vendors for good? Log out first, then switch.
+
 ## Self-hosted GitLab or GitHub Enterprise
 
 Two extra steps:

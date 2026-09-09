@@ -420,14 +420,13 @@ removes a network call that is guaranteed to fail. The image becomes the single
 source of truth for the version. Move it forward deliberately:
 
 ```bash
-./sandbox upgrade        # rebuild without cache, then print the new version
+./sandbox upgrade          # rebuild without cache, then print the new version
+./sandbox upgrade 2.1.223  # pin that version in .env, then rebuild
+./sandbox upgrade latest   # drop the pin again
 ```
 
-Pin it if you want reproducible builds — `.env`:
-
-```
-AGENT_CLI=@anthropic-ai/claude-code@2.1.223
-```
+The pin lands in `.env` as `AGENT_CLI=@anthropic-ai/claude-code@2.1.223`, which
+you can also write by hand — `upgrade` recognizes and preserves it.
 
 ### `Remote Control is unavailable` / feature flags not evaluating
 
