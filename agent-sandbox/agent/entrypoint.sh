@@ -94,6 +94,19 @@ if [ -d "$AUTH_DIR" ]; then
   restore_auth
 fi
 
+# --- 4b. Credential hygiene --------------------------------------------------
+# Only the active vendor's secrets stay in the environment. Compose passes both
+# vendors' keys through unconditionally — interpolation cannot branch on
+# SANDBOX_AGENT — so the inactive one is dropped here, and it has to happen
+# BEFORE profile/setup.sh below: that step runs the repo's own install hooks
+# (npm lifecycle scripts, pip builds), which is exactly the untrusted code the
+# key must not be visible to.
+if [ "${SANDBOX_AGENT:-claude}" = codex ]; then
+  unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN
+else
+  unset OPENAI_API_KEY
+fi
+
 # --- 5. Git identity --------------------------------------------------------
 git config --global user.name  "${GIT_AUTHOR_NAME:-agent}"
 git config --global user.email "${GIT_AUTHOR_EMAIL:-agent@sandbox.local}"
@@ -175,16 +188,6 @@ if [ -x "$PROFILE_DIR/setup.sh" ]; then
 fi
 
 # --- 8. Run the agent -------------------------------------------------------
-# Only the active vendor's secrets go into the agent's environment. Compose
-# passes both vendors' keys through unconditionally — interpolation cannot
-# branch on SANDBOX_AGENT — so the inactive one is dropped here, before any
-# agent process exists to read it.
-if [ "${SANDBOX_AGENT:-claude}" = codex ]; then
-  unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN
-else
-  unset OPENAI_API_KEY
-fi
-
 # Not `exec`, because we may need to copy the login back out afterwards.
 # tini is still PID 1, so subprocess reaping is unaffected.
 if [ -n "${SANDBOX_PERSIST_AUTH:-}" ]; then

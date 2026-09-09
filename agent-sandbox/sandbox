@@ -888,22 +888,26 @@ cmd_agent() {
   cmd_reload
   info "agent is now $want — the allowlist carries only the $want endpoints"
 
-  # The swap does not touch the other vendor's credentials; say so rather than
-  # leave a live token drifting into future sessions. (The entrypoint also
-  # withholds the inactive vendor's secrets from the container.)
+  # The swap does not touch the other vendor's credentials. The entrypoint
+  # drops the inactive vendor's env keys and does not materialise its saved
+  # login — but auth/ itself stays mounted read-write at /run/auth, owned by
+  # the same uid the agent runs as, so a saved login for the OTHER vendor is
+  # still readable from inside the container. Only removing it fixes that.
   if [ "$want" = codex ]; then
     if grep -qE '^(ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN)=.+' "$ENV_FILE" 2>/dev/null; then
       warn "an Anthropic key/token is still set in .env — blank it if you are done with claude"
     fi
     if [ -s "$AUTH_DIR/.credentials.json" ]; then
-      warn "a saved Claude login remains in auth/ — ./sandbox logout clears it"
+      warn "a saved Claude login remains in auth/, which is mounted into every session"
+      warn "and readable by the agent — ./sandbox logout removes it"
     fi
   else
     if grep -qE '^OPENAI_API_KEY=.+' "$ENV_FILE" 2>/dev/null; then
       warn "OPENAI_API_KEY is still set in .env — blank it if you are done with codex"
     fi
     if [ -s "$AUTH_DIR/codex-auth.json" ]; then
-      warn "a saved codex login remains in auth/ — ./sandbox logout clears it"
+      warn "a saved codex login remains in auth/, which is mounted into every session"
+      warn "and readable by the agent — ./sandbox logout removes it"
     fi
   fi
   bold "bake the $want CLI into the image:  ./sandbox upgrade"

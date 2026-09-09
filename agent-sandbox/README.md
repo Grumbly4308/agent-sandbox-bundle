@@ -89,6 +89,14 @@ One agent per bundle, deliberately: one image, one credential set, one vendor
 on the allowlist. Run the same repo under both agents by copying the bundle,
 as with any two projects (below).
 
+One caveat the swap cannot fix for you: `auth/` is mounted read-write into
+every session, so a *saved login* for the other vendor stays readable from
+inside the container until you `./sandbox logout`. The entrypoint drops the
+inactive vendor's API keys from the environment and does not materialise its
+saved session, and `./sandbox agent` warns when leftovers exist — but the file
+in `auth/` is only gone when you remove it. If you switch vendors for good,
+log out first.
+
 ## Several projects
 
 One repo per bundle. Copy the directory per project and let `init` set a
