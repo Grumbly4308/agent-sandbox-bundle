@@ -679,14 +679,39 @@ cmd_logout() {
 # /usr/local/lib/node_modules and reports `install_failed` every start. Even if
 # it succeeded, the container is destroyed on exit and the update would go with
 # it. The image is the artifact; rebuild it deliberately.
+#
+#   ./sandbox upgrade            rebuild on whatever AGENT_CLI resolves to
+#   ./sandbox upgrade latest     drop the version pin, rebuild on npm's latest
+#   ./sandbox upgrade 2.1.0      pin that version in .env, rebuild
 # --------------------------------------------------------------------------
 cmd_upgrade() {
   detect_runtime
-  local pinned; pinned="$(env_get AGENT_CLI)"
-  case "$pinned" in
-    *@[0-9]*)
-      warn "AGENT_CLI is pinned to '$pinned' — edit .env to move to a new version" ;;
-  esac
+  local want="${1:-}"
+  local cur; cur="$(env_get AGENT_CLI)"
+  [ -n "$cur" ] || cur="@anthropic-ai/claude-code"
+
+  # Split off a version pin: a trailing @<digit...> after the package name.
+  # (Scoped packages start with @, so only the *last* @ can be a pin.)
+  local base="$cur"
+  case "$cur" in *@[0-9]*) base="${cur%@*}" ;; esac
+
+  if [ -n "$want" ]; then
+    [ -f "$ENV_FILE" ] || die "no .env — run: ./sandbox init <repo-url>"
+    case "$want" in
+      latest)
+        env_set AGENT_CLI "$base"
+        info "unpinned AGENT_CLI ($base) — building whatever npm calls latest" ;;
+      [0-9]*)
+        env_set AGENT_CLI "$base@$want"
+        info "pinned AGENT_CLI=$base@$want" ;;
+      *)
+        die "usage: ./sandbox upgrade [latest|<version>]   (got '$want')" ;;
+    esac
+  elif [ "$base" != "$cur" ]; then
+    warn "AGENT_CLI is pinned to '$cur' — this rebuild keeps that version."
+    warn "move forward with:  ./sandbox upgrade latest   (or a specific version)"
+  fi
+
   info "rebuilding the agent image from scratch ($RUNTIME)"
   dc build --no-cache --pull agent || dc build --no-cache agent
   info "version now baked into the image:"
@@ -1018,7 +1043,8 @@ Run
   verify               Run the sandbox self-test (walls, egress, mounts)
 
 Maintenance
-  upgrade              Rebuild the agent image to pick up a newer CLI
+  upgrade [version]    Rebuild the agent image to pick up a newer CLI;
+                       'latest' drops a version pin, '2.1.0' sets one
 
 Policy
   allow <domain>...    Add hosts to the egress allowlist and reload
@@ -1047,7 +1073,7 @@ case "${1:-}" in
   go)      shift; cmd_go "$@" ;;
   shell)   shift; cmd_shell ;;
   verify)  shift; cmd_verify ;;
-  upgrade) shift; cmd_upgrade ;;
+  upgrade) shift; cmd_upgrade "$@" ;;
   allow)   shift; cmd_allow "$@" ;;
   reload)  shift; cmd_reload ;;
   review)  shift; cmd_review ;;
