@@ -1,0 +1,12 @@
+# Codex (OpenAI) endpoints — on the generated allowlist only while
+# SANDBOX_AGENT=codex. Swap agents with:  ./sandbox agent claude
+
+# --- Model API --------------------------------------------------------------
+api.openai.com
+
+# --- Sign in with ChatGPT ---------------------------------------------------
+# Needed only for the interactive login (`./sandbox login`). On an
+# API-key-only setup (OPENAI_API_KEY in .env) you can delete this block —
+# every line is a destination data could leave through.
+auth.openai.com
+chatgpt.com

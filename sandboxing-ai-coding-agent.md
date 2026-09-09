@@ -134,7 +134,9 @@ agent-sandbox/
 ├── proxy/
 │   ├── Dockerfile           # stock Alpine + Squid, no third-party image
 │   ├── squid.conf           # default-deny allowlist
-│   └── allowlist.txt        # the hosts the agent may reach — this is your policy
+│   ├── allowlist.txt        # GENERATED: what squid reads — vendor block + base
+│   ├── allowlist.base.txt   # your policy: hosts allowed whichever agent runs
+│   └── agents/              # per-vendor endpoint blocks (claude.txt, codex.txt)
 │
 ├── profile/                 # ★ your defaults, version-controlled, mounted read-only
 │   ├── claude/settings.json #   permission rules + hooks
@@ -230,7 +232,7 @@ Three details that are easy to get wrong:
 
 **The CLI is installed as root into `/usr/local`.** The agent runs as `agent` and the filesystem is read-only, so it cannot modify or replace its own binary — which matters, because a compromised agent that can rewrite its own harness can rewrite its own permission checks.
 
-To use a different agent, change `AGENT_CLI` in `.env` (for npm-based CLIs) or swap the `npm install -g` line for `pip install aider-chat` and adjust `CMD`.
+To use a different agent: `./sandbox agent codex` (or `claude`) handles the built-in pair — it sets `AGENT_CLI`/`AGENT_BIN` in `.env`, swaps the vendor block of the egress allowlist and asks for the rebuild. For anything else, change `AGENT_CLI` in `.env` (for npm-based CLIs) or swap the `npm install -g` line for `pip install aider-chat` and adjust `CMD`.
 
 ### The runtime flags
 
@@ -488,7 +490,7 @@ For HTTPS the agent issues `CONNECT api.anthropic.com:443` and Squid matches on 
 
 ### The allowlist is your policy file
 
-`proxy/allowlist.txt` — one host per line, a leading dot matching the domain and its subdomains:
+`proxy/allowlist.txt` — one host per line, a leading dot matching the domain and its subdomains. Since the per-agent split it is **generated**: the active agent's vendor block (`proxy/agents/<name>.txt`) plus everything agent-independent (`proxy/allowlist.base.txt`, where your own entries live and survive an agent swap):
 
 ```
 api.anthropic.com

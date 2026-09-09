@@ -46,6 +46,7 @@ exec "$@"
 |---|---|---|
 | `claude/settings.json` | `~/.claude/settings.json` | Permission allow / ask / deny lists, hooks, env |
 | `claude/CLAUDE.md` | `~/.claude/CLAUDE.md` | Standing instructions read every session |
+| `codex/AGENTS.md` | `~/.codex/AGENTS.md` | The same standing instructions, when `SANDBOX_AGENT=codex` |
 | `bin/*` | `~/.local/bin/*` | Custom commands on `PATH` — `qa`, deploy scripts, whatever |
 | `shellrc.sh` | `~/.bashrc` | Aliases, a prompt that reminds you where you are |
 | `setup.sh` | *runs at start* | Per-session bootstrap: `npm ci`, virtualenv, codegen |

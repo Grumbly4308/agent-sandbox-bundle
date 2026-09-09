@@ -34,6 +34,7 @@ Something broken: `./sandbox doctor`, then `../docs/08-troubleshooting.md`.
 | `docker-compose.podman.yml` | Applied on top when `SANDBOX_RUNTIME=podman`. |
 | `agent/` | The agent image and the entrypoint that rebuilds `$HOME` from `profile/`. |
 | `proxy/` | A stock Squid configured as a default-deny allowlist. No third-party image. |
+| `proxy/agents/` | Per-vendor allowlist blocks; the active one is compiled into `allowlist.txt`. |
 | `profile/` | **Your defaults, version-controlled.** Survives every sandbox regeneration. |
 | `scripts/verify.sh` | Self-test: read-only rootfs, dropped caps, blocked egress, mounts. |
 | `scripts/make-seccomp.sh` | Optional Layer 4 — a tightened seccomp profile. |
@@ -52,6 +53,7 @@ into the container's ephemeral `$HOME` at every start:
 | --- | --- | --- |
 | `claude/settings.json` | `~/.claude/settings.json` | Permission allow/ask/deny lists, attribution, hooks |
 | `claude/CLAUDE.md` | `~/.claude/CLAUDE.md` | Standing instructions for the agent |
+| `codex/AGENTS.md` | `~/.codex/AGENTS.md` | The same standing instructions, for codex |
 | `bin/*` | `~/.local/bin/*` | Custom commands on `PATH` (e.g. `qa`) |
 | `shellrc.sh` | `~/.bashrc` | Aliases, prompt, env |
 | `setup.sh` | runs at start | Per-session bootstrap (`npm ci`, venv, …) |
@@ -64,6 +66,36 @@ Shipped defaults worth knowing about: `attribution.commit` and `attribution.pr`
 are empty strings, and `CLAUDE.md` forbids `Co-Authored-By` and every other AI
 trailer — the tool is a tool, you are the author. `./sandbox verify` checks both
 are in place and `./sandbox review` greps outgoing commits for them.
+
+## Choosing the agent
+
+Claude Code is the default. Each bundle (one per project) can run codex
+instead:
+
+```bash
+./sandbox agent codex     # rewrites .env, swaps the allowlist, reloads the proxy
+./sandbox upgrade         # rebuild so the image carries the codex CLI
+./sandbox login           # sign in with ChatGPT — or put OPENAI_API_KEY in .env
+```
+
+`SANDBOX_AGENT` in `.env` records the choice; `OPENAI_API_KEY` is the codex
+equivalent of `ANTHROPIC_API_KEY`. The egress allowlist is generated from
+`proxy/allowlist.base.txt` plus `proxy/agents/<agent>.txt`, so exactly one
+vendor's endpoints are reachable at a time — `./sandbox verify` checks that
+the inactive vendor's API is actually refused. Your own entries
+(`./sandbox allow`) live in the base file and survive the swap.
+
+One agent per bundle, deliberately: one image, one credential set, one vendor
+on the allowlist. Run the same repo under both agents by copying the bundle,
+as with any two projects (below).
+
+One caveat the swap cannot fix for you: `auth/` is mounted read-write into
+every session, so a *saved login* for the other vendor stays readable from
+inside the container until you `./sandbox logout`. The entrypoint drops the
+inactive vendor's API keys from the environment and does not materialise its
+saved session, and `./sandbox agent` warns when leftovers exist — but the file
+in `auth/` is only gone when you remove it. If you switch vendors for good,
+log out first.
 
 ## Several projects
 

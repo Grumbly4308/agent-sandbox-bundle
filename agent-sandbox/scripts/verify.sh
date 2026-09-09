@@ -39,18 +39,33 @@ deny  "host root filesystem not mounted"           '[ -d /host ] || [ -d /mnt/ho
 
 echo
 echo "── egress (allowlist) ──"
+# The reachable/blocked pair swaps with the active agent: the *other* vendor's
+# API must be refused, or the per-agent allowlist swap is not actually applied.
+if [ "${SANDBOX_AGENT:-claude}" = codex ]; then
+  api_ok=api.openai.com;    url_ok=https://api.openai.com/v1/models
+  api_no=api.anthropic.com; url_no=https://api.anthropic.com/v1/models
+else
+  api_ok=api.anthropic.com; url_ok=https://api.anthropic.com/v1/models
+  api_no=api.openai.com;    url_no=https://api.openai.com/v1/models
+fi
 check "proxy env is set"                           '[ -n "$HTTPS_PROXY" ]'
 deny  "no direct route to the internet"            'curl -s --noproxy "*" --max-time 5 https://example.com'
-check "allowed host reachable (api.anthropic.com)" 'curl -sS -o /dev/null --max-time 15 https://api.anthropic.com/v1/models'
+check "allowed host reachable ($api_ok)"           'curl -sS -o /dev/null --max-time 15 $url_ok'
+deny  "inactive agent blocked ($api_no)"           'curl -sS -o /dev/null --max-time 15 --fail $url_no'
 deny  "blocked host refused (example.com)"         'curl -sS -o /dev/null --max-time 15 --fail https://example.com'
 
 echo
 echo "── profile ──"
-check "settings.json materialised"                 '[ -f "$HOME/.claude/settings.json" ]'
-check "settings.json is valid JSON"                'jq -e . "$HOME/.claude/settings.json"'
-check "attribution trailers suppressed"            'jq -e ".attribution.commit == \"\" and .attribution.pr == \"\"" "$HOME/.claude/settings.json"'
-check "CLAUDE.md materialised"                     '[ -f "$HOME/.claude/CLAUDE.md" ]'
-check "CLAUDE.md forbids AI attribution"           'grep -qi "co-authored-by" "$HOME/.claude/CLAUDE.md"'
+if [ "${SANDBOX_AGENT:-claude}" = codex ]; then
+  check "AGENTS.md materialised"                   '[ -f "$HOME/.codex/AGENTS.md" ]'
+  check "AGENTS.md forbids AI attribution"         'grep -qi "co-authored-by" "$HOME/.codex/AGENTS.md"'
+else
+  check "settings.json materialised"               '[ -f "$HOME/.claude/settings.json" ]'
+  check "settings.json is valid JSON"              'jq -e . "$HOME/.claude/settings.json"'
+  check "attribution trailers suppressed"          'jq -e ".attribution.commit == \"\" and .attribution.pr == \"\"" "$HOME/.claude/settings.json"'
+  check "CLAUDE.md materialised"                   '[ -f "$HOME/.claude/CLAUDE.md" ]'
+  check "CLAUDE.md forbids AI attribution"         'grep -qi "co-authored-by" "$HOME/.claude/CLAUDE.md"'
+fi
 check "qa is on PATH"                              'command -v qa'
 
 echo

@@ -118,11 +118,17 @@ pypi.org
 files.pythonhosted.org
 ```
 
-It is bind-mounted into the container read-only, so editing it needs no rebuild:
+It is bind-mounted into the container read-only, so editing it needs no rebuild.
+Since the per-agent split, `allowlist.txt` is **generated**: the vendor
+endpoints for the active agent (`proxy/agents/claude.txt` or
+`proxy/agents/codex.txt`) plus everything agent-independent
+(`proxy/allowlist.base.txt`) — so switching agents with `./sandbox agent`
+swaps exactly the vendor block and nothing else. Your own entries go in the
+base file and survive the swap:
 
 ```bash
-./sandbox allow docs.internal.example.com     # append + SIGHUP the proxy
-./sandbox reload                              # after editing the file by hand
+./sandbox allow docs.internal.example.com     # append to base + regenerate + SIGHUP
+./sandbox reload                              # after editing the source files by hand
 ```
 
 Keep this list short and boring. Every entry is a channel data could leave

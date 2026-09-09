@@ -48,6 +48,7 @@ What you get:
 | | |
 |---|---|
 | Egress allowlist | Per project. The API repo's internal hosts are not reachable from the frontend's sandbox. |
+| Coding agent | Per project. `SANDBOX_AGENT` in each `.env` — one bundle can run claude, another codex. |
 | Credentials | Per project. Separate `.env`, separate `secrets/deploy_key`, separate token to revoke. |
 | Agent policy | Per project. `profile/` is copied, so you can loosen `qa` or permissions for one repo only. |
 | Concurrency | Full. Two agents on two repos at once, each with its own proxy. |
