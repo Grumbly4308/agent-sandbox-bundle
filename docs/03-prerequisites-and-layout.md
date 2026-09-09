@@ -46,11 +46,14 @@ agent-sandbox/
 ├── proxy/
 │   ├── Dockerfile           # stock Alpine + Squid, no third-party image
 │   ├── squid.conf           # default-deny allowlist
-│   └── allowlist.txt        # the hosts the agent may reach — this is your policy
+│   ├── allowlist.txt        # GENERATED: what squid reads — vendor block + base
+│   ├── allowlist.base.txt   # your policy: hosts allowed whichever agent runs
+│   └── agents/              # per-vendor endpoint blocks (claude.txt, codex.txt)
 │
 ├── profile/                 # ★ your defaults, version-controlled, mounted read-only
 │   ├── claude/settings.json #   permission rules + hooks
 │   ├── claude/CLAUDE.md     #   standing instructions
+│   ├── codex/AGENTS.md      #   the same standing instructions, for codex
 │   ├── bin/qa               #   custom commands on PATH
 │   ├── shellrc.sh           #   aliases, prompt
 │   └── setup.sh             #   per-session bootstrap
@@ -141,9 +144,10 @@ the parts that are per-session or secret:
 | `sandbox`, `docker-compose.yml` | `.env`, `secrets/*`, `auth/` |
 | `agent/`, `proxy/`, `scripts/` | `project/`, `workspace/` |
 | **`profile/`** — your agent policy | `logs/*`, `agent-seccomp.json` |
-| `proxy/allowlist.txt` — your egress policy | |
+| `proxy/allowlist.base.txt` + `proxy/agents/` — your egress policy | |
+| `proxy/allowlist.txt` — generated from the two above | |
 
-Committing `profile/` and `allowlist.txt` is the point: changes to what your
+Committing `profile/` and the allowlist sources is the point: changes to what your
 agent is allowed to do become reviewable pull requests with authorship and
 history, instead of undocumented local drift. On a team it is the difference
 between "everyone's agent is configured somehow" and "here is our agent policy".

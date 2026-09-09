@@ -1,0 +1,26 @@
+# Agent-independent half of the egress allowlist. One host per line; `#`
+# comments and blank lines are fine. A leading dot matches the domain and
+# every subdomain beneath it.
+#
+# The file squid reads (allowlist.txt) is GENERATED from this file plus
+# proxy/agents/<agent>.txt for whichever agent is active. Edit and apply with:
+#     ./sandbox allow <domain>        (or edit here + ./sandbox reload)
+# Everything not listed is unreachable from the agent container.
+
+# --- Source hosting ---------------------------------------------------------
+# .github.com covers github.com, api.github.com, codeload.github.com and
+# ssh.github.com (the SSH-over-443 endpoint used by deploy keys).
+.github.com
+.githubusercontent.com
+# .gitlab.com covers gitlab.com and altssh.gitlab.com.
+.gitlab.com
+
+# --- Package registries -----------------------------------------------------
+.npmjs.org
+pypi.org
+files.pythonhosted.org
+
+# Add your own below — private registries, internal APIs the tests need, docs
+# sites you want the agent to be able to read. Keep this list boring and short:
+# every entry is a channel a prompt injection could exfiltrate through.
+# `./sandbox init` appends your repo's own host here automatically.

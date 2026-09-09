@@ -72,8 +72,13 @@ the filesystem is read-only, so it cannot modify or replace its own binary —
 which matters, because an agent that can rewrite its own harness can rewrite its
 own permission checks.
 
-To use a different agent: change `AGENT_CLI` in `.env` for npm-based CLIs, or
-swap the `npm install -g` line for `pip install aider-chat` and adjust `CMD`.
+To use a different agent: `./sandbox agent codex` (or `claude`) handles the
+built-in pair — it sets `AGENT_CLI`/`AGENT_BIN` in `.env`, swaps the vendor
+block of the egress allowlist ([05](05-egress-proxy.md)) and asks for the
+rebuild. For anything else, set `AGENT_CLI` in `.env` yourself for npm-based
+CLIs (and `AGENT_BIN` to its launcher name), or swap the `npm install -g` line
+for `pip install aider-chat` and adjust `CMD` — and give it an allowlist block
+under `proxy/agents/` while you are at it.
 
 ## The runtime flags
 
