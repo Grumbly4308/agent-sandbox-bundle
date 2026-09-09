@@ -49,6 +49,7 @@
       "Read(//run/secrets/**)",
       "Read(//run/auth/**)",
       "Read(//home/agent/.claude/.credentials.json)",
+      "Read(//home/agent/.codex/auth.json)",
       "Read(//home/agent/.ssh/**)",
       "Read(./.env)",
       "Read(./.env.*)",

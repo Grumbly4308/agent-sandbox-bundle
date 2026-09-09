@@ -42,7 +42,21 @@ fi
 # exit. Nothing else in $HOME is ever persisted.
 # .credentials.json is the session itself; .claude.json carries the account and
 # onboarding state, and without it the CLI re-runs first-run setup every time.
+#
+# Only the ACTIVE agent's session is materialised and saved back. The inactive
+# vendor's login sitting readable in $HOME would hand a prompt-injected agent a
+# live token it has no business seeing — and one the profile's deny rules were
+# never written to cover.
 restore_auth() {
+  if [ "${SANDBOX_AGENT:-claude}" = codex ]; then
+    # Codex keeps its session in ~/.codex/auth.json; same dance, one file.
+    if [ -s "$AUTH_DIR/codex-auth.json" ] && [ -r "$AUTH_DIR/codex-auth.json" ]; then
+      install -d -m 0700 "$HOME_DIR/.codex"
+      cp "$AUTH_DIR/codex-auth.json" "$HOME_DIR/.codex/auth.json"
+      chmod 600 "$HOME_DIR/.codex/auth.json"
+    fi
+    return 0
+  fi
   if [ -s "$AUTH_DIR/.credentials.json" ] && [ -r "$AUTH_DIR/.credentials.json" ]; then
     cp "$AUTH_DIR/.credentials.json" "$HOME_DIR/.claude/.credentials.json"
     chmod 600 "$HOME_DIR/.claude/.credentials.json"
@@ -51,17 +65,18 @@ restore_auth() {
     cp "$AUTH_DIR/.claude.json" "$HOME_DIR/.claude.json"
     chmod 600 "$HOME_DIR/.claude.json"
   fi
-  # Codex keeps its session in ~/.codex/auth.json; same dance, one file.
-  if [ -s "$AUTH_DIR/codex-auth.json" ] && [ -r "$AUTH_DIR/codex-auth.json" ]; then
-    install -d -m 0700 "$HOME_DIR/.codex"
-    cp "$AUTH_DIR/codex-auth.json" "$HOME_DIR/.codex/auth.json"
-    chmod 600 "$HOME_DIR/.codex/auth.json"
-  fi
 }
 
 save_auth() {
   if [ ! -w "$AUTH_DIR" ]; then
     echo "sandbox: /run/auth is not writable; login not saved" >&2
+    return 0
+  fi
+  if [ "${SANDBOX_AGENT:-claude}" = codex ]; then
+    if [ -f "$HOME_DIR/.codex/auth.json" ]; then
+      cp -f "$HOME_DIR/.codex/auth.json" "$AUTH_DIR/codex-auth.json"
+      chmod 600 "$AUTH_DIR/codex-auth.json"
+    fi
     return 0
   fi
   if [ -f "$HOME_DIR/.claude/.credentials.json" ]; then
@@ -71,10 +86,6 @@ save_auth() {
   if [ -f "$HOME_DIR/.claude.json" ]; then
     cp -f "$HOME_DIR/.claude.json" "$AUTH_DIR/.claude.json"
     chmod 600 "$AUTH_DIR/.claude.json"
-  fi
-  if [ -f "$HOME_DIR/.codex/auth.json" ]; then
-    cp -f "$HOME_DIR/.codex/auth.json" "$AUTH_DIR/codex-auth.json"
-    chmod 600 "$AUTH_DIR/codex-auth.json"
   fi
   return 0
 }
@@ -164,6 +175,16 @@ if [ -x "$PROFILE_DIR/setup.sh" ]; then
 fi
 
 # --- 8. Run the agent -------------------------------------------------------
+# Only the active vendor's secrets go into the agent's environment. Compose
+# passes both vendors' keys through unconditionally — interpolation cannot
+# branch on SANDBOX_AGENT — so the inactive one is dropped here, before any
+# agent process exists to read it.
+if [ "${SANDBOX_AGENT:-claude}" = codex ]; then
+  unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN
+else
+  unset OPENAI_API_KEY
+fi
+
 # Not `exec`, because we may need to copy the login back out afterwards.
 # tini is still PID 1, so subprocess reaping is unaffected.
 if [ -n "${SANDBOX_PERSIST_AUTH:-}" ]; then

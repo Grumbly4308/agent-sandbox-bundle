@@ -158,7 +158,12 @@ ALLOWLIST_BASE="$ROOT/proxy/allowlist.base.txt"
 regen_allowlist() {
   resolve_agent
   local vendor="$ROOT/proxy/agents/$AGENT.txt"
-  [ -f "$ALLOWLIST_BASE" ] && [ -f "$vendor" ] || return 0   # pre-split bundle
+  [ -f "$ALLOWLIST_BASE" ] || return 0                       # pre-split bundle
+  if [ ! -f "$vendor" ]; then
+    warn "proxy/agents/$AGENT.txt is missing — allowlist NOT regenerated;"
+    warn "squid is still enforcing whatever vendor block was active before"
+    return 0
+  fi
   if [ -f "$ALLOWLIST" ] && ! head -1 "$ALLOWLIST" | grep -q 'GENERATED'; then
     warn "proxy/allowlist.txt is hand-maintained (no GENERATED marker) — leaving it alone."
     warn "to enable the per-agent swap, move your custom entries into"
@@ -173,6 +178,19 @@ regen_allowlist() {
     echo
     cat "$ALLOWLIST_BASE"
   } > "$ALLOWLIST"
+}
+
+# Where custom entries belong: the base list while ./sandbox manages the
+# generated allowlist.txt, the allowlist itself otherwise (pre-split bundle,
+# or a hand-maintained opt-out) — appending to base in those cases would put
+# the entry in a file squid never reads.
+allowlist_target() {
+  if [ -f "$ALLOWLIST_BASE" ] \
+     && { [ ! -f "$ALLOWLIST" ] || head -1 "$ALLOWLIST" | grep -q 'GENERATED'; }; then
+    printf '%s' "$ALLOWLIST_BASE"
+  else
+    printf '%s' "$ALLOWLIST"
+  fi
 }
 
 detect_runtime() {
@@ -473,10 +491,9 @@ cmd_init() {
 
   # Make sure the repo's own host can be reached from inside the sandbox.
   # Custom entries live in the base list so they survive an agent swap; the
-  # plain allowlist is the fallback on a pre-split bundle.
+  # plain allowlist is the fallback when regeneration is not in charge.
   local host; host="$(url_host "$url")"
-  local list="$ALLOWLIST"
-  [ -f "$ALLOWLIST_BASE" ] && list="$ALLOWLIST_BASE"
+  local list; list="$(allowlist_target)"
   if [ -n "$host" ] && ! grep -qF "$host" "$list"; then
     info "allowlisting $host"
     printf '\n# added by ./sandbox init\n.%s\n' "${host#www.}" >> "$list"
@@ -842,9 +859,26 @@ cmd_agent() {
   esac
   [ -f "$ENV_FILE" ] || die "no .env — run: ./sandbox init <repo-url>"
 
+  # Refuse to switch when the allowlist cannot follow. Rewriting .env and then
+  # printing "carries only the $want endpoints" while squid still serves the
+  # old vendor block would be a false security statement.
+  local vendor="$ROOT/proxy/agents/$want.txt"
+  if [ ! -f "$ALLOWLIST_BASE" ] || [ ! -f "$vendor" ]; then
+    die "cannot switch: proxy/allowlist.base.txt or proxy/agents/$want.txt is missing
+  (pre-split bundle) — copy the new proxy/ files in first"
+  fi
+  if [ -f "$ALLOWLIST" ] && ! head -1 "$ALLOWLIST" | grep -q 'GENERATED'; then
+    die "cannot switch: proxy/allowlist.txt is hand-maintained (no GENERATED marker).
+  Move your entries into proxy/allowlist.base.txt, delete proxy/allowlist.txt,
+  and re-run."
+  fi
+
   env_set SANDBOX_AGENT "$want"
-  # Any version pin belonged to the previous agent's package; reset it.
+  # Any version pin belonged to the previous agent's package; reset it. The
+  # launcher binary is persisted too, because a bare `docker compose build`
+  # reads .env, not this process's exports.
   env_set AGENT_CLI "$(agent_pkg "$want")"
+  env_set AGENT_BIN "$(agent_bin "$want")"
   AGENT="$want"
   AGENT_CLI="$(agent_pkg "$want")"
   AGENT_BIN="$(agent_bin "$want")"
@@ -853,6 +887,25 @@ cmd_agent() {
   regen_allowlist
   cmd_reload
   info "agent is now $want — the allowlist carries only the $want endpoints"
+
+  # The swap does not touch the other vendor's credentials; say so rather than
+  # leave a live token drifting into future sessions. (The entrypoint also
+  # withholds the inactive vendor's secrets from the container.)
+  if [ "$want" = codex ]; then
+    if grep -qE '^(ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN)=.+' "$ENV_FILE" 2>/dev/null; then
+      warn "an Anthropic key/token is still set in .env — blank it if you are done with claude"
+    fi
+    if [ -s "$AUTH_DIR/.credentials.json" ]; then
+      warn "a saved Claude login remains in auth/ — ./sandbox logout clears it"
+    fi
+  else
+    if grep -qE '^OPENAI_API_KEY=.+' "$ENV_FILE" 2>/dev/null; then
+      warn "OPENAI_API_KEY is still set in .env — blank it if you are done with codex"
+    fi
+    if [ -s "$AUTH_DIR/codex-auth.json" ]; then
+      warn "a saved codex login remains in auth/ — ./sandbox logout clears it"
+    fi
+  fi
   bold "bake the $want CLI into the image:  ./sandbox upgrade"
 }
 
@@ -861,8 +914,7 @@ cmd_agent() {
 # --------------------------------------------------------------------------
 cmd_allow() {
   [ $# -gt 0 ] || die "usage: ./sandbox allow <domain> [domain...]"
-  local list="$ALLOWLIST"
-  [ -f "$ALLOWLIST_BASE" ] && list="$ALLOWLIST_BASE"
+  local list; list="$(allowlist_target)"
   for d in "$@"; do
     if grep -qxF "$d" "$list"; then
       info "$d already allowed"

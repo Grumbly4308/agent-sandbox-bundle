@@ -99,6 +99,8 @@ services:
       SANDBOX_AGENT: ${SANDBOX_AGENT:-claude}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # Codex (SANDBOX_AGENT=codex): key auth instead of the interactive login.
+      # Both vendors' keys pass through here because interpolation cannot
+      # branch; the entrypoint unsets whichever belongs to the inactive agent.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # Set by `./sandbox login`; makes the entrypoint save the session back to
       # auth/ on exit. Unset for normal runs: the login is read, never rewritten.
