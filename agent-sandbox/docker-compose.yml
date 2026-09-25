@@ -33,6 +33,13 @@ services:
       start_period: 5s
 
   agent:
+    # One image per agent and uid, NOT per project: every bundle copy on this
+    # account builds and runs the same tag, so `./sandbox upgrade` in any copy
+    # moves them all. The uid is in the tag because it is baked into the image
+    # (the agent user), and under a shared docker daemon two accounts must not
+    # trade images. AGENT_IMAGE in .env gives a copy that bakes its own tools
+    # into agent/Dockerfile a private name.
+    image: ${AGENT_IMAGE:-localhost/agent-sandbox-agent}:${SANDBOX_AGENT:-claude}-${HOST_UID:-1000}
     build:
       context: ./agent
       args:

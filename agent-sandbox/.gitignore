@@ -12,6 +12,9 @@ workspace/
 logs/*
 !logs/.gitkeep
 agent-seccomp.json
+# When this copy last built the agent image; agent/ files newer than it
+# trigger a cached rebuild on the next start.
+.agent-image-built
 
 # Everything else in this directory IS the artifact: commit it, review it in
 # PRs, and treat changes to profile/ and proxy/allowlist.txt as policy changes.
