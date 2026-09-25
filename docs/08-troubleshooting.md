@@ -428,6 +428,32 @@ source of truth for the version. Move it forward deliberately:
 The pin lands in `.env` as `AGENT_CLI=@anthropic-ai/claude-code@2.1.223`, which
 you can also write by hand — `upgrade` recognizes and preserves it.
 
+The image is **shared by every bundle copy on this account** — one tag per
+agent and uid (`localhost/agent-sandbox-agent:claude-1000`), not one per
+project — so one `upgrade`, run from any copy, moves them all. A start never
+rebuilds it; it only builds when the image is missing or when that copy's
+`agent/` changed. `./sandbox status` shows the image in use and when it was
+built.
+
+### `./sandbox upgrade` ran, but the version did not change
+
+`upgrade` now refuses to finish if the build did not produce a new image:
+
+```
+error: the image did not change — the build failed; see the output above
+```
+
+The usual cause is podman-compose 1.0.x, whose `build` exits 0 even when
+`podman build` fails — older copies of `./sandbox` took that at face value and
+printed the *old* version under "now baked into the image". Scroll up for the
+real error; a stalled download of the CLI's native binary (a couple of hundred
+megabytes, fetched as an npm optional dependency) is the common one.
+
+Two things `upgrade` does not do: it does not reach other accounts (each has
+its own image store, so run it there too), and it does not keep the version
+moving afterwards — auto-update is off by design, so each move is one
+deliberate `upgrade`.
+
 ### `Remote Control is unavailable` / feature flags not evaluating
 
 A consequence of `DISABLE_TELEMETRY=1` in the profile: feature-flag evaluation

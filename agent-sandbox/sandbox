@@ -87,8 +87,8 @@ resolve_identity() {
       info "identity: ${old_uid:-unset}:${old_gid:-unset} -> $HOST_UID:$HOST_GID ($(id -un)) — updating .env"
       env_set HOST_UID "$HOST_UID"
       env_set HOST_GID "$HOST_GID"
-      # The agent user is created at build time from these, so the build args
-      # change and the image layer cache invalidates itself. No action needed.
+      # The agent user is created at build time from these, and the uid is
+      # part of the image tag — so this is a different, not-yet-built image.
       info "the agent image will rebuild on the next run to match"
     fi
 
@@ -334,15 +334,68 @@ dc() {
   fi
 }
 
-# `run --build` is a docker compose convenience; build separately elsewhere.
-dc_run() {
+# --------------------------------------------------------------------------
+# The agent image — one per agent and uid, shared by every bundle copy
+#
+# The image is not named after the project: every copy on this account builds
+# and runs the same tag, so `./sandbox upgrade` in any copy moves them all.
+# That only holds if a start does NOT rebuild — a copy carrying an older
+# agent/ would quietly overwrite what `upgrade` just built. So a start builds
+# only when the image is missing, or when THIS copy's agent/ changed since it
+# last built (the cheap, cached build that picks up an entrypoint edit).
+# `upgrade` is the one rebuild from scratch.
+#
+# The uid is in the tag because it is baked into the image (the agent user);
+# under a shared docker daemon two accounts must not trade images. A copy that
+# bakes its own tools into agent/Dockerfile sets AGENT_IMAGE in .env to a
+# private name instead of fighting its siblings over the shared one.
+# --------------------------------------------------------------------------
+IMAGE_STAMP="$ROOT/.agent-image-built"
+
+agent_image() {
+  resolve_identity
+  resolve_agent
+  local repo; repo="${AGENT_IMAGE:-$(env_get AGENT_IMAGE)}"
+  printf '%s:%s-%s' "${repo:-localhost/agent-sandbox-agent}" "$AGENT" "$HOST_UID"
+}
+
+image_exists() {
   detect_runtime
-  if [ "$RUNTIME" = podman ]; then
-    dc build agent >/dev/null
-    dc run --rm "$@"
+  "$RUNTIME" image inspect "$1" >/dev/null 2>&1
+}
+
+image_id() {
+  detect_runtime
+  "$RUNTIME" image inspect --format '{{.Id}}' "$1" 2>/dev/null || true
+}
+
+ensure_image() {
+  local img; img="$(agent_image)"
+  if ! image_exists "$img"; then
+    info "agent image $img is missing — building it"
+  elif [ ! -f "$IMAGE_STAMP" ]; then
+    # A copy that has never built (fresh, or updated from a per-project image)
+    # adopts what a sibling built rather than rebuilding it: a cached build
+    # here could resurrect the pre-upgrade CLI layer from an older image and
+    # retag the shared name with it. Edits made to agent/ after this are
+    # still caught below; earlier ones need ./sandbox upgrade.
+    touch "$IMAGE_STAMP"
+    return 0
+  elif find "$ROOT/agent" -newer "$IMAGE_STAMP" | grep -q .; then
+    info "agent/ changed since this copy last built — rebuilding $img (cached)"
   else
-    dc run --rm --build "$@"
+    return 0
   fi
+  dc build agent
+  image_exists "$img" || die "the agent image did not build — see the output above"
+  touch "$IMAGE_STAMP"
+}
+
+# `run --build` was a docker compose convenience; it would rebuild the shared
+# image on every start, which is exactly what ensure_image exists to avoid.
+dc_run() {
+  ensure_image
+  dc run --rm "$@"
 }
 
 sandbox_name() {
@@ -789,12 +842,17 @@ cmd_logout() {
 # it succeeded, the container is destroyed on exit and the update would go with
 # it. The image is the artifact; rebuild it deliberately.
 #
+# The image is shared by every bundle copy on this account (see agent_image),
+# so one upgrade, run from any copy, moves them all. A pin only matters here:
+# it says what THIS rebuild installs, and the other copies run the result.
+#
 #   ./sandbox upgrade            rebuild on whatever AGENT_CLI resolves to
 #   ./sandbox upgrade latest     drop the version pin, rebuild on npm's latest
 #   ./sandbox upgrade 2.1.0      pin that version in .env, rebuild
 # --------------------------------------------------------------------------
 cmd_upgrade() {
   detect_runtime
+  local img; img="$(agent_image)"
   local want="${1:-}"
   local cur; cur="$(env_get AGENT_CLI)"
   [ -n "$cur" ] || cur="${AGENT_CLI:-$(agent_pkg "$AGENT")}"
@@ -831,11 +889,25 @@ cmd_upgrade() {
     warn "move forward with:  ./sandbox upgrade latest   (or a specific version)"
   fi
 
-  info "rebuilding the agent image from scratch ($RUNTIME)"
+  # podman-compose 1.0.x exits 0 when `podman build` fails, so a failed build
+  # would leave the old image tagged and the version printed below would be
+  # the old one under a fresh "now baked" label. A rebuild without cache always
+  # produces a new image id; an unchanged one means no build happened.
+  local before; before="$(image_id "$img")"
+  info "rebuilding $img from scratch ($RUNTIME)"
   dc build --no-cache --pull agent || dc build --no-cache agent
-  info "version now baked into the image:"
-  dc run --rm --no-deps agent agent-cli --version 2>/dev/null \
+  local after; after="$(image_id "$img")"
+  if [ -z "$after" ] || [ "$after" = "$before" ]; then
+    die "the image did not change — the build failed; see the output above"
+  fi
+  touch "$IMAGE_STAMP"
+
+  # Straight from the image, bypassing the entrypoint: it would run this
+  # project's setup.sh (npm ci, pip install) just to print a version.
+  info "version now baked into $img:"
+  "$RUNTIME" run --rm --network none --entrypoint agent-cli "$img" --version \
     || warn "could not query it here — run ./sandbox shell and try '$AGENT_BIN --version'"
+  echo "every bundle copy on this account running $AGENT starts on this image from now on"
 }
 
 # --------------------------------------------------------------------------
@@ -910,7 +982,7 @@ cmd_agent() {
       warn "and readable by the agent — ./sandbox logout removes it"
     fi
   fi
-  bold "bake the $want CLI into the image:  ./sandbox upgrade"
+  bold "the $want image is built on the next ./sandbox go — or now, from scratch:  ./sandbox upgrade"
 }
 
 # --------------------------------------------------------------------------
@@ -1170,6 +1242,12 @@ cmd_doctor() {
 cmd_status() {
   resolve_agent
   bold "agent"; echo "  $AGENT ($AGENT_CLI)"
+  local img; img="$(agent_image)"
+  if image_exists "$img"; then
+    echo "  image: $img (built $("$RUNTIME" image inspect --format '{{.Created}}' "$img" 2>/dev/null))"
+  else
+    echo "  image: $img (not built yet — the next ./sandbox go builds it)"
+  fi
   echo
   bold "containers"; dc ps 2>/dev/null || echo "  (none)"
   echo
@@ -1249,7 +1327,9 @@ Run
 
 Maintenance
   upgrade [version]    Rebuild the agent image to pick up a newer CLI;
-                       'latest' drops a version pin, '2.1.0' sets one
+                       'latest' drops a version pin, '2.1.0' sets one.
+                       The image is shared by every bundle copy on this
+                       account, so one upgrade moves them all
 
 Policy
   agent [claude|codex] Show or switch the coding agent; swaps the vendor
