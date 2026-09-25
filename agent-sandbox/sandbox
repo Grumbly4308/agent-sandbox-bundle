@@ -373,7 +373,15 @@ ensure_image() {
   local img; img="$(agent_image)"
   if ! image_exists "$img"; then
     info "agent image $img is missing — building it"
-  elif [ ! -f "$IMAGE_STAMP" ] || find "$ROOT/agent" -newer "$IMAGE_STAMP" | grep -q .; then
+  elif [ ! -f "$IMAGE_STAMP" ]; then
+    # A copy that has never built (fresh, or updated from a per-project image)
+    # adopts what a sibling built rather than rebuilding it: a cached build
+    # here could resurrect the pre-upgrade CLI layer from an older image and
+    # retag the shared name with it. Edits made to agent/ after this are
+    # still caught below; earlier ones need ./sandbox upgrade.
+    touch "$IMAGE_STAMP"
+    return 0
+  elif find "$ROOT/agent" -newer "$IMAGE_STAMP" | grep -q .; then
     info "agent/ changed since this copy last built — rebuilding $img (cached)"
   else
     return 0
