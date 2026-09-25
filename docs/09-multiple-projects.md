@@ -52,7 +52,8 @@ What you get:
 | Credentials | Per project. Separate `.env`, separate `secrets/deploy_key`, separate token to revoke. |
 | Agent policy | Per project. `profile/` is copied, so you can loosen `qa` or permissions for one repo only. |
 | Concurrency | Full. Two agents on two repos at once, each with its own proxy. |
-| Cost | Disk: one image layer cache shared, one clone per project. Drift: `profile/` copies diverge unless you keep them in sync. |
+| Agent image | Shared. One image per agent and uid, not per project, so `./sandbox upgrade` in any copy moves them all. A copy that bakes its own tools into `agent/Dockerfile` sets `AGENT_IMAGE` in `.env` to a private name. |
+| Cost | Disk: one image, one clone per project. Drift: `profile/` copies diverge unless you keep them in sync. |
 
 Keeping profiles in sync is the one real drawback. If it starts to matter,
 make `profile/` a git submodule, or symlink the shared parts:
@@ -92,7 +93,9 @@ What it costs:
   `docker` group can mount `/` into a container. If you use Option B for
   isolation, use **rootless Podman** per user, or a rootless Docker daemon —
   otherwise the boundary you just built is bypassable in one command.
-- One image cache per user, so builds and disk multiply.
+- One image store per user, so builds and disk multiply — and `./sandbox
+  upgrade` has to be run under each user; the shared image only spans the
+  copies inside one account.
 - `sudo -u … -i` for every session, and `./sandbox login` per user.
 
 A middle path that keeps most of the benefit: stay as yourself, but keep each
@@ -118,6 +121,9 @@ Rules that keep this manageable:
 1. One repo per bundle. Never two.
 2. `SANDBOX_NAME` unique, always — it is what stops two projects sharing a proxy.
 3. Allowlists stay per project. Resist the urge to make one union list.
+4. Keep `agent/` identical across copies. They share one image, and a copy
+   whose `agent/` differs rebuilds that image its own way on its next start.
+   If one project genuinely needs extra tools baked in, give it `AGENT_IMAGE`.
 4. One deploy key or token per repo, so revoking is per repo.
 5. `./sandbox login` per bundle; `auth/` is not shared between them.
 6. Commit the bundle (minus `.env`, `auth/`, `secrets/`) so a new project is
