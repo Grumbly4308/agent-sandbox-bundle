@@ -54,9 +54,16 @@ disagree — so a bundle copied to another machine or account just works. Freezi
 them at `init` time is what produced the "deploy key exists but is unreadable"
 and "files owned by nobody" failures in
 [08 — Troubleshooting](08-troubleshooting.md). Because the agent user is created
-from those build args, a changed uid invalidates the image cache by itself and
-the next run rebuilds. Ubuntu 24.04's stock `ubuntu` account already occupies uid 1000, hence the
-`userdel`.
+from those build args, the uid is part of the image tag
+(`localhost/agent-sandbox-agent:claude-1000`): a changed uid names an image that
+does not exist yet, and the next run builds it. Ubuntu 24.04's stock `ubuntu`
+account already occupies uid 1000, hence the `userdel`.
+
+**One image, shared.** The tag is per agent and uid, not per project, so every
+bundle copy on the account runs the same image and `./sandbox upgrade` in any
+of them moves them all ([09](09-multiple-projects.md)). A start does not
+rebuild: it builds only when the image is missing, or when that copy's `agent/`
+changed since it last built.
 
 **`tini` as PID 1.** Agents spawn a lot of subprocesses. Without an init to reap
 them, a long session accumulates zombies until it hits `pids_limit` and
