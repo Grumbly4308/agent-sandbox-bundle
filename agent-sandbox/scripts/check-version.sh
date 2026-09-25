@@ -15,11 +15,19 @@ grep -q 'resolve_identity' sandbox           && ok "uid/gid resolved live from i
 grep -q 'replace_stale_proxy' sandbox        && ok "stale proxy containers are replaced" || no "sandbox is OLD — 'name already in use' will bite"
 grep -q 'USER squid' proxy/Dockerfile        && ok "proxy starts unprivileged"              || no "proxy/Dockerfile is OLD"
 grep -q 'resolve_agent' sandbox              && ok "per-agent allowlists (claude/codex)"    || no "sandbox is OLD — no ./sandbox agent"
+grep -q 'ensure_image' sandbox               && ok "agent image shared across bundle copies" || no "sandbox is OLD — image rebuilt per project, per start"
 grep -q 'attribution' profile/claude/settings.json && ok "attribution suppressed"           || no "settings.json is OLD"
 grep -q '^SANDBOX_NAME=' .env 2>/dev/null    && ok "SANDBOX_NAME set ($(grep '^SANDBOX_NAME=' .env | cut -d= -f2))" || no ".env has no SANDBOX_NAME"
 grep -q '^SANDBOX_USERNS=' .env 2>/dev/null  && ok "SANDBOX_USERNS present"                 || no ".env predates SANDBOX_USERNS (add it, or copy .env.example keys)"
 echo
-echo "image actually in use:"
-{ podman run --rm localhost/${SANDBOX_NAME:-agent-sandbox}-agent node --version 2>/dev/null \
-  || docker run --rm ${SANDBOX_NAME:-agent-sandbox}-agent node --version 2>/dev/null \
-  || echo "  (could not run the agent image — build it first)"; } | sed 's/^/  node /'
+# The image is shared by every bundle copy on this account: one tag per agent
+# and uid, private only when AGENT_IMAGE names one. Mirrors agent_image() in
+# ./sandbox.
+env_get(){ grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2-; }
+repo="${AGENT_IMAGE:-$(env_get AGENT_IMAGE)}"; repo="${repo:-localhost/agent-sandbox-agent}"
+agent="${SANDBOX_AGENT:-$(env_get SANDBOX_AGENT)}"; agent="${agent:-claude}"
+image="$repo:$agent-$(id -u)"
+echo "image actually in use ($image):"
+{ podman run --rm --network none --entrypoint agent-cli "$image" --version 2>/dev/null \
+  || docker run --rm --network none --entrypoint agent-cli "$image" --version 2>/dev/null \
+  || echo "(could not run the agent image — ./sandbox go builds it)"; } | sed 's/^/  /'

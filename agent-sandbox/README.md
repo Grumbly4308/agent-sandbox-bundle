@@ -74,9 +74,12 @@ instead:
 
 ```bash
 ./sandbox agent codex     # rewrites .env, swaps the allowlist, reloads the proxy
-./sandbox upgrade         # rebuild so the image carries the codex CLI
 ./sandbox login           # sign in with ChatGPT — or put OPENAI_API_KEY in .env
 ```
+
+The codex image is built on the next start (each agent has its own image, shared
+by every bundle copy on the account); `./sandbox upgrade` builds it from scratch
+right away instead.
 
 `SANDBOX_AGENT` in `.env` records the choice; `OPENAI_API_KEY` is the codex
 equivalent of `ANTHROPIC_API_KEY`. The egress allowlist is generated from
