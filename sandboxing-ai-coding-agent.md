@@ -516,10 +516,9 @@ platform.claude.com
 downloads.claude.ai
 bridge.claudeusercontent.com
 mcp-proxy.anthropic.com
-storage.googleapis.com   # release artifacts — see the caveat below
 ```
 
-Two notes on that block. `storage.googleapis.com` is a *shared* bucket host: anyone can create a bucket under it, so allowing it is meaningfully looser than the others and it is the first line to comment out if you do not need self-update. And the whole block is unnecessary on an API-key-only setup — delete it, because every line is a destination data could leave through. The scaffold ships it enabled with the reasoning inline, so removing it is a two-second edit rather than an archaeology exercise.
+Two notes on that block. `storage.googleapis.com`, where the CLI's release artifacts live, is *not* on it: the profile sets `DISABLE_AUTOUPDATER=1` and `./sandbox upgrade` rebuilds the image on the host, so nothing inside needs the bucket — and it is a *shared* bucket host, anyone can create a bucket under it and PUT to a signed URL, which makes it a pure exfiltration channel once the updater is off. It comes back only if you re-enable self-update. And the whole block is unnecessary on an API-key-only setup — delete it, because every line is a destination data could leave through. The scaffold ships it enabled with the reasoning inline, so removing it is a two-second edit rather than an archaeology exercise.
 
 `formulae.brew.sh` appears in Anthropic's published list for Homebrew installs; the agent image here is Ubuntu-based and does not use brew, so it ships commented out.
 
