@@ -190,11 +190,13 @@ if [ -x "$PROFILE_DIR/setup.sh" ]; then
   env -u ANTHROPIC_API_KEY -u CLAUDE_CODE_OAUTH_TOKEN -u OPENAI_API_KEY -u GIT_TOKEN \
     "$PROFILE_DIR/setup.sh" || echo "sandbox: profile/setup.sh exited $? (continuing)" >&2
 fi
-# setup.sh is a child process, so anything it wants on PATH (the venv) comes
-# back through ~/.profile. Sourced here, before the exec, it is inherited by the
-# agent and by every non-interactive shell the agent spawns.
-if [ -f "$HOME_DIR/.profile" ]; then
-  . "$HOME_DIR/.profile"
+# setup.sh is a child process, so its PATH change cannot reach us — and it may
+# not hand back shell code to source either: the hooks it just ran could have
+# written that, and this process holds the keys they were denied. It leaves a
+# directory; put it on PATH here, before the exec, so the agent and every
+# non-interactive shell it spawns inherit it.
+if [ -d /tmp/venv/bin ]; then
+  export PATH="/tmp/venv/bin:$PATH"
 fi
 
 # --- 8. Run the agent -------------------------------------------------------
