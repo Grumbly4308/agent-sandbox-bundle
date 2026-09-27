@@ -198,9 +198,13 @@ ARG HOST_GID=1000
 ARG AGENT_CLI="@anthropic-ai/claude-code"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl git jq less netcat-openbsd \
-      openssh-client python3 python3-pip python3-venv ripgrep tini \
+      ca-certificates curl file git jq less make nano netcat-openbsd \
+      openssh-client patch procps python-is-python3 python3 python3-pip \
+      python3-venv ripgrep shellcheck tini tree unzip xz-utils \
  && rm -rf /var/lib/apt/lists/*
+
+# `ext::` remotes let git run an arbitrary command as the transport.
+RUN git config --system protocol.ext.allow never
 
 # The node image ships a stock `node` user on uid 1000. Remove it so the agent
 # user can take YOUR uid — otherwise every file the agent writes into the
