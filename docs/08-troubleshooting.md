@@ -426,7 +426,10 @@ source of truth for the version. Move it forward deliberately:
 ```
 
 The pin lands in `.env` as `AGENT_CLI=@anthropic-ai/claude-code@2.1.223`, which
-you can also write by hand — `upgrade` recognizes and preserves it.
+you can also write by hand — `upgrade` recognizes and preserves it. Under
+`SANDBOX_AGENT=codex` the same command pins that package instead,
+`AGENT_CLI=@openai/codex@<version>`; `./sandbox agent` resets the pin when
+you switch, because it belonged to the other CLI.
 
 The image is **shared by every bundle copy on this account** — one tag per
 agent and uid (`localhost/agent-sandbox-agent:claude-1000`), not one per

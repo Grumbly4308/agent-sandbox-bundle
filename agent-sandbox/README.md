@@ -92,7 +92,12 @@ instead:
 
 The codex image is built on the next start (each agent has its own image, shared
 by every bundle copy on the account); `./sandbox upgrade` builds it from scratch
-right away instead.
+right away instead. Pinning works the same for both agents: `./sandbox upgrade
+<version>` writes `AGENT_CLI=@openai/codex@<version>` (or
+`@anthropic-ai/claude-code@<version>`) into `.env`, and the next build installs
+exactly that — write it by hand if you prefer, `upgrade` keeps it until you
+say `latest`. Switching agents resets the pin, since it belonged to the other
+package.
 
 `SANDBOX_AGENT` in `.env` records the choice; `OPENAI_API_KEY` is the codex
 equivalent of `ANTHROPIC_API_KEY`. The egress allowlist is generated from
