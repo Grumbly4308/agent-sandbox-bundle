@@ -220,6 +220,13 @@ detect_runtime() {
       COMPOSE_ARGS+=(-f "$ROOT/docker-compose.podman-userns.yml")
     fi
   fi
+  # The base file never forwards GIT_TOKEN: the container holds no repo
+  # credential unless asked for it in so many words. A filled-in .env line is
+  # not that ask; SANDBOX_FORWARD_GIT_TOKEN=1 is.
+  local fwd; fwd="${SANDBOX_FORWARD_GIT_TOKEN:-$(env_get SANDBOX_FORWARD_GIT_TOKEN)}"
+  if [ "$fwd" = 1 ]; then
+    COMPOSE_ARGS+=(-f "$ROOT/docker-compose.git-token.yml")
+  fi
 }
 
 # Which compose implementation to drive Podman with.
@@ -589,7 +596,8 @@ url_port() {
 # The empty helper entry first clears any configured `store` or keychain
 # helper: git offers every helper the credential after a successful fetch,
 # and those would write it to disk. The variable is deliberately not
-# GIT_TOKEN — compose forwards that one into the agent container.
+# GIT_TOKEN — that one is meant for the agent container, and goes there when
+# SANDBOX_FORWARD_GIT_TOKEN=1 is set.
 # --------------------------------------------------------------------------
 PULL_AUTH_READY=""
 pull_auth() {
@@ -1390,7 +1398,12 @@ cmd_status() {
   echo
   bold "credentials"
   [ -f "$ROOT/secrets/deploy_key" ] && echo "  deploy_key present" || echo "  no deploy key"
-  grep -qE '^GIT_TOKEN=.+' "$ENV_FILE" 2>/dev/null && echo "  GIT_TOKEN set" || echo "  GIT_TOKEN empty"
+  if grep -qE '^GIT_TOKEN=.+' "$ENV_FILE" 2>/dev/null; then
+    [ "$(env_get SANDBOX_FORWARD_GIT_TOKEN)" = 1 ] && echo "  GIT_TOKEN set, forwarded to the agent" \
+      || echo "  GIT_TOKEN set, NOT forwarded (SANDBOX_FORWARD_GIT_TOKEN=1 to change that)"
+  else
+    echo "  GIT_TOKEN empty"
+  fi
   [ "$(env_get SANDBOX_PULL_AUTH)" = prompt ] && echo "  pulls: read-only token, asked for on each fetch"
   if [ "$AGENT" = codex ]; then
     grep -qE '^OPENAI_API_KEY=.+' "$ENV_FILE" 2>/dev/null && echo "  OPENAI_API_KEY set" || echo "  OPENAI_API_KEY empty"

@@ -132,7 +132,8 @@ injection can use.
 
 If you do:
 
-- give it a **fine-grained, single-repo, ≤1-day** token as `GIT_TOKEN`
+- give it a **fine-grained, single-repo, ≤1-day** token as `GIT_TOKEN`, and
+  set `SANDBOX_FORWARD_GIT_TOKEN=1` — without it the token stays on the host
 - keep `Bash(git push:*)` in the `ask` list, and `--force` in `deny`
 - expect it to push a branch, never to merge
 

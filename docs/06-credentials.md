@@ -35,7 +35,11 @@ own pull requests.
 
 - Role `Developer`, scope `write_repository`, expiry tomorrow.
 
-Either way, paste it into `.env` as `GIT_TOKEN`. Inside the container:
+Either way, paste it into `.env` as `GIT_TOKEN` **and** set
+`SANDBOX_FORWARD_GIT_TOKEN=1` next to it. The token is not forwarded on the
+strength of being filled in: the base compose file does not mention it, and
+`./sandbox` adds the overlay that does (`docker-compose.git-token.yml`) only
+when that flag is set. Inside the container:
 
 ```bash
 # GitHub
@@ -229,8 +233,9 @@ SANDBOX_PULL_AUTH=prompt ./sandbox init https://github.com/you/project.git
   short expiry. On GitLab, a project access token with `read_repository`.
 - **The remote must be `https://`.** A `git@` or `ssh://` URL uses SSH, and
   the token is not used at all.
-- **Not `GIT_TOKEN`.** Compose forwards `GIT_TOKEN` into the agent container.
-  The prompted token lives only in the `./sandbox` process and the git it runs.
+- **Not `GIT_TOKEN`.** That variable is meant for the agent container, and
+  goes there when `SANDBOX_FORWARD_GIT_TOKEN=1`. The prompted token lives only
+  in the `./sandbox` process and the git it runs.
 - **Your configured helpers are bypassed**, not merely added to. Otherwise a
   `store` or keychain helper would save the token after the first successful
   fetch.

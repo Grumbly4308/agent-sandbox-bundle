@@ -1,0 +1,17 @@
+# Opt-in overlay: hand the agent a repo token. Applied on top of
+# docker-compose.yml only when SANDBOX_FORWARD_GIT_TOKEN=1 is set in .env.
+#
+# The default is that the container never holds a repo credential — you review
+# the branch and push it from the host with `./sandbox push`. A token inside
+# the container is a token a prompt injection can use, so the base compose
+# file does not know about GIT_TOKEN at all; a filled-in .env line is not
+# enough on its own. The value still comes from GIT_TOKEN in .env (docs/06 —
+# fine-grained, one repository, expires tomorrow).
+#
+# The entrypoint strips it, with the model keys, from profile/setup.sh's
+# environment, so the repo's install hooks do not see it either way.
+
+services:
+  agent:
+    environment:
+      GIT_TOKEN: ${GIT_TOKEN:-}
