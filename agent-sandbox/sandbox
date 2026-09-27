@@ -168,6 +168,7 @@ regen_allowlist() {
     warn "proxy/allowlist.txt is hand-maintained (no GENERATED marker) — leaving it alone."
     warn "to enable the per-agent swap, move your custom entries into"
     warn "proxy/allowlist.base.txt and delete proxy/allowlist.txt, then re-run."
+    check_never_allow || true
     return 0
   fi
   {
@@ -178,6 +179,82 @@ regen_allowlist() {
     echo
     cat "$ALLOWLIST_BASE"
   } > "$ALLOWLIST"
+  # `allow` refuses these outright; a hand edit gets a warning, not a veto.
+  check_never_allow || warn "    remove the entry from its source file, then: ./sandbox reload"
+}
+
+# --------------------------------------------------------------------------
+# Hosts that never belong on the allowlist — proxy/never-allow.txt
+#
+# Multi-tenant upload sinks (anyone can own a bucket or a paste there) and
+# parent domains far wider than any project needs. An entry without a leading
+# dot names one host; with it, the domain and everything beneath. An
+# allowlist pattern wide enough to cover an entry counts as a hit too, so
+# `.googleapis.com` does not smuggle storage.googleapis.com back in.
+# --------------------------------------------------------------------------
+NEVER_ALLOW="$ROOT/proxy/never-allow.txt"
+
+# Prints the never-allow entry covering $1, with its reason; false if none.
+never_allow_hit() {
+  local host="$1" bare="${1#.}" entry reason nbare
+  [ -f "$NEVER_ALLOW" ] || return 1
+  while read -r entry reason; do
+    case "$entry" in ''|'#'*) continue ;; esac
+    nbare="${entry#.}"
+    if [ "$bare" = "$nbare" ] \
+       || { [ "${host:0:1}" = . ] && [[ "$nbare" == *".$bare" ]]; } \
+       || { [ "${entry:0:1}" = . ] && [[ "$bare" == *".$nbare" ]]; }; then
+      reason="${reason#\#}"; reason="${reason#"${reason%%[![:space:]]*}"}"
+      printf '%s%s\n' "$entry" "${reason:+ — $reason}"
+      return 0
+    fi
+  done < "$NEVER_ALLOW"
+  return 1
+}
+
+# Warns about every never-allow hit in the files squid's list is built from
+# (the vendor block and the base list, or a hand-maintained allowlist.txt).
+# Returns 1 if there was any, so doctor can count it.
+check_never_allow() {
+  local flagged=0 f entry _ hit
+  local -a files
+  if [ "$(allowlist_target)" = "$ALLOWLIST_BASE" ]; then
+    resolve_agent
+    files=("$ROOT/proxy/agents/$AGENT.txt" "$ALLOWLIST_BASE")
+  else
+    files=("$ALLOWLIST")
+  fi
+  for f in "${files[@]}"; do
+    [ -f "$f" ] || continue
+    while read -r entry _; do
+      case "$entry" in ''|'#'*) continue ;; esac
+      if hit="$(never_allow_hit "$entry")"; then
+        warn "${f#"$ROOT/"} allows $entry, which is on proxy/never-allow.txt ($hit)"
+        flagged=1
+      fi
+    done < "$f"
+  done
+  return "$flagged"
+}
+
+# What `allow` accepts: lowercase labels of letters, digits and hyphens, at
+# least one dot, optionally a leading one for the domain and everything under
+# it. A URL, a port or an address pasted in by mistake would either be ignored
+# by squid or match something other than what was meant — so refuse, and say
+# what to type instead.
+valid_host() {
+  local h="$1"
+  case "$h" in
+    *://*)   die "'$h' has a scheme — allow the bare hostname" ;;
+    */*)     die "'$h' has a path — the proxy matches hostnames, not URLs" ;;
+    *:*:*)   die "'$h' is an IP address — squid matches the name the agent connects to; allow that" ;;
+    *:*)     die "'$h' has a port — ports are the Safe_ports/SSL_ports ACLs in proxy/squid.conf; allow the hostname" ;;
+    *[A-Z]*) die "'$h' has uppercase letters — hostnames go in lowercase" ;;
+  esac
+  [[ "${h#.}" =~ ^[0-9.]+$ ]] \
+    && die "'$h' is an IP address — squid matches the name the agent connects to; allow that"
+  [[ "$h" =~ ^\.?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] \
+    || die "'$h' is not a hostname — expected something like docs.example.com or .example.com"
 }
 
 # Where custom entries belong: the base list while ./sandbox manages the
@@ -1120,16 +1197,46 @@ cmd_agent() {
 
 # --------------------------------------------------------------------------
 # allow / reload — egress policy
+#
+# Every entry is a channel data could leave through, so `allow` is fussy: the
+# argument has to look like a hostname, must not be on proxy/never-allow.txt,
+# and needs a reason — written above the entry, so the list still explains
+# itself once whoever added it has forgotten why.
 # --------------------------------------------------------------------------
 cmd_allow() {
-  [ $# -gt 0 ] || die "usage: ./sandbox allow <domain> [domain...]"
-  local list; list="$(allowlist_target)"
-  for d in "$@"; do
+  local usage="usage: ./sandbox allow <domain> [domain...] --reason '<why>'   (or a trailing '# why')"
+  local reason="" hosts=() d hit
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason)   [ $# -ge 2 ] || die "$usage"; reason="$2"; shift ;;
+      --reason=*) reason="${1#--reason=}" ;;
+      '#'*)       reason="${1#\#}" ;;
+      -*)         die "$usage" ;;
+      *)          hosts+=("$1") ;;
+    esac
+    shift
+  done
+  reason="${reason//$'\n'/ }"; reason="${reason#"${reason%%[![:space:]]*}"}"
+  { [ ${#hosts[@]} -gt 0 ] && [ -n "$reason" ]; } || die "$usage"
+
+  # Check everything before writing anything, so a bad second argument does
+  # not leave the first one already in the list.
+  for d in "${hosts[@]}"; do
+    valid_host "$d"
+    if hit="$(never_allow_hit "$d")"; then
+      die "$d is on proxy/never-allow.txt ($hit) — allow the specific host you need, not this one"
+    fi
+  done
+
+  local list added=""; list="$(allowlist_target)"
+  for d in "${hosts[@]}"; do
     if grep -qxF "$d" "$list"; then
       info "$d already allowed"
     else
+      [ -n "$added" ] || printf '\n# added by ./sandbox allow: %s\n' "$reason" >> "$list"
       printf '%s\n' "$d" >> "$list"
       info "allowed $d"
+      added=1
     fi
   done
   cmd_reload
@@ -1328,6 +1435,15 @@ cmd_doctor() {
   [ -s "$AUTH_DIR/.credentials.json" ] && echo "  saved OAuth session: yes" || echo "  saved OAuth session: no"
 
   echo
+  bold "== egress =="
+  if check_never_allow; then
+    echo "  allowlist: nothing from proxy/never-allow.txt"
+  else
+    echo "  allowlist: contains never-allow hosts (above) — remove them, then ./sandbox reload"
+    issues=$((issues+1))
+  fi
+
+  echo
   bold "== runtime =="
   detect_runtime
   echo "  runtime: $RUNTIME"
@@ -1485,7 +1601,10 @@ Maintenance
 Policy
   agent [claude|codex] Show or switch the coding agent; swaps the vendor
                        block of the allowlist and asks for a rebuild
-  allow <domain>...    Add hosts to the egress allowlist and reload
+  allow <domain>... --reason '<why>'
+                       Add hosts to the egress allowlist and reload; the
+                       reason is written next to the entry, and anything on
+                       proxy/never-allow.txt is refused
   reload               Regenerate the allowlist and reload the proxy
 
 Review (runs on the host, in your environment)

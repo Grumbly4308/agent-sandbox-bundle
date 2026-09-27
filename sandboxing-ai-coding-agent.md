@@ -136,6 +136,7 @@ agent-sandbox/
 │   ├── squid.conf           # default-deny allowlist
 │   ├── allowlist.txt        # GENERATED: what squid reads — vendor block + base
 │   ├── allowlist.base.txt   # your policy: hosts allowed whichever agent runs
+│   ├── never-allow.txt      # upload sinks and over-wide domains `allow` refuses
 │   └── agents/              # per-vendor endpoint blocks (claude.txt, codex.txt)
 │
 ├── profile/                 # ★ your defaults, version-controlled, mounted read-only
@@ -525,8 +526,10 @@ Two notes on that block. `storage.googleapis.com`, where the CLI's release artif
 Adding a host is one command, and it reloads Squid in place:
 
 ```bash
-./sandbox allow docs.internal.example.com
+./sandbox allow docs.internal.example.com --reason 'the API docs the tests quote'
 ```
+
+The reason is not optional: it is written above the entry as `# added by ./sandbox allow: <reason>`, so the list keeps explaining itself. The argument has to be a plain hostname — a URL, a port or an IP address is refused with a hint — and anything on `proxy/never-allow.txt` is refused outright. That file is short: multi-tenant upload sinks (`storage.googleapis.com`, `transfer.sh`, `.ngrok.io`, Discord webhooks) and parent domains far wider than any project needs (`amazonaws.com` bare), each with a one-line reason. A hostname alone says nothing about who owns the bucket or the paste on the other end, so allowing one is allowing everyone. `./sandbox reload` and `./sandbox doctor` run the same check over the source files, so a hand edit that adds one gets a warning.
 
 Keep this list short and boring. Every entry is a channel data could leave through. `.github.com` is already a generous one — see Part 14 for what that implies.
 

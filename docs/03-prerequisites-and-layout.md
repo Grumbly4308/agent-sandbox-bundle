@@ -48,6 +48,7 @@ agent-sandbox/
 │   ├── squid.conf           # default-deny allowlist
 │   ├── allowlist.txt        # GENERATED: what squid reads — vendor block + base
 │   ├── allowlist.base.txt   # your policy: hosts allowed whichever agent runs
+│   ├── never-allow.txt      # upload sinks and over-wide domains `allow` refuses
 │   └── agents/              # per-vendor endpoint blocks (claude.txt, codex.txt)
 │
 ├── profile/                 # ★ your defaults, version-controlled, mounted read-only
