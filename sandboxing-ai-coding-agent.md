@@ -609,15 +609,20 @@ The permission gate is the layer that catches what OS isolation can't: an action
     ],
     "ask": [
       "Bash(git push:*)", "Bash(git reset:*)",
-      "Bash(npm install:*)", "Bash(pip install:*)", "WebFetch"
+      "Bash(npm install:*)", "Bash(npm i:*)", "Bash(npx:*)",
+      "Bash(pip install:*)", "Bash(python3 -m pip:*)",
+      "WebFetch", "WebSearch"
     ],
     "deny": [
       "Bash(sudo:*)", "Bash(curl:*)", "Bash(wget:*)", "Bash(nc:*)",
       "Bash(git push --force:*)",
-      "Read(//run/secrets/**)", "Read(//home/agent/.ssh/**)",
+      "Edit(//workspace/repo/.git/**)", "Edit(//workspace/repo/.claude/**)",
+      "Edit(//workspace/repo/.mcp.json)", "Edit(//workspace/repo/.envrc)",
+      "Read(//run/secrets/**)", "Read(//run/auth/**)", "Read(//home/agent/.ssh/**)",
       "Read(./.env)", "Read(**/id_ed25519*)", "Read(**/*.pem)"
     ]
   },
+  "enableAllProjectMcpServers": false,
   "hooks": {
     "PreToolUse": [{
       "matcher": "Bash",
@@ -638,7 +643,7 @@ Three things to note:
 
 **The `PreToolUse` hook** appends every Bash command the agent runs to `/logs/commands.log` — a bind mount, so it lands on your host. Hooks are executed by the harness, not by the model, so this is a record the agent cannot decline to write and cannot go back and edit. `./sandbox logs commands` tails it live.
 
-The deny list is deliberately redundant with the network layer: `curl` is already useless because there is no route out, but denying it means an injection attempt shows up as a *blocked tool call in your transcript* rather than as a failed connection buried in a proxy log.
+The deny list is deliberately redundant with the network layer: `curl` is already useless because there is no route out, but denying it means an injection attempt shows up as a *blocked tool call in your transcript* rather than as a failed connection buried in a proxy log. Be clear about the limits of that, though: these rules are advisory against interpreters. `python3` and `node` can open a socket exactly as `curl` would, and they cannot be denied without taking away the tools the agent is there to use. The allowlist and the mounts are the controls; this file decides what you are prompted about. Two entries are there for a reason that is not obvious from the name. `WebSearch` prompts because it runs on Anthropic's servers, never touching squid, so it is the one tool whose network access the proxy cannot see. And `Edit` is denied on the files the *host* executes rather than reviews — `.git/`, `.claude/`, `.mcp.json`, `.envrc`, `.vscode/`, `.npmrc` — because `acceptEdits` would otherwise wave through a git hook or an MCP server definition that runs the moment you or the next session touch the checkout; `enableAllProjectMcpServers: false` closes the same door for `.mcp.json` from the other side.
 
 ### Keeping AI attribution out of your git history
 
