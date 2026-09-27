@@ -758,9 +758,9 @@ The agent commits inside the container. Everything after that runs on the host, 
 ./sandbox push
 ```
 
-`git push -u origin <branch>` from `workspace/`, using whatever git auth you already have on the host — SSH agent, credential helper, anything. No token needs to exist inside the container for this to work, which is why Option A in Part 5 is the default.
+Pushes `<branch>` from `workspace/`, using whatever git auth you already have on the host — SSH agent, credential helper, anything. No token needs to exist inside the container for this to work, which is why Option A in Part 5 is the default.
 
-One safety check worth knowing about: `workspace/` is a clone of `project/`, so its `origin` starts out pointing at a directory on your disk. `./sandbox new` immediately rewrites it to the real upstream, and `./sandbox push` refuses to run if `origin` is still a local path — otherwise you would push "successfully" into a folder and find nothing on the server.
+Where it pushes to is the URL `./sandbox new` recorded in `.env` (`WORKSPACE_ORIGIN`), not whatever `workspace/.git/config` says now. That file is the agent's to write, and so are `.git/hooks` — and git runs a hook, a fsmonitor, a pager or an external diff named in a repo's own config as whoever invoked it, which on the host is you. So every git call `./sandbox` makes against the workspace overrides those keys, `gh`/`glab` get the same overrides, and `review` and `doctor` warn when the workspace's `origin` differs from the recorded one or when keys like `core.hooksPath`, `core.sshCommand` or `credential.helper` are set. A plain `git -C workspace ...` from your shell has none of this protection; read the warnings first.
 
 ### Pull request / merge request
 
@@ -989,7 +989,7 @@ The file exists — the `[ -f ]` test passes — but a `0600` key is readable on
 | Re-asked to log in every session | Expected: `$HOME` is a tmpfs. `./sandbox login` saves the session to `auth/`. Part 5. |
 | `$HOME` not writable inside the container | The tmpfs `uid=`/`gid=` options didn't apply on your Docker version. Use mode `0777`, or `--userns=keep-id` under Podman. |
 | `git push` hangs from inside the container | Port 22 is not proxyable. Use the deploy-key setup (Part 5), which routes over 443, or push from the host with `./sandbox push`. |
-| `./sandbox push` "succeeds" but the server shows nothing | `workspace`'s `origin` still points at local `project/`. Re-run `./sandbox new`; current versions refuse to push in this state. |
+| `./sandbox push` "succeeds" but the server shows nothing | An old bundle whose `workspace` `origin` still points at local `project/`. Re-run `./sandbox new`; current versions push to the URL recorded in `.env`, not to the workspace's `origin`. |
 | Two projects fighting over one proxy | Both bundles have the same `SANDBOX_NAME`. Part 11. |
 | Build fails at `npm install -g` | Build-time network is *not* proxied — ordinary connectivity, or a corporate MITM proxy whose CA the image needs. |
 | Agent stops being able to run commands mid-session | Hit `pids_limit`. Raise it, and check `tini` is actually PID 1 (`docker compose exec agent ps 1`). |

@@ -131,8 +131,8 @@ separate. The cost is disk — a second copy of the objects, on top of the one
 
 `./sandbox new <task>` does all of this for you, including fetching `origin`
 first so the branch starts from current upstream rather than from whatever you
-last pulled, and repointing `workspace`'s `origin` at the real remote so
-`./sandbox push` reaches the server rather than a folder on your disk.
+last pulled, and repointing `workspace`'s `origin` at the real remote — and
+recording that URL in `.env`, which is what `./sandbox push` actually pushes to.
 
 ## What gets committed
 
