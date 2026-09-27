@@ -333,7 +333,7 @@ cp .env.example .env && chmod 600 .env && nano .env
 | `./sandbox review` | Diff, leftovers, secret scan — on your machine |
 | `./sandbox push` | Push the branch with your own credentials |
 | `./sandbox pr [title]` | Push and open a PR / MR |
-| `./sandbox allow <host>` | Let the agent reach one more hostname |
+| `./sandbox allow <host> --reason '<why>'` | Let the agent reach one more hostname; the reason is written into the allowlist next to it, and hosts on `proxy/never-allow.txt` are refused |
 | `./sandbox logs proxy` | Watch every request the agent makes, allowed or blocked |
 | `./sandbox status` | What's running, which branch, which credentials are set |
 | `./sandbox doctor` | Diagnose and repair a broken setup |
