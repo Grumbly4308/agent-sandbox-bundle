@@ -202,6 +202,53 @@ Two hygiene points the swap enforces, and one it cannot:
   vendor stays readable from inside the container until `./sandbox logout`
   removes it. Switching vendors for good? Log out first, then switch.
 
+## Pulling without stored credentials
+
+Everything above is about the *container*. The host account that runs
+`./sandbox` needs credentials too: `init`, `new` and `review` fetch from the
+remote as that account. Normally that means your SSH key or a credential
+helper. But if an agent escapes the container, that account is the first thing
+it controls, so under a strict threat model it should hold no SSH key and no
+stored token either.
+
+`SANDBOX_PULL_AUTH=prompt` covers that case. It asks for a **read-only** token
+on each command that fetches, gives it to git through an in-memory credential
+helper, and forgets it when the command exits:
+
+```bash
+SANDBOX_PULL_AUTH=prompt ./sandbox init https://github.com/you/project.git
+./sandbox new fix-login      # asks again
+./sandbox go                 # does not ask; the agent never sees the token
+./sandbox review             # asks again
+```
+
+`init` records the setting in `.env`, so later commands ask without the prefix.
+
+- **The token.** GitHub fine-grained, one repository, Contents `read-only`, a
+  short expiry. On GitLab, a project access token with `read_repository`.
+- **The remote must be `https://`.** A `git@` or `ssh://` URL uses SSH, and
+  the token is not used at all.
+- **Not `GIT_TOKEN`.** Compose forwards `GIT_TOKEN` into the agent container.
+  The prompted token lives only in the `./sandbox` process and the git it runs.
+- **Your configured helpers are bypassed**, not merely added to. Otherwise a
+  `store` or keychain helper would save the token after the first successful
+  fetch.
+- **Git 2.31 or newer** is needed. The script checks and refuses otherwise.
+
+What this does not protect against: while the fetch runs, the token is in the
+environment of processes owned by that account, so something already running
+as it can read the token from `/proc`, or capture what you type. What you get
+is a short, read-only exposure window instead of a credential on disk.
+
+**Pushing.** A read-only token cannot push, and that is the point. Don't use
+`./sandbox push`. Fetch the branch from your trusted account and push from
+there:
+
+```bash
+git fetch /home/<sandbox-user>/agent-sandbox/workspace agent/fix-login
+git push origin FETCH_HEAD:refs/heads/agent/fix-login
+```
+
 ## Self-hosted GitLab or GitHub Enterprise
 
 Two extra steps:
