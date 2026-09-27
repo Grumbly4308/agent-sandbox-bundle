@@ -76,8 +76,10 @@ Everything under `workspace/` is the agent's to write, `.git/config` and
 `core.hooksPath`, `core.fsmonitor`, `core.pager`, `diff.external`, an `ext::`
 remote — as the user who invoked it, and on the host that user is you, with
 your credentials. So every git command `./sandbox` runs against the workspace
-overrides those keys on the command line, `gh`/`glab` get the same overrides
-and are told which repo to use, and push and fetch go to the recorded URL.
+overrides those keys on the command line (`diff.external` has no off switch,
+so `./sandbox` never asks git for a patch and warns instead), `gh`/`glab` get
+the same overrides and are told which repo to use, and push and fetch go to
+the recorded URL.
 `./sandbox review` and `./sandbox doctor` warn when the workspace's `origin`
 differs from the recorded one, or when `core.hooksPath`, `core.fsmonitor`,
 `core.sshCommand`, `credential.helper` or similar are set — `new` writes none

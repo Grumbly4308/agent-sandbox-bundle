@@ -580,7 +580,10 @@ upstream_url() {
 # the real one in .env, which the container never sees, and push and fetch
 # use the recorded copy.
 # --------------------------------------------------------------------------
-WGIT_OVERRIDES=(core.hooksPath=/dev/null core.fsmonitor= core.pager=cat diff.external= protocol.ext.allow=never)
+# Not diff.external: it has no "off" value — `-c diff.external=` makes git try
+# to run an empty command and abort — so wgit never asks for a patch (`--stat`
+# and `log` do not consult it) and check_workspace_git flags it instead.
+WGIT_OVERRIDES=(core.hooksPath=/dev/null core.fsmonitor= core.pager=cat protocol.ext.allow=never)
 
 wgit() {
   local args=() kv
