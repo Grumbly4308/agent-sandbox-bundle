@@ -221,7 +221,9 @@ day-to-day behaviour.
 A stable command name for "run this project's checks". `CLAUDE.md` can then say
 *"run `qa` before claiming something works"* without knowing whether the project
 uses pytest, vitest, or make — the script detects the stack at runtime and
-returns a single pass/fail.
+returns a single pass/fail. It fails closed: if it recognises a project but
+finds no runner to check it with, or recognises nothing at all, that is a
+`FAIL` with a message saying so — never a `PASS` earned by running zero checks.
 
 Add your own commands to `profile/bin/`. They appear on `PATH` in every sandbox
 you ever create, on every machine.
@@ -229,7 +231,10 @@ you ever create, on every machine.
 ## `profile/setup.sh`
 
 Per-session bootstrap, run before the agent starts. The shipped version detects
-`package-lock.json` → `npm ci`, `requirements.txt` → venv + install.
+`package-lock.json` → `npm ci`, `requirements.txt` or `pyproject.toml` → venv +
+install. The venv's `PATH` entry goes into `~/.profile`, which the entrypoint
+sources before it starts the agent — `~/.bashrc` would only reach the
+interactive shell, not the agent's own tool calls.
 
 Keep it fast. The container is ephemeral, so this runs every session — anything
 heavy belongs baked into `agent/Dockerfile` instead. Failure is non-fatal by

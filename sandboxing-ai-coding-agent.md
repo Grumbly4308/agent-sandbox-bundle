@@ -680,7 +680,7 @@ Without that line, a capable agent that hits a blocked host will reasonably try 
 
 ### `profile/bin/qa`
 
-A stable command name for "run this project's checks." `CLAUDE.md` can then say *"run `qa` before claiming something works"* without knowing whether the project uses pytest, vitest, or make. The script detects the stack at runtime. Add your own commands here; they appear on `PATH` in every sandbox you ever create.
+A stable command name for "run this project's checks." `CLAUDE.md` can then say *"run `qa` before claiming something works"* without knowing whether the project uses pytest, vitest, or make. The script detects the stack at runtime, and fails closed — a project it recognises but cannot check, or a stack it does not know, is a `FAIL`, not a `PASS` from running nothing. Add your own commands here; they appear on `PATH` in every sandbox you ever create.
 
 ### Treat the profile as code
 
