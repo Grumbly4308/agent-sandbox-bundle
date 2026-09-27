@@ -97,10 +97,8 @@ fi
 # --- 4b. Credential hygiene --------------------------------------------------
 # Only the active vendor's secrets stay in the environment. Compose passes both
 # vendors' keys through unconditionally — interpolation cannot branch on
-# SANDBOX_AGENT — so the inactive one is dropped here, and it has to happen
-# BEFORE profile/setup.sh below: that step runs the repo's own install hooks
-# (npm lifecycle scripts, pip builds), which is exactly the untrusted code the
-# key must not be visible to.
+# SANDBOX_AGENT — so the inactive one is dropped here, before the agent starts.
+# profile/setup.sh below gets none of them at all (step 7).
 if [ "${SANDBOX_AGENT:-claude}" = codex ]; then
   unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN
 else
@@ -183,8 +181,14 @@ fi
 # --- 7. Per-project bootstrap ----------------------------------------------
 # Non-fatal on purpose: a broken lockfile should drop you into a shell you can
 # debug, not kill the container.
+#
+# It runs the repo's own install hooks (npm lifecycle scripts, pip builds) —
+# untrusted code that has no business seeing a credential, the active vendor's
+# key included. The agent needs them; the install does not. The proxy variables
+# stay, or nothing installs.
 if [ -x "$PROFILE_DIR/setup.sh" ]; then
-  "$PROFILE_DIR/setup.sh" || echo "sandbox: profile/setup.sh exited $? (continuing)" >&2
+  env -u ANTHROPIC_API_KEY -u CLAUDE_CODE_OAUTH_TOKEN -u OPENAI_API_KEY -u GIT_TOKEN \
+    "$PROFILE_DIR/setup.sh" || echo "sandbox: profile/setup.sh exited $? (continuing)" >&2
 fi
 # setup.sh is a child process, so anything it wants on PATH (the venv) comes
 # back through ~/.profile. Sourced here, before the exec, it is inherited by the

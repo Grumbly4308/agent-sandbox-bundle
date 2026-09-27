@@ -234,7 +234,10 @@ Per-session bootstrap, run before the agent starts. The shipped version detects
 `package-lock.json` → `npm ci`, `requirements.txt` or `pyproject.toml` → venv +
 install. The venv's `PATH` entry goes into `~/.profile`, which the entrypoint
 sources before it starts the agent — `~/.bashrc` would only reach the
-interactive shell, not the agent's own tool calls.
+interactive shell, not the agent's own tool calls. It runs with the proxy
+variables and nothing secret: the entrypoint strips the model keys and
+`GIT_TOKEN` from its environment, because `npm ci` and `pip install` execute
+the repo's own hooks.
 
 Keep it fast. The container is ephemeral, so this runs every session — anything
 heavy belongs baked into `agent/Dockerfile` instead. Failure is non-fatal by
