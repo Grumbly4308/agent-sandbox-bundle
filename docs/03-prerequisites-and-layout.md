@@ -62,7 +62,7 @@ agent-sandbox/
 │
 ├── scripts/
 │   ├── verify.sh            # self-test: are the walls actually there?
-│   └── make-seccomp.sh      # optional syscall hardening
+│   └── make-seccomp.sh      # regenerates agent-seccomp.json from a pinned upstream
 │
 ├── project/                 # the canonical clone — NEVER mounted
 ├── workspace/               # a clone of project/ — the ONE host dir the agent sees
@@ -143,9 +143,9 @@ the parts that are per-session or secret:
 
 | Committed | Ignored |
 |---|---|
-| `sandbox`, `docker-compose.yml` | `.env`, `secrets/*`, `auth/` |
+| `sandbox`, `docker-compose.yml`, `agent-seccomp.json` | `.env`, `secrets/*`, `auth/` |
 | `agent/`, `proxy/`, `scripts/` | `project/`, `workspace/` |
-| **`profile/`** — your agent policy | `logs/*`, `agent-seccomp.json` |
+| **`profile/`** — your agent policy | `logs/*` |
 | `proxy/allowlist.base.txt` + `proxy/agents/` — your egress policy | |
 | `proxy/allowlist.txt` — generated from the two above | |
 

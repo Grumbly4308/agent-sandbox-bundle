@@ -479,6 +479,10 @@ ensure_image() {
 # image on every start, which is exactly what ensure_image exists to avoid.
 dc_run() {
   ensure_image
+  # docker-compose.yml applies agent-seccomp.json on every start; without the
+  # file the runtime fails with an error that does not name it.
+  [ -s "$ROOT/agent-seccomp.json" ] \
+    || die "agent-seccomp.json is missing — git checkout agent-seccomp.json, or ./scripts/make-seccomp.sh"
   dc run --rm "$@"
 }
 
@@ -1447,6 +1451,15 @@ cmd_doctor() {
   bold "== runtime =="
   detect_runtime
   echo "  runtime: $RUNTIME"
+  # Not a weaker sandbox when absent but one that will not start: the compose
+  # file names it unconditionally.
+  if [ -s "$ROOT/agent-seccomp.json" ]; then
+    echo "  seccomp: agent-seccomp.json present"
+  else
+    echo "  seccomp: agent-seccomp.json MISSING — no container will start until it is back:"
+    echo "           git checkout agent-seccomp.json, or ./scripts/make-seccomp.sh"
+    issues=$((issues+1))
+  fi
   if [ "$RUNTIME" = podman ]; then
     if podman_provider 2>/dev/null; then
       echo "  compose: $PODMAN_PROVIDER"

@@ -15,6 +15,11 @@ echo "── identity ──"
 check "running as non-root (uid $(id -u))"        '[ "$(id -u)" -ne 0 ]'
 deny  "cannot sudo"                                'command -v sudo && sudo -n true'
 check "all capabilities dropped"                   'grep -q "^CapEff:\s*0\{16\}$" /proc/self/status'
+check "seccomp filter applied"                     'grep -q "^Seccomp:\s*2$" /proc/self/status'
+# Dropping capabilities does not stop a same-uid ptrace; only the seccomp
+# profile does. The runtime's stock profile lets this through, so a pass here
+# means agent-seccomp.json is the one in force. PTRACE_TRACEME needs no target.
+deny  "ptrace filtered by seccomp"                 'python3 -c "import ctypes; l=ctypes.CDLL(None); l.ptrace.restype=ctypes.c_long; raise SystemExit(l.ptrace(0,0,0,0) != 0)"'
 
 echo
 echo "── filesystem ──"
