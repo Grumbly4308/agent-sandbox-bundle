@@ -186,6 +186,12 @@ fi
 if [ -x "$PROFILE_DIR/setup.sh" ]; then
   "$PROFILE_DIR/setup.sh" || echo "sandbox: profile/setup.sh exited $? (continuing)" >&2
 fi
+# setup.sh is a child process, so anything it wants on PATH (the venv) comes
+# back through ~/.profile. Sourced here, before the exec, it is inherited by the
+# agent and by every non-interactive shell the agent spawns.
+if [ -f "$HOME_DIR/.profile" ]; then
+  . "$HOME_DIR/.profile"
+fi
 
 # --- 8. Run the agent -------------------------------------------------------
 # Not `exec`, because we may need to copy the login back out afterwards.
