@@ -16,10 +16,16 @@ elif [ -f package.json ]; then
 fi
 
 # Python
-if [ -f requirements.txt ]; then
-  echo "sandbox: pip install -r requirements.txt"
-  python3 -m venv /tmp/venv && /tmp/venv/bin/pip install -q -r requirements.txt
-  echo 'export PATH=/tmp/venv/bin:$PATH' >> "$HOME/.bashrc"
+if [ -f requirements.txt ] || [ -f pyproject.toml ]; then
+  echo "sandbox: python3 -m venv /tmp/venv"
+  if python3 -m venv /tmp/venv; then
+    [ -f requirements.txt ] && /tmp/venv/bin/pip install -q -r requirements.txt
+    [ -f pyproject.toml ]   && /tmp/venv/bin/pip install -q -e .
+    # Not ~/.bashrc: only interactive shells read that, and the agent's tool
+    # calls are `bash -c`, which reads nothing. The entrypoint sources ~/.profile
+    # before it execs the agent, so this reaches every process in the session.
+    echo 'export PATH=/tmp/venv/bin:$PATH' >> "$HOME/.profile"
+  fi
 fi
 
 exit 0
