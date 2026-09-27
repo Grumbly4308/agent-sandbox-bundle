@@ -254,7 +254,7 @@ From `docker-compose.yml`:
       - ./profile:/opt/profile:ro          # defaults it can read, never edit
       - ./logs:/logs                       # audit trail, written outside
       - ./secrets:/run/secrets:ro          # deploy key, if you use one
-      - ./auth:/run/auth                   # saved agent login, if you use one
+      - ./auth:/run/auth:ro                # saved agent login; rw only for ./sandbox login
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     pids_limit: 512
@@ -378,7 +378,7 @@ Three options, in increasing order of how much you are trusting the host:
 ./sandbox logout    # delete it
 ```
 
-`auth/` is bind-mounted read-write at `/run/auth`. The entrypoint copies the session (`.credentials.json`) and the account/onboarding state (`.claude.json`, without which the CLI redoes first-run setup) into the tmpfs `$HOME` at start. It writes back **only** when `./sandbox login` sets `SANDBOX_PERSIST_AUTH=1`, so a normal session can read your saved login but never modify it.
+`auth/` is bind-mounted **read-only** at `/run/auth`. The entrypoint copies the session (`.credentials.json`) and the account/onboarding state (`.claude.json`, without which the CLI redoes first-run setup) into the tmpfs `$HOME` at start. Only `./sandbox login` layers `docker-compose.login.yml` on top, remounting `auth/` read-write and setting `SANDBOX_PERSIST_AUTH=1` so the entrypoint writes back at exit — a normal session can read your saved login but never modify it, because the mount itself refuses the write.
 
 Be honest about what this costs. That file is a live login to your Claude account — broader than a scoped API key — and it now lives on disk and is mounted into a container running model-directed code. So: `auth/` is `chmod 700` and gitignored; `settings.json` denies `Read(//run/auth/**)`; `./sandbox destroy` reminds you it is still there. Use an API key for unattended runs, and `./sandbox logout` plus a session revoke in your account settings when you are done on a shared machine.
 

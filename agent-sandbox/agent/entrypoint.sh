@@ -37,9 +37,9 @@ fi
 
 # --- 4. Saved login ---------------------------------------------------------
 # The tmpfs $HOME means an interactive `/login` would have to be repeated every
-# single session. auth/ on the host is mounted read-write here; we copy the
-# session in at start, and (only when ./sandbox login asked for it) back out at
-# exit. Nothing else in $HOME is ever persisted.
+# single session. auth/ on the host is mounted read-only here; we copy the
+# session in at start. Only ./sandbox login remounts it read-write and asks for
+# the copy back out at exit. Nothing else in $HOME is ever persisted.
 # .credentials.json is the session itself; .claude.json carries the account and
 # onboarding state, and without it the CLI re-runs first-run setup every time.
 #
@@ -69,7 +69,7 @@ restore_auth() {
 
 save_auth() {
   if [ ! -w "$AUTH_DIR" ]; then
-    echo "sandbox: /run/auth is not writable; login not saved" >&2
+    echo "sandbox: /run/auth is read-only; login not saved (only ./sandbox login can)" >&2
     return 0
   fi
   if [ "${SANDBOX_AGENT:-claude}" = codex ]; then
@@ -200,7 +200,11 @@ fi
 # --- 8. Run the agent -------------------------------------------------------
 # Not `exec`, because we may need to copy the login back out afterwards.
 # tini is still PID 1, so subprocess reaping is unaffected.
-if [ -n "${SANDBOX_PERSIST_AUTH:-}" ]; then
+#
+# An exact "1", not merely non-empty: docker-compose.login.yml is the only
+# thing that sets it, and podman-compose has handed the container the literal
+# string `${SANDBOX_PERSIST_AUTH:-}` for a variable defined nowhere.
+if [ "${SANDBOX_PERSIST_AUTH:-}" = 1 ]; then
   trap save_auth EXIT INT TERM
   "$@"
 else

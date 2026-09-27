@@ -1,0 +1,25 @@
+# Login overlay: the one run that may write to auth/. Applied on top of the
+# other compose files by `./sandbox login` and by nothing else.
+#
+# Every other run mounts auth/ read-only. The saved login is copied into the
+# tmpfs $HOME at start and never written back, so a compromised session cannot
+# plant a token or a config file in auth/ for every later session to load as
+# its own. Only this overlay remounts it read-write.
+#
+# It is also the only place SANDBOX_PERSIST_AUTH is set, and it is set as a
+# literal. The base file used to carry `${SANDBOX_PERSIST_AUTH:-}`, and
+# podman-compose has been seen handing the container that string
+# uninterpolated when the variable was defined nowhere — which a bare -n test
+# in the entrypoint read as "yes, save back", on every run. Now a normal run
+# has no value at all, and the entrypoint saves only on an exact "1".
+#
+# `z` is the SELinux label from docker-compose.podman.yml: the mount replaces
+# that one by target path, so it has to carry the label itself. Docker and
+# non-SELinux hosts accept the suffix and ignore it.
+
+services:
+  agent:
+    volumes:
+      - ./auth:/run/auth:rw,z
+    environment:
+      SANDBOX_PERSIST_AUTH: "1"

@@ -43,6 +43,7 @@ Something broken: `./sandbox doctor`, then `../docs/08-troubleshooting.md`.
 | `docker-compose.yml` | Two services: the locked-down agent, and the egress proxy. |
 | `docker-compose.podman.yml` | Applied on top when `SANDBOX_RUNTIME=podman`. |
 | `docker-compose.git-token.yml` | Applied only when `SANDBOX_FORWARD_GIT_TOKEN=1`; the one place `GIT_TOKEN` enters the container. |
+| `docker-compose.login.yml` | Applied only by `./sandbox login`; the one run that mounts `auth/` read-write. |
 | `agent/` | The agent image and the entrypoint that rebuilds `$HOME` from `profile/`. |
 | `proxy/` | A stock Squid configured as a default-deny allowlist. No third-party image. |
 | `proxy/agents/` | Per-vendor allowlist blocks; the active one is compiled into `allowlist.txt`. |
@@ -51,7 +52,7 @@ Something broken: `./sandbox doctor`, then `../docs/08-troubleshooting.md`.
 | `scripts/make-seccomp.sh` | Optional Layer 4 — a tightened seccomp profile. |
 | `project/` | The canonical clone. Never mounted into the container. |
 | `workspace/` | A clone of `project/` that **is** mounted. The only host dir the agent sees. |
-| `auth/` | A saved agent login, if you use one. `chmod 700`, gitignored. |
+| `auth/` | A saved agent login, if you use one. `chmod 700`, gitignored, mounted read-only except during `login`. |
 | `secrets/` | A deploy key, if you use one. Mounted read-only. |
 
 ## The profile
@@ -103,7 +104,7 @@ One agent per bundle, deliberately: one image, one credential set, one vendor
 on the allowlist. Run the same repo under both agents by copying the bundle,
 as with any two projects (below).
 
-One caveat the swap cannot fix for you: `auth/` is mounted read-write into
+One caveat the swap cannot fix for you: `auth/` is mounted (read-only) into
 every session, so a *saved login* for the other vendor stays readable from
 inside the container until you `./sandbox logout`. The entrypoint drops the
 inactive vendor's API keys from the environment and does not materialise its
