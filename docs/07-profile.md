@@ -79,15 +79,20 @@ technically permitted inside the sandbox but aren't what you asked for.
     ],
     "ask": [
       "Bash(git push:*)", "Bash(git reset:*)",
-      "Bash(npm install:*)", "Bash(pip install:*)", "WebFetch"
+      "Bash(npm install:*)", "Bash(npm i:*)", "Bash(npx:*)",
+      "Bash(pip install:*)", "Bash(python3 -m pip:*)",
+      "WebFetch", "WebSearch"
     ],
     "deny": [
       "Bash(sudo:*)", "Bash(curl:*)", "Bash(wget:*)", "Bash(nc:*)",
       "Bash(git push --force:*)",
-      "Read(//run/secrets/**)", "Read(//home/agent/.ssh/**)",
+      "Edit(//workspace/repo/.git/**)", "Edit(//workspace/repo/.claude/**)",
+      "Edit(//workspace/repo/.mcp.json)", "Edit(//workspace/repo/.envrc)",
+      "Read(//run/secrets/**)", "Read(//run/auth/**)", "Read(//home/agent/.ssh/**)",
       "Read(./.env)", "Read(**/id_ed25519*)", "Read(**/*.pem)"
     ]
   },
+  "enableAllProjectMcpServers": false,
   "env": { "DISABLE_TELEMETRY": "1" },
   "hooks": {
     "PreToolUse": [{
@@ -101,13 +106,37 @@ technically permitted inside the sandbox but aren't what you asked for.
 }
 ```
 
-Four things worth understanding:
+Seven things worth understanding:
 
 **`defaultMode: "acceptEdits"`** lets the agent edit files in the worktree
 without asking each time. That is safe *here specifically* because the worktree
 is disposable and every change is reviewed as a diff before it goes anywhere.
 Outside a sandbox this setting would be reckless; inside one it is what makes
 the sandbox worth using rather than a permission-prompt treadmill.
+
+**Some files in the worktree are not "edits", they are code the host runs.**
+Git hooks and `.git/config`, the repo's own `.claude/` settings, `.mcp.json`,
+`.envrc`, `.vscode/` tasks and `.npmrc` are all read and acted on by *your*
+tools or by the next session — not reviewed as a diff first. `acceptEdits`
+would otherwise wave those through, so they are denied outright: a change to
+one of them shows up as a blocked tool call, and if you actually want it, you
+make it yourself on the host. `enableAllProjectMcpServers: false` is the same
+idea for MCP: a repo's `.mcp.json` names commands to spawn, and each one still
+gets its own prompt instead of blanket approval.
+
+**Installers and `WebSearch` prompt.** `npm install`, `npm i`, `npx`,
+`pip install`, `python3 -m pip` and friends run arbitrary package scripts, so
+they ask. `WebSearch` asks for a different reason: it runs on Anthropic's
+servers, not in the container, so it never passes through squid or the
+allowlist — the one tool whose network access the proxy cannot see.
+
+**These rules are advisory against interpreters.** `curl` is denied, but
+`python3 -c 'import urllib...'` and `node -e 'fetch(...)'` are not, and
+cannot sensibly be — they are the tools the agent is here to use. Anything a
+denied command can do, an allowed interpreter can do too. What actually holds
+the line is the egress allowlist ([05](05-egress-proxy.md)) and what is *not*
+mounted ([06](06-credentials.md)); this file decides what you get prompted
+about and what shows up in the transcript, not what is possible.
 
 **Paths use `//` for absolute.** `Read(//run/secrets/**)` is the absolute path
 `/run/secrets/`; `Read(./.env)` is relative to the project directory. Getting

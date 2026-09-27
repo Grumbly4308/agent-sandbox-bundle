@@ -25,17 +25,26 @@
       "Write(//workspace/repo/**)"
     ],
 
+    "// ask": "WebSearch runs on Anthropic's servers, not in the container, so it never passes through squid or the allowlist. It stays available, but only on a prompt.",
     "ask": [
       "Bash(git push:*)",
       "Bash(git reset:*)",
       "Bash(git clean:*)",
       "Bash(npm install:*)",
+      "Bash(npm i:*)",
+      "Bash(npm add:*)",
       "Bash(npm ci:*)",
+      "Bash(npx:*)",
       "Bash(pip install:*)",
+      "Bash(pip3 install:*)",
+      "Bash(python3 -m pip:*)",
+      "Bash(python -m pip:*)",
       "Bash(uv pip install:*)",
-      "WebFetch"
+      "WebFetch",
+      "WebSearch"
     ],
 
+    "// deny": "The Edit/Write block covers files the host or a later session would execute rather than review: git hooks and config, Claude's own project settings and MCP config, direnv, VS Code tasks, npm hooks and registry. Edit(path) rules also gate Write and NotebookEdit; the Write(path) entries mirror the allow list.",
     "deny": [
       "Bash(sudo:*)",
       "Bash(su:*)",
@@ -46,6 +55,18 @@
       "Bash(chmod 777:*)",
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",
+      "Edit(//workspace/repo/.git/**)",
+      "Edit(//workspace/repo/.claude/**)",
+      "Edit(//workspace/repo/.mcp.json)",
+      "Edit(//workspace/repo/.envrc)",
+      "Edit(//workspace/repo/.vscode/**)",
+      "Edit(//workspace/repo/.npmrc)",
+      "Write(//workspace/repo/.git/**)",
+      "Write(//workspace/repo/.claude/**)",
+      "Write(//workspace/repo/.mcp.json)",
+      "Write(//workspace/repo/.envrc)",
+      "Write(//workspace/repo/.vscode/**)",
+      "Write(//workspace/repo/.npmrc)",
       "Read(//run/secrets/**)",
       "Read(//run/auth/**)",
       "Read(//home/agent/.claude/.credentials.json)",
@@ -58,6 +79,9 @@
       "Read(**/id_ed25519*)"
     ]
   },
+
+  "// enableAllProjectMcpServers": "A repo's .mcp.json names commands to spawn. Never approve them wholesale; each one gets the normal prompt.",
+  "enableAllProjectMcpServers": false,
 
   "env": {
     "DISABLE_TELEMETRY": "1",
