@@ -22,6 +22,9 @@ agent commits  ──►   ./sandbox review    diff, untracked files, secret sca
 
 Four things, in order:
 
+- **the workspace's git config** — warns if `origin` no longer matches the URL
+  `./sandbox new` recorded, or if a hook path, fsmonitor, ssh command or
+  credential helper has been set in it (see below)
 - **the diff against `origin/<default branch>`** — `--stat` only; read the full
   diff before you push, always
 - **the commits** — messages, and whether they are the small reviewable steps
@@ -50,20 +53,36 @@ branch *adds* rather than everything that has happened on `main` since.
 ./sandbox push
 ```
 
-Runs `git push -u origin <branch>` from `workspace/`, on the host, using your
-normal git credentials — SSH agent, credential helper, whatever you already
-have. No token has to exist inside the container for this to work.
+Pushes `<branch>` from `workspace/`, on the host, using your normal git
+credentials — SSH agent, credential helper, whatever you already have. No
+token has to exist inside the container for this to work.
 
-`workspace/` is a clone of `project/`, so its `origin` initially points at a
-directory on your disk. `./sandbox new` rewrites it to the real upstream
-immediately, and `./sandbox push` refuses to run if it still points anywhere
-local — otherwise you would "push" into a folder and see nothing on the server.
+Where it pushes *to* is the URL `./sandbox new` recorded in `.env` as
+`WORKSPACE_ORIGIN`, not whatever `workspace/.git/config` says now. `workspace/`
+is a clone of `project/`, so its `origin` initially points at a directory on
+your disk; `new` rewrites it to the real upstream and records that URL in the
+same step.
 
 Verify once, if you like:
 
 ```bash
-git -C workspace remote -v
+grep WORKSPACE_ORIGIN .env
 ```
+
+### Why the host never trusts the workspace's git config
+
+Everything under `workspace/` is the agent's to write, `.git/config` and
+`.git/hooks` included. Git runs what a repo's own config points it at —
+`core.hooksPath`, `core.fsmonitor`, `core.pager`, `diff.external`, an `ext::`
+remote — as the user who invoked it, and on the host that user is you, with
+your credentials. So every git command `./sandbox` runs against the workspace
+overrides those keys on the command line, `gh`/`glab` get the same overrides
+and are told which repo to use, and push and fetch go to the recorded URL.
+`./sandbox review` and `./sandbox doctor` warn when the workspace's `origin`
+differs from the recorded one, or when `core.hooksPath`, `core.fsmonitor`,
+`core.sshCommand`, `credential.helper` or similar are set — `new` writes none
+of them, so the agent did. A plain `git -C workspace ...` from your shell has
+none of this protection; read the warnings first.
 
 ---
 

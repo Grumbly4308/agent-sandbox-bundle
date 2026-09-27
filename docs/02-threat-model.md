@@ -69,6 +69,14 @@ sudo grep -rn NOPASSWD /etc/sudoers /etc/sudoers.d/   # sandboxer absent
 4. **Review, test, and push happen in your environment, outside the box.** The
    sandbox makes mistakes cheap; it does not make them disappear.
 
+Rule 4 has a corollary: **the host never trusts the workspace's git config.**
+`workspace/.git` is the agent's to write, and git runs a hook, a fsmonitor, a
+pager or an external diff named in a repo's own config as whoever invoked it —
+on the host, that is you, with your credentials. So `./sandbox review`, `push`
+and `pr` override those keys on every git call, push to the remote URL recorded
+at `./sandbox new` rather than the one in the workspace, and warn when the two
+differ. See [10](10-push-and-pr.md).
+
 ## Defence in depth, in order of value
 
 If you only do some of this, do it in this order:

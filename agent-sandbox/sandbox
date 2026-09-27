@@ -470,10 +470,6 @@ require_init() {
   [ -d "$PROJECT_DIR/.git" ] || die "no project yet — run: ./sandbox init <repo-url>"
 }
 
-current_branch() {
-  git -C "$WORKTREE_DIR" branch --show-current 2>/dev/null || true
-}
-
 default_branch() {
   git -C "$PROJECT_DIR" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null \
     | sed 's|^origin/||' \
@@ -482,6 +478,69 @@ default_branch() {
 
 upstream_url() {
   git -C "$PROJECT_DIR" remote get-url origin 2>/dev/null || true
+}
+
+# --------------------------------------------------------------------------
+# Host-side git against workspace/
+#
+# workspace/.git is the agent's to write, and git runs whatever a repo's own
+# config points it at — a hook, a fsmonitor daemon, a pager, an external diff,
+# an ext:: transport — as the user who invoked it. On the host that user is
+# you, with your credentials. So every host-side git call against the
+# worktree goes through wgit, which overrides those keys on the command line,
+# and nothing on the host trusts the remote URL in that config: `new` records
+# the real one in .env, which the container never sees, and push and fetch
+# use the recorded copy.
+# --------------------------------------------------------------------------
+WGIT_OVERRIDES=(core.hooksPath=/dev/null core.fsmonitor= core.pager=cat diff.external= protocol.ext.allow=never)
+
+wgit() {
+  local args=() kv
+  for kv in "${WGIT_OVERRIDES[@]}"; do args+=(-c "$kv"); done
+  git -C "$WORKTREE_DIR" "${args[@]}" "$@"
+}
+
+# The same overrides for gh/glab, which run git themselves.
+wgit_params() {
+  local out="" kv
+  for kv in "${WGIT_OVERRIDES[@]}"; do out+="'$kv' "; done
+  printf '%s' "${out% }"
+}
+
+current_branch() {
+  wgit branch --show-current 2>/dev/null || true
+}
+
+workspace_origin() {
+  local url; url="$(env_get WORKSPACE_ORIGIN)"
+  [ -n "$url" ] || url="$(upstream_url)"   # workspaces made before `new` recorded it
+  printf '%s' "$url"
+}
+
+# Repo-local keys that make git run something or hand credentials to someone
+# else. `new` writes none of them, so if one is set, the agent set it.
+WORKSPACE_CONFIG_SUSPECT='^(core\.(hookspath|fsmonitor|sshcommand|pager)|diff\.(external|.*\.command)|credential\.helper|url\..*\.(push)?insteadof)$'
+
+check_workspace_git() {
+  [ -d "$WORKTREE_DIR/.git" ] || return 0
+  local flagged=0 recorded url k v
+  recorded="$(env_get WORKSPACE_ORIGIN)"
+  url="$(wgit config --local --get remote.origin.url 2>/dev/null || true)"
+  if [ -n "$recorded" ] && [ "$url" != "$recorded" ]; then
+    warn "workspace origin is '$url' but ./sandbox new recorded '$recorded' — push uses the recorded one"
+    flagged=1
+  fi
+  url="$(wgit config --local --get remote.origin.pushurl 2>/dev/null || true)"
+  if [ -n "$url" ]; then
+    warn "workspace sets remote.origin.pushurl=$url — ./sandbox new never does; push ignores it"
+    flagged=1
+  fi
+  while read -r k v; do
+    [ -n "$k" ] || continue
+    warn "workspace .git/config sets $k=$v — ./sandbox new never does; look before you push"
+    flagged=1
+  done <<<"$(wgit config --local --get-regexp "$WORKSPACE_CONFIG_SUSPECT" 2>/dev/null || true)"
+  return "$flagged"
 }
 
 # --------------------------------------------------------------------------
@@ -673,7 +732,7 @@ cmd_new() {
   if [ -e "$WORKTREE_DIR" ]; then
     local old; old="$(current_branch)"
     warn "replacing existing workspace${old:+ (branch $old)}"
-    if [ -n "$old" ] && [ -n "$(git -C "$WORKTREE_DIR" status --porcelain 2>/dev/null)" ]; then
+    if [ -n "$old" ] && [ -n "$(wgit status --porcelain 2>/dev/null)" ]; then
       warn "it has uncommitted changes"
     fi
     read -rp "Discard it? [y/N] " reply
@@ -687,15 +746,18 @@ cmd_new() {
   git clone --quiet --no-hardlinks "$PROJECT_DIR" "$WORKTREE_DIR"
 
   if [ -n "$upstream" ]; then
-    # Without this, workspace's origin is the local project/ directory and
-    # `./sandbox push` would push into a folder on your disk, not to the remote.
-    git -C "$WORKTREE_DIR" remote set-url origin "$upstream"
-    git -C "$WORKTREE_DIR" fetch --quiet origin "+refs/heads/$base:refs/remotes/origin/$base" \
+    # Without this, workspace's origin is the local project/ directory, which
+    # is not mounted — so the agent's own `git fetch` would fail inside the box.
+    wgit remote set-url origin "$upstream"
+    wgit fetch --quiet origin "+refs/heads/$base:refs/remotes/origin/$base" \
       || warn "could not fetch origin/$base from the real remote; using the local copy"
   fi
+  # The copy push and review trust from now on; the one in workspace/.git/config
+  # is the agent's to rewrite.
+  env_set WORKSPACE_ORIGIN "$upstream"
 
   info "creating branch $branch from origin/$base"
-  git -C "$WORKTREE_DIR" checkout --quiet -B "$branch" "origin/$base"
+  wgit checkout --quiet -B "$branch" "origin/$base"
 
   bold "workspace ready: $WORKTREE_DIR  (branch $branch)"
 }
@@ -1084,18 +1146,20 @@ cmd_review() {
   [ -d "$WORKTREE_DIR/.git" ] || die "no workspace to review"
   local base; base="$(default_branch)"
 
-  pull_auth "$(upstream_url)"
-  git -C "$WORKTREE_DIR" fetch --quiet origin "+refs/heads/$base:refs/remotes/origin/$base" 2>/dev/null \
+  local remote; remote="$(workspace_origin)"
+  pull_auth "$remote"
+  wgit fetch --quiet "$remote" "+refs/heads/$base:refs/remotes/origin/$base" 2>/dev/null \
     || warn "could not refresh origin/$base; comparing against the last known copy"
+  check_workspace_git || true
 
   bold "=== files changed vs origin/$base ==="
-  git -C "$WORKTREE_DIR" diff --stat "origin/$base"...HEAD || true
+  wgit diff --stat "origin/$base"...HEAD || true
   echo
   bold "=== commits ==="
-  git -C "$WORKTREE_DIR" log --oneline "origin/$base"..HEAD || true
+  wgit log --oneline "origin/$base"..HEAD || true
   echo
   bold "=== attribution check (no AI trailers) ==="
-  if git -C "$WORKTREE_DIR" log --format='%B' "origin/$base"..HEAD 2>/dev/null \
+  if wgit log --format='%B' "origin/$base"..HEAD 2>/dev/null \
        | grep -inE 'co-authored-by.*(claude|anthropic|ai)|generated with|🤖'; then
     warn "attribution trailer found — see the git conventions in profile/claude/CLAUDE.md"
   else
@@ -1103,7 +1167,7 @@ cmd_review() {
   fi
   echo
   bold "=== untracked files (the agent's leftovers) ==="
-  git -C "$WORKTREE_DIR" ls-files --others --exclude-standard || true
+  wgit ls-files --others --exclude-standard || true
   echo
 
   bold "=== secret scan ==="
@@ -1122,13 +1186,11 @@ cmd_push() {
   require_init
   local branch; branch="$(current_branch)"
   [ -n "$branch" ] || die "no workspace branch to push"
-  local remote; remote="$(git -C "$WORKTREE_DIR" remote get-url origin 2>/dev/null || true)"
-  case "$remote" in
-    "$PROJECT_DIR"|"$PROJECT_DIR"/*)
-      die "workspace origin still points at project/ — re-run ./sandbox new so it points at the real remote" ;;
-  esac
+  # The URL recorded by `new`, never the one in workspace/.git/config.
+  local remote; remote="$(workspace_origin)"
+  [ -n "$remote" ] || die "no remote recorded for the workspace — re-run ./sandbox new"
   info "pushing $branch to $remote (from your environment, not the sandbox)"
-  git -C "$WORKTREE_DIR" push -u origin "$branch"
+  wgit push -u "$remote" "$branch"
 }
 
 # pr — push, then open a pull/merge request against the default branch.
@@ -1139,21 +1201,26 @@ cmd_pr() {
   [ -n "$branch" ] || die "no workspace branch"
   local base; base="$(default_branch)"
   local title="${1:-}"
-  [ -n "$title" ] || title="$(git -C "$WORKTREE_DIR" log -1 --pretty=%s)"
+  [ -n "$title" ] || title="$(wgit log -1 --pretty=%s)"
 
   cmd_push
 
   local remote host path
-  remote="$(git -C "$WORKTREE_DIR" remote get-url origin)"
+  remote="$(workspace_origin)"
   host="$(url_host "$remote")"
   path="$(printf '%s' "$remote" \
           | sed -E 's|^[a-z+]+://||; s|^[^@/]*@||; s|^[^/:]+[:/]||; s|^[0-9]+/||; s|\.git$||')"
 
+  # gh and glab read the workspace's git config too — to find the repo, and
+  # for every git command they run. Name the repo from the recorded URL and
+  # give their git the same overrides wgit uses.
+  export GIT_CONFIG_PARAMETERS; GIT_CONFIG_PARAMETERS="$(wgit_params)"
   case "$host" in
     github.com|*.github.com)
       if command -v gh >/dev/null 2>&1; then
         info "opening a pull request with gh"
-        ( cd "$WORKTREE_DIR" && gh pr create --base "$base" --head "$branch" --title "$title" --body "" )
+        ( cd "$WORKTREE_DIR" && gh pr create --repo "$host/$path" --base "$base" --head "$branch" \
+            --title "$title" --body "" )
         return
       fi
       bold "Open the PR here:"
@@ -1162,15 +1229,16 @@ cmd_pr() {
     *)
       if command -v glab >/dev/null 2>&1; then
         info "opening a merge request with glab"
-        ( cd "$WORKTREE_DIR" && glab mr create --source-branch "$branch" --target-branch "$base" \
+        ( cd "$WORKTREE_DIR" && glab mr create --repo "https://$host/$path" \
+            --source-branch "$branch" --target-branch "$base" \
             --title "$title" --description "" --yes )
         return
       fi
       info "no glab — asking the server to open the MR via git push options"
-      if ! git -C "$WORKTREE_DIR" push -o merge_request.create \
-                                       -o merge_request.target="$base" \
-                                       -o merge_request.title="$title" \
-                                       origin "$branch"; then
+      if ! wgit push -o merge_request.create \
+                     -o merge_request.target="$base" \
+                     -o merge_request.title="$title" \
+                     "$remote" "$branch"; then
         warn "push options not supported by this server"
         bold "Open the MR here:"
         echo "  https://$host/$path/-/merge_requests/new?merge_request%5Bsource_branch%5D=$branch"
@@ -1212,7 +1280,8 @@ cmd_doctor() {
     fi
     issues=$((issues+1))
   elif [ -d "$WORKTREE_DIR/.git" ]; then
-    echo "  workspace/: ok (branch $(current_branch))"
+    echo "  workspace/: ok (branch $(current_branch), pushes to $(workspace_origin))"
+    check_workspace_git || issues=$((issues+1))
   else
     echo "  workspace/: none — ./sandbox new <task>"
   fi
@@ -1311,8 +1380,8 @@ cmd_status() {
   bold "workspace"
   if [ -d "$WORKTREE_DIR/.git" ]; then
     echo "  branch: $(current_branch)"
-    echo "  origin: $(git -C "$WORKTREE_DIR" remote get-url origin 2>/dev/null)"
-    git -C "$WORKTREE_DIR" status -sb | head -20
+    echo "  origin: $(workspace_origin)"
+    wgit status -sb | head -20
   else
     echo "  (none — ./sandbox new <task>)"
   fi
