@@ -519,6 +519,57 @@ url_port() {
 }
 
 # --------------------------------------------------------------------------
+# Pull credentials — a read-only token that never touches disk
+#
+# The account running this script is the first thing an escaped agent owns,
+# so under a strict threat model it should hold no SSH key and no stored git
+# credential. SANDBOX_PULL_AUTH=prompt asks for a read-only token on each
+# command that talks to the remote (init, new, review) and hands it to git
+# through an in-memory credential helper, for this process only.
+#
+# The empty helper entry first clears any configured `store` or keychain
+# helper: git offers every helper the credential after a successful fetch,
+# and those would write it to disk. The variable is deliberately not
+# GIT_TOKEN — compose forwards that one into the agent container.
+# --------------------------------------------------------------------------
+PULL_AUTH_READY=""
+pull_auth() {
+  [ -z "$PULL_AUTH_READY" ] || return 0
+  local mode; mode="${SANDBOX_PULL_AUTH:-$(env_get SANDBOX_PULL_AUTH)}"
+  [ "$mode" = prompt ] || return 0
+  PULL_AUTH_READY=1
+
+  case "$1" in
+    https://*) ;;
+    *) warn "SANDBOX_PULL_AUTH=prompt needs an https:// remote; '$1' will not use the token"
+       return 0 ;;
+  esac
+
+  # GIT_CONFIG_COUNT/KEY/VALUE arrived in git 2.31; older git ignores them
+  # silently and falls back to whatever helper is configured.
+  local maj min
+  read -r maj min <<<"$(git version | sed -nE 's/^git version ([0-9]+)\.([0-9]+).*/\1 \2/p')"
+  if [ "${maj:-0}" -lt 2 ] || { [ "$maj" -eq 2 ] && [ "${min:-0}" -lt 31 ]; }; then
+    die "SANDBOX_PULL_AUTH=prompt needs git 2.31 or newer ($(git version))"
+  fi
+
+  read -rsp "read-only token for $(url_host "$1"): " SANDBOX_PULL_TOKEN </dev/tty \
+    || die "SANDBOX_PULL_AUTH=prompt needs a terminal to read the token from"
+  echo >&2
+  [ -n "$SANDBOX_PULL_TOKEN" ] || die "no token entered"
+
+  export SANDBOX_PULL_TOKEN GIT_CONFIG_COUNT=3
+  export GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=
+  export GIT_CONFIG_KEY_1=credential.helper
+  export GIT_CONFIG_VALUE_1='!f() {
+    test "$1" = get || return 0
+    echo username=x-access-token
+    echo "password=$SANDBOX_PULL_TOKEN"
+  }; f'
+  export GIT_CONFIG_KEY_2=credential.useHttpPath GIT_CONFIG_VALUE_2=false
+}
+
+# --------------------------------------------------------------------------
 # init — clone the repo, wire the allowlist, write .env
 # --------------------------------------------------------------------------
 cmd_init() {
@@ -533,6 +584,7 @@ cmd_init() {
   chmod 700 "$AUTH_DIR"
   touch "$ROOT/secrets/.gitkeep"
 
+  pull_auth "$url"
   if [ -d "$PROJECT_DIR/.git" ]; then
     info "project already cloned; fetching"
     git -C "$PROJECT_DIR" remote set-url origin "$url"
@@ -561,6 +613,9 @@ cmd_init() {
         "$ROOT/.env.example" > "$ENV_FILE"
     chmod 600 "$ENV_FILE"
   fi
+  # A one-off `SANDBOX_PULL_AUTH=prompt ./sandbox init` should stick, so that
+  # new and review ask too instead of failing without credentials.
+  [ "${SANDBOX_PULL_AUTH:-}" != prompt ] || env_set SANDBOX_PULL_AUTH prompt
 
   # A non-standard SSH port needs a CONNECT carve-out in the proxy before the
   # agent can use a deploy key against this host. Say so now, not at push time.
@@ -608,6 +663,7 @@ cmd_new() {
   local branch="agent/$task"
   local upstream; upstream="$(upstream_url)"
 
+  pull_auth "$upstream"
   info "fetching origin"
   git -C "$PROJECT_DIR" fetch origin --prune
 
@@ -1028,6 +1084,7 @@ cmd_review() {
   [ -d "$WORKTREE_DIR/.git" ] || die "no workspace to review"
   local base; base="$(default_branch)"
 
+  pull_auth "$(upstream_url)"
   git -C "$WORKTREE_DIR" fetch --quiet origin "+refs/heads/$base:refs/remotes/origin/$base" 2>/dev/null \
     || warn "could not refresh origin/$base; comparing against the last known copy"
 
@@ -1265,6 +1322,7 @@ cmd_status() {
   bold "credentials"
   [ -f "$ROOT/secrets/deploy_key" ] && echo "  deploy_key present" || echo "  no deploy key"
   grep -qE '^GIT_TOKEN=.+' "$ENV_FILE" 2>/dev/null && echo "  GIT_TOKEN set" || echo "  GIT_TOKEN empty"
+  [ "$(env_get SANDBOX_PULL_AUTH)" = prompt ] && echo "  pulls: read-only token, asked for on each fetch"
   if [ "$AGENT" = codex ]; then
     grep -qE '^OPENAI_API_KEY=.+' "$ENV_FILE" 2>/dev/null && echo "  OPENAI_API_KEY set" || echo "  OPENAI_API_KEY empty"
     [ -s "$AUTH_DIR/codex-auth.json" ] && echo "  saved codex session in auth/" || echo "  no saved codex session"
@@ -1303,6 +1361,8 @@ cmd_destroy() {
   echo
   bold "Now do the part no script can do for you:"
   echo "  - revoke GIT_TOKEN         (GitHub: Settings > Developer settings > Fine-grained tokens)"
+  [ "$(env_get SANDBOX_PULL_AUTH)" != prompt ] \
+    || echo "  - revoke the read-only pull token too, if you are done with this repo"
   echo "  - revoke ANTHROPIC_API_KEY (console.anthropic.com)"
   echo "  - revoke OPENAI_API_KEY    (platform.openai.com), if you used codex"
   echo "  - delete secrets/deploy_key and the deploy key in the repo's settings"
@@ -1316,6 +1376,8 @@ sandbox — a disposable, network-restricted home for an AI coding agent
 
 Setup
   init <repo-url>      Clone the repo, allowlist its host, write .env
+                       SANDBOX_PULL_AUTH=prompt in front asks for a read-only
+                       HTTPS token on every fetch instead of stored credentials
   login                Log the agent in once; the session is saved in auth/
   logout               Delete the saved session
   new <task-name>      Fresh clone of project/ on branch agent/<task-name>
