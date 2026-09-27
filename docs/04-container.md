@@ -21,9 +21,13 @@ ARG HOST_GID=1000
 ARG AGENT_CLI="@anthropic-ai/claude-code"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl git jq less netcat-openbsd nodejs npm \
-      openssh-client python3 python3-pip python3-venv ripgrep tini \
+      ca-certificates curl file git jq less make nano netcat-openbsd nodejs \
+      npm openssh-client patch procps python-is-python3 python3 python3-pip \
+      python3-venv ripgrep shellcheck tini tree unzip xz-utils \
  && rm -rf /var/lib/apt/lists/*
+
+# `ext::` remotes let git run an arbitrary command as the transport.
+RUN git config --system protocol.ext.allow never
 
 # Ubuntu 24.04 ships a stock `ubuntu` user on uid 1000. Remove it so the agent
 # user can take YOUR uid — otherwise every file the agent writes into the
@@ -72,7 +76,13 @@ mysteriously stops being able to run anything.
 **Install only what the project needs.** Every extra binary is attack surface.
 `netcat-openbsd` is here because SSH-over-443 through the proxy needs it
 ([06](06-credentials.md)); `jq` because the command-logging hook uses it
-([07](07-profile.md)). If your project doesn't need Python, drop it.
+([07](07-profile.md)); `make` because `qa` runs `make test`, `nano` because
+the shell profile sets `EDITOR=nano`. The remaining build and inspection tools
+(`patch`, `unzip`, `xz-utils`, `file`, `tree`, `procps`, `shellcheck`) talk to
+no network and open no new hosts. If your project doesn't need Python, drop it.
+The image also sets `protocol.ext.allow=never` in the system gitconfig, so git
+cannot run a command as a remote transport (`ext::`) no matter what URL a
+submodule or a pasted `git fetch` carries.
 
 **The CLI is installed as root into `/usr/local`.** The agent runs as `agent` and
 the filesystem is read-only, so it cannot modify or replace its own binary —

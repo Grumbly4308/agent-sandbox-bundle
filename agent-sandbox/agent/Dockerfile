@@ -23,26 +23,45 @@ ARG AGENT_BIN="claude"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    NPM_CONFIG_UPDATE_NOTIFIER=false
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    LANG=C.UTF-8
 
 # Every extra binary is attack surface. Add what your project genuinely needs
 # and nothing else — `netcat-openbsd` is here because SSH-over-443 through the
 # proxy needs it, `tini` because PID 1 must reap zombies. Node and npm come
-# from the base image.
+# from the base image. The build/inspect tools below talk to no network and
+# open no new hosts: `make` because profile/bin/qa runs `make test`, `nano`
+# because profile/shellrc.sh sets EDITOR=nano, the rest so a routine build or
+# review does not stall on a missing archive tool or `ps`.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
+      file \
       git \
       jq \
       less \
+      make \
+      nano \
       netcat-openbsd \
       openssh-client \
+      patch \
+      procps \
+      python-is-python3 \
       python3 \
       python3-pip \
       python3-venv \
       ripgrep \
+      shellcheck \
       tini \
+      tree \
+      unzip \
+      xz-utils \
  && rm -rf /var/lib/apt/lists/*
+
+# `ext::` remotes let git run an arbitrary command as the transport — a URL
+# in a cloned submodule or a pasted `git fetch` is enough. System-wide so the
+# agent's own ~/.gitconfig cannot re-enable it.
+RUN git config --system protocol.ext.allow never
 
 # The node image ships a stock `node` account on uid 1000. Remove it so the
 # agent user can take *your* uid — otherwise every file the agent writes into
