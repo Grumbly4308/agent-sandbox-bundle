@@ -15,6 +15,11 @@ echo "── identity ──"
 check "running as non-root (uid $(id -u))"        '[ "$(id -u)" -ne 0 ]'
 deny  "cannot sudo"                                'command -v sudo && sudo -n true'
 check "all capabilities dropped"                   'grep -q "^CapEff:\s*0\{16\}$" /proc/self/status'
+check "seccomp filter applied"                     'grep -q "^Seccomp:\s*2$" /proc/self/status'
+# Dropping capabilities does not stop a same-uid ptrace; only the seccomp
+# profile does. The runtime's stock profile lets this through, so a pass here
+# means agent-seccomp.json is the one in force. PTRACE_TRACEME needs no target.
+deny  "ptrace filtered by seccomp"                 'python3 -c "import ctypes; l=ctypes.CDLL(None); l.ptrace.restype=ctypes.c_long; raise SystemExit(l.ptrace(0,0,0,0) != 0)"'
 
 echo
 echo "── filesystem ──"
@@ -29,6 +34,9 @@ check "/workspace/repo is a usable git repo"       'git -C /workspace/repo rev-p
 check "/workspace/repo is a clone, not a worktree" '[ -d /workspace/repo/.git ]'
 check "/logs is writable"                          'touch /logs/.probe && rm /logs/.probe'
 deny  "profile mount is read-only"                 'touch /opt/profile/.probe'
+# Only ./sandbox login mounts auth/ read-write; a normal session must not be
+# able to plant anything in the login every later session loads.
+deny  "saved login mount is read-only"             'touch /run/auth/.probe'
 
 echo
 echo "── credentials ──"
@@ -59,6 +67,9 @@ echo "── profile ──"
 if [ "${SANDBOX_AGENT:-claude}" = codex ]; then
   check "AGENTS.md materialised"                   '[ -f "$HOME/.codex/AGENTS.md" ]'
   check "AGENTS.md forbids AI attribution"         'grep -qi "co-authored-by" "$HOME/.codex/AGENTS.md"'
+  check "config.toml materialised"                 '[ -f "$HOME/.codex/config.toml" ]'
+  # Without this codex sandboxes itself inside the container and loses the proxy.
+  check "codex sandbox deferred to the container"  'grep -q "^sandbox_mode = \"danger-full-access\"" "$HOME/.codex/config.toml"'
 else
   check "settings.json materialised"               '[ -f "$HOME/.claude/settings.json" ]'
   check "settings.json is valid JSON"              'jq -e . "$HOME/.claude/settings.json"'

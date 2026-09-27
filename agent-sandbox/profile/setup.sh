@@ -16,10 +16,16 @@ elif [ -f package.json ]; then
 fi
 
 # Python
-if [ -f requirements.txt ]; then
-  echo "sandbox: pip install -r requirements.txt"
-  python3 -m venv /tmp/venv && /tmp/venv/bin/pip install -q -r requirements.txt
-  echo 'export PATH=/tmp/venv/bin:$PATH' >> "$HOME/.bashrc"
+if [ -f requirements.txt ] || [ -f pyproject.toml ]; then
+  echo "sandbox: python3 -m venv /tmp/venv"
+  if python3 -m venv /tmp/venv; then
+    [ -f requirements.txt ] && /tmp/venv/bin/pip install -q -r requirements.txt
+    [ -f pyproject.toml ]   && /tmp/venv/bin/pip install -q -e .
+    # No PATH line in ~/.bashrc (only interactive shells read it; the agent's
+    # tool calls are `bash -c`) and none in ~/.profile either: the entrypoint
+    # puts /tmp/venv/bin on PATH itself when the directory exists, rather than
+    # sourcing a file the install hooks above could have written.
+  fi
 fi
 
 exit 0

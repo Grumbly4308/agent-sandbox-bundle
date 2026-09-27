@@ -28,6 +28,7 @@ before the agent and materialises it into the ephemeral `$HOME`:
 install -d -m 0700 "$HOME/.claude" "$HOME/.ssh" "$HOME/.local/bin"
 
 cp -a "$PROFILE_DIR/claude/."   "$HOME/.claude/"       # settings.json, CLAUDE.md
+cp -a "$PROFILE_DIR/codex/."    "$HOME/.codex/"        # config.toml, AGENTS.md
 cp -a "$PROFILE_DIR/bin/."      "$HOME/.local/bin/"    # custom commands on PATH
 cp    "$PROFILE_DIR/shellrc.sh" "$HOME/.bashrc"        # aliases, prompt
 
@@ -46,6 +47,7 @@ exec "$@"
 |---|---|---|
 | `claude/settings.json` | `~/.claude/settings.json` | Permission allow / ask / deny lists, hooks, env |
 | `claude/CLAUDE.md` | `~/.claude/CLAUDE.md` | Standing instructions read every session |
+| `codex/config.toml` | `~/.codex/config.toml` | Sandbox mode, approval policy, trusted project — codex's `settings.json` |
 | `codex/AGENTS.md` | `~/.codex/AGENTS.md` | The same standing instructions, when `SANDBOX_AGENT=codex` |
 | `bin/*` | `~/.local/bin/*` | Custom commands on `PATH` — `qa`, deploy scripts, whatever |
 | `shellrc.sh` | `~/.bashrc` | Aliases, a prompt that reminds you where you are |
@@ -79,15 +81,20 @@ technically permitted inside the sandbox but aren't what you asked for.
     ],
     "ask": [
       "Bash(git push:*)", "Bash(git reset:*)",
-      "Bash(npm install:*)", "Bash(pip install:*)", "WebFetch"
+      "Bash(npm install:*)", "Bash(npm i:*)", "Bash(npx:*)",
+      "Bash(pip install:*)", "Bash(python3 -m pip:*)",
+      "WebFetch", "WebSearch"
     ],
     "deny": [
       "Bash(sudo:*)", "Bash(curl:*)", "Bash(wget:*)", "Bash(nc:*)",
       "Bash(git push --force:*)",
-      "Read(//run/secrets/**)", "Read(//home/agent/.ssh/**)",
+      "Edit(//workspace/repo/.git/**)", "Edit(//workspace/repo/.claude/**)",
+      "Edit(//workspace/repo/.mcp.json)", "Edit(//workspace/repo/.envrc)",
+      "Read(//run/secrets/**)", "Read(//run/auth/**)", "Read(//home/agent/.ssh/**)",
       "Read(./.env)", "Read(**/id_ed25519*)", "Read(**/*.pem)"
     ]
   },
+  "enableAllProjectMcpServers": false,
   "env": { "DISABLE_TELEMETRY": "1" },
   "hooks": {
     "PreToolUse": [{
@@ -101,13 +108,37 @@ technically permitted inside the sandbox but aren't what you asked for.
 }
 ```
 
-Four things worth understanding:
+Seven things worth understanding:
 
 **`defaultMode: "acceptEdits"`** lets the agent edit files in the worktree
 without asking each time. That is safe *here specifically* because the worktree
 is disposable and every change is reviewed as a diff before it goes anywhere.
 Outside a sandbox this setting would be reckless; inside one it is what makes
 the sandbox worth using rather than a permission-prompt treadmill.
+
+**Some files in the worktree are not "edits", they are code the host runs.**
+Git hooks and `.git/config`, the repo's own `.claude/` settings, `.mcp.json`,
+`.envrc`, `.vscode/` tasks and `.npmrc` are all read and acted on by *your*
+tools or by the next session — not reviewed as a diff first. `acceptEdits`
+would otherwise wave those through, so they are denied outright: a change to
+one of them shows up as a blocked tool call, and if you actually want it, you
+make it yourself on the host. `enableAllProjectMcpServers: false` is the same
+idea for MCP: a repo's `.mcp.json` names commands to spawn, and each one still
+gets its own prompt instead of blanket approval.
+
+**Installers and `WebSearch` prompt.** `npm install`, `npm i`, `npx`,
+`pip install`, `python3 -m pip` and friends run arbitrary package scripts, so
+they ask. `WebSearch` asks for a different reason: it runs on Anthropic's
+servers, not in the container, so it never passes through squid or the
+allowlist — the one tool whose network access the proxy cannot see.
+
+**These rules are advisory against interpreters.** `curl` is denied, but
+`python3 -c 'import urllib...'` and `node -e 'fetch(...)'` are not, and
+cannot sensibly be — they are the tools the agent is here to use. Anything a
+denied command can do, an allowed interpreter can do too. What actually holds
+the line is the egress allowlist ([05](05-egress-proxy.md)) and what is *not*
+mounted ([06](06-credentials.md)); this file decides what you get prompted
+about and what shows up in the transcript, not what is possible.
 
 **Paths use `//` for absolute.** `Read(//run/secrets/**)` is the absolute path
 `/run/secrets/`; `Read(./.env)` is relative to the project directory. Getting
@@ -216,12 +247,47 @@ and no AI attribution in commits (see above). The shipped version has a full
 set — edit it to taste, since this is the file that most directly shapes
 day-to-day behaviour.
 
+## `profile/codex/config.toml`
+
+Codex's equivalent of `settings.json`, materialised as `~/.codex/config.toml`
+under `SANDBOX_AGENT=codex`. It sets three things and explains each inline:
+
+```toml
+sandbox_mode    = "danger-full-access"
+approval_policy = "on-request"
+
+[projects."/workspace/repo"]
+trust_level = "trusted"
+```
+
+**`danger-full-access` is the right setting *here*, and only here.** Codex ships
+its own Landlock/seccomp sandbox, and in its restricted modes it cuts the
+network — including the `CONNECT` to squid that every model call and `git
+fetch` goes through, so codex would report the API as unreachable. The
+container is already the sandbox (read-only root, tmpfs `$HOME`, one route
+out); a second one nested inside it would only break the first. Full access to
+a container that has none is still no access.
+
+**`on-request`** keeps codex asking when it judges a step risky, the same
+posture as the `ask` list on the Claude side; **trusting `/workspace/repo`**
+skips the first-run "do you trust this directory?" prompt, which would
+otherwise return every session because `$HOME` does not persist.
+
+Anything less certain — turning off the startup update check, web search, an
+empty `mcp_servers` table — is in the file commented out, with a note. Codex
+can refuse to start on a key it does not recognise, so an unverified key is
+worth less than a missing one. `./sandbox verify` checks the file is in place
+and that `sandbox_mode` is set. `AGENTS.md` next to it carries the standing
+instructions, word for word the same as `CLAUDE.md`.
+
 ## `profile/bin/qa`
 
 A stable command name for "run this project's checks". `CLAUDE.md` can then say
 *"run `qa` before claiming something works"* without knowing whether the project
 uses pytest, vitest, or make — the script detects the stack at runtime and
-returns a single pass/fail.
+returns a single pass/fail. It fails closed: if it recognises a project but
+finds no runner to check it with, or recognises nothing at all, that is a
+`FAIL` with a message saying so — never a `PASS` earned by running zero checks.
 
 Add your own commands to `profile/bin/`. They appear on `PATH` in every sandbox
 you ever create, on every machine.
@@ -229,7 +295,15 @@ you ever create, on every machine.
 ## `profile/setup.sh`
 
 Per-session bootstrap, run before the agent starts. The shipped version detects
-`package-lock.json` → `npm ci`, `requirements.txt` → venv + install.
+`package-lock.json` → `npm ci`, `requirements.txt` or `pyproject.toml` → venv +
+install. The venv lands in `/tmp/venv`, and the entrypoint puts its `bin/` on
+`PATH` before it starts the agent — `~/.bashrc` would only reach the
+interactive shell, not the agent's own tool calls, and sourcing a file
+`setup.sh` wrote would let the repo's install hooks run code with the keys they
+were just denied. It runs with the proxy
+variables and nothing secret: the entrypoint strips the model keys and
+`GIT_TOKEN` from its environment, because `npm ci` and `pip install` execute
+the repo's own hooks.
 
 Keep it fast. The container is ephemeral, so this runs every session — anything
 heavy belongs baked into `agent/Dockerfile` instead. Failure is non-fatal by

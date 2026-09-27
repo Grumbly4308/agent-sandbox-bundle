@@ -21,10 +21,13 @@ downloads.claude.ai
 bridge.claudeusercontent.com
 mcp-proxy.anthropic.com
 
-# The CLI's release artifacts are served from Google's object storage. This is
-# a shared bucket host, so it is the loosest entry on this list: anyone can
-# create a bucket there. Comment it out unless you need self-update to work.
-storage.googleapis.com
+# storage.googleapis.com is deliberately NOT here. The CLI's release artifacts
+# live in a bucket on it, but profile/claude/settings.json sets
+# DISABLE_AUTOUPDATER=1 (the rootfs is read-only, so an update could not land
+# anyway) and ./sandbox upgrade rebuilds the image on the host instead. With no
+# updater left to feed, all the host would offer is an exfiltration channel —
+# it is a shared bucket host, so anyone can create a bucket there and PUT to a
+# signed URL. Add it back only if you re-enable self-update in the profile.
 
 # Homebrew's formula index — only needed if the agent installs via brew.
 # formulae.brew.sh
@@ -35,8 +38,9 @@ storage.googleapis.com
 #
 # The file squid reads (allowlist.txt) is GENERATED from this file plus
 # proxy/agents/<agent>.txt for whichever agent is active. Edit and apply with:
-#     ./sandbox allow <domain>        (or edit here + ./sandbox reload)
-# Everything not listed is unreachable from the agent container.
+#     ./sandbox allow <domain> --reason '<why>'   (or edit here + ./sandbox reload)
+# Everything not listed is unreachable from the agent container; anything on
+# proxy/never-allow.txt is refused by `allow` and flagged by `reload`.
 
 # --- Source hosting ---------------------------------------------------------
 # .github.com covers github.com, api.github.com, codeload.github.com and

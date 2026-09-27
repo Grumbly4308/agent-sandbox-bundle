@@ -35,7 +35,11 @@ own pull requests.
 
 - Role `Developer`, scope `write_repository`, expiry tomorrow.
 
-Either way, paste it into `.env` as `GIT_TOKEN`. Inside the container:
+Either way, paste it into `.env` as `GIT_TOKEN` **and** set
+`SANDBOX_FORWARD_GIT_TOKEN=1` next to it. The token is not forwarded on the
+strength of being filled in: the base compose file does not mention it, and
+`./sandbox` adds the overlay that does (`docker-compose.git-token.yml`) only
+when that flag is set. Inside the container:
 
 ```bash
 # GitHub
@@ -164,11 +168,13 @@ key has a spend limit you set. Best option for unattended runs.
 ./sandbox logout         # delete it again
 ```
 
-Mechanically: `auth/` is bind-mounted read-write at `/run/auth`; the entrypoint
-copies `.credentials.json` (the session) and `.claude.json` (account and
-onboarding state, without which the CLI redoes first-run setup) into place at
-start. It only ever writes *back* when `./sandbox login` sets
-`SANDBOX_PERSIST_AUTH=1`, so an ordinary session cannot modify your saved login.
+Mechanically: `auth/` is bind-mounted **read-only** at `/run/auth`; the
+entrypoint copies `.credentials.json` (the session) and `.claude.json` (account
+and onboarding state, without which the CLI redoes first-run setup) into place
+at start. Only `./sandbox login` layers `docker-compose.login.yml` on top, which
+remounts `auth/` read-write and sets `SANDBOX_PERSIST_AUTH=1` so the entrypoint
+writes *back* at exit. An ordinary session cannot modify your saved login — not
+even a compromised one, because the mount itself refuses the write.
 
 Be clear-eyed about the tradeoff. `auth/.credentials.json` is a live login to
 your Claude account — broader than a scoped API key, and it now sits on disk
@@ -196,11 +202,13 @@ codex counterpart of `.credentials.json`.
 Two hygiene points the swap enforces, and one it cannot:
 
 - the entrypoint materialises **only the active vendor's** saved login into
-  `$HOME`, and drops the inactive vendor's API keys from the environment before
-  the repo's own install hooks run;
-- but `auth/` itself is one read-write mount, so a saved login for the *other*
-  vendor stays readable from inside the container until `./sandbox logout`
-  removes it. Switching vendors for good? Log out first, then switch.
+  `$HOME`, and drops the inactive vendor's API keys from the environment; the
+  repo's own install hooks (`profile/setup.sh`) run with no key at all — not
+  the active vendor's, not `GIT_TOKEN` — only the proxy variables;
+- but `auth/` itself is one mount — read-only, yet owned by the agent's uid —
+  so a saved login for the *other* vendor stays readable from inside the
+  container until `./sandbox logout` removes it. Switching vendors for good?
+  Log out first, then switch.
 
 ## Pulling without stored credentials
 
@@ -228,8 +236,9 @@ SANDBOX_PULL_AUTH=prompt ./sandbox init https://github.com/you/project.git
   short expiry. On GitLab, a project access token with `read_repository`.
 - **The remote must be `https://`.** A `git@` or `ssh://` URL uses SSH, and
   the token is not used at all.
-- **Not `GIT_TOKEN`.** Compose forwards `GIT_TOKEN` into the agent container.
-  The prompted token lives only in the `./sandbox` process and the git it runs.
+- **Not `GIT_TOKEN`.** That variable is meant for the agent container, and
+  goes there when `SANDBOX_FORWARD_GIT_TOKEN=1`. The prompted token lives only
+  in the `./sandbox` process and the git it runs.
 - **Your configured helpers are bypassed**, not merely added to. Otherwise a
   `store` or keychain helper would save the token after the first successful
   fetch.

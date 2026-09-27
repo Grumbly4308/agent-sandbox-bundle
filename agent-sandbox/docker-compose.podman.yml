@@ -42,4 +42,4 @@ services:
       - ./profile:/opt/profile:ro,z
       - ./logs:/logs:z
       - ./secrets:/run/secrets:ro,z
-      - ./auth:/run/auth:z
+      - ./auth:/run/auth:ro,z
