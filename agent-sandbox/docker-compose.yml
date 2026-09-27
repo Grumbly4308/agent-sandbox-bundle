@@ -115,7 +115,9 @@ services:
       # Optional: a long-lived token instead of an interactive login.
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
 
-      GIT_TOKEN: ${GIT_TOKEN:-}
+      # GIT_TOKEN is deliberately absent: you push from the host, so the
+      # container holds no repo credential. SANDBOX_FORWARD_GIT_TOKEN=1 in .env
+      # adds docker-compose.git-token.yml, which is the only place it enters.
       GIT_AUTHOR_NAME: ${GIT_AUTHOR_NAME:-agent}
       GIT_AUTHOR_EMAIL: ${GIT_AUTHOR_EMAIL:-agent@sandbox.local}
       # Self-hosted git over SSH on a non-standard port (see docs/06).

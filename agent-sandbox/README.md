@@ -42,6 +42,7 @@ Something broken: `./sandbox doctor`, then `../docs/08-troubleshooting.md`.
 | `sandbox` | The CLI. Every command you need. |
 | `docker-compose.yml` | Two services: the locked-down agent, and the egress proxy. |
 | `docker-compose.podman.yml` | Applied on top when `SANDBOX_RUNTIME=podman`. |
+| `docker-compose.git-token.yml` | Applied only when `SANDBOX_FORWARD_GIT_TOKEN=1`; the one place `GIT_TOKEN` enters the container. |
 | `agent/` | The agent image and the entrypoint that rebuilds `$HOME` from `profile/`. |
 | `proxy/` | A stock Squid configured as a default-deny allowlist. No third-party image. |
 | `proxy/agents/` | Per-vendor allowlist blocks; the active one is compiled into `allowlist.txt`. |

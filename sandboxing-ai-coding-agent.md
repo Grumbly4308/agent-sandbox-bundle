@@ -310,7 +310,7 @@ The container gets an `ANTHROPIC_API_KEY` and nothing else. There is no repo tok
 
 If the agent genuinely needs to push (long autonomous runs, opening its own PRs):
 
-**GitHub** — Settings → Developer settings → **Fine-grained** tokens. Select **one repository**. Permissions: Contents `read/write`, and Pull requests `read/write` only if it should open PRs. Expiration: **1 day**. Paste into `.env` as `GIT_TOKEN`.
+**GitHub** — Settings → Developer settings → **Fine-grained** tokens. Select **one repository**. Permissions: Contents `read/write`, and Pull requests `read/write` only if it should open PRs. Expiration: **1 day**. Paste into `.env` as `GIT_TOKEN` and set `SANDBOX_FORWARD_GIT_TOKEN=1` beside it — the compose file does not forward the token just because it is filled in.
 
 **GitLab** — the project's Settings → Access tokens. Role `Developer`, scope `write_repository`, expiry tomorrow. Same variable.
 
