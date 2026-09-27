@@ -22,6 +22,16 @@ Self-hosted git on a non-standard SSH port needs the `ssh://` form —
 `ssh://git@host:2222/group/repo.git`. `init` rewrites the scp-style version and
 tells you it did.
 
+If the account running the sandbox should hold no git credentials at all, no
+SSH key and no stored token, clone over HTTPS with a read-only token that is
+asked for on every fetch and never written to disk:
+
+```bash
+SANDBOX_PULL_AUTH=prompt ./sandbox init https://github.com/you/project.git
+```
+
+See `../docs/06-credentials.md`, "Pulling without stored credentials".
+
 Full explanation: `../sandboxing-ai-coding-agent.md`.
 Something broken: `./sandbox doctor`, then `../docs/08-troubleshooting.md`.
 
