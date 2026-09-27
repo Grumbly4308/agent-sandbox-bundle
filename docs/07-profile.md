@@ -28,6 +28,7 @@ before the agent and materialises it into the ephemeral `$HOME`:
 install -d -m 0700 "$HOME/.claude" "$HOME/.ssh" "$HOME/.local/bin"
 
 cp -a "$PROFILE_DIR/claude/."   "$HOME/.claude/"       # settings.json, CLAUDE.md
+cp -a "$PROFILE_DIR/codex/."    "$HOME/.codex/"        # config.toml, AGENTS.md
 cp -a "$PROFILE_DIR/bin/."      "$HOME/.local/bin/"    # custom commands on PATH
 cp    "$PROFILE_DIR/shellrc.sh" "$HOME/.bashrc"        # aliases, prompt
 
@@ -46,6 +47,7 @@ exec "$@"
 |---|---|---|
 | `claude/settings.json` | `~/.claude/settings.json` | Permission allow / ask / deny lists, hooks, env |
 | `claude/CLAUDE.md` | `~/.claude/CLAUDE.md` | Standing instructions read every session |
+| `codex/config.toml` | `~/.codex/config.toml` | Sandbox mode, approval policy, trusted project — codex's `settings.json` |
 | `codex/AGENTS.md` | `~/.codex/AGENTS.md` | The same standing instructions, when `SANDBOX_AGENT=codex` |
 | `bin/*` | `~/.local/bin/*` | Custom commands on `PATH` — `qa`, deploy scripts, whatever |
 | `shellrc.sh` | `~/.bashrc` | Aliases, a prompt that reminds you where you are |
@@ -244,6 +246,39 @@ failures with their output, don't create files that aren't part of the task,
 and no AI attribution in commits (see above). The shipped version has a full
 set — edit it to taste, since this is the file that most directly shapes
 day-to-day behaviour.
+
+## `profile/codex/config.toml`
+
+Codex's equivalent of `settings.json`, materialised as `~/.codex/config.toml`
+under `SANDBOX_AGENT=codex`. It sets three things and explains each inline:
+
+```toml
+sandbox_mode    = "danger-full-access"
+approval_policy = "on-request"
+
+[projects."/workspace/repo"]
+trust_level = "trusted"
+```
+
+**`danger-full-access` is the right setting *here*, and only here.** Codex ships
+its own Landlock/seccomp sandbox, and in its restricted modes it cuts the
+network — including the `CONNECT` to squid that every model call and `git
+fetch` goes through, so codex would report the API as unreachable. The
+container is already the sandbox (read-only root, tmpfs `$HOME`, one route
+out); a second one nested inside it would only break the first. Full access to
+a container that has none is still no access.
+
+**`on-request`** keeps codex asking when it judges a step risky, the same
+posture as the `ask` list on the Claude side; **trusting `/workspace/repo`**
+skips the first-run "do you trust this directory?" prompt, which would
+otherwise return every session because `$HOME` does not persist.
+
+Anything less certain — turning off the startup update check, web search, an
+empty `mcp_servers` table — is in the file commented out, with a note. Codex
+can refuse to start on a key it does not recognise, so an unverified key is
+worth less than a missing one. `./sandbox verify` checks the file is in place
+and that `sandbox_mode` is set. `AGENTS.md` next to it carries the standing
+instructions, word for word the same as `CLAUDE.md`.
 
 ## `profile/bin/qa`
 

@@ -65,6 +65,7 @@ into the container's ephemeral `$HOME` at every start:
 | --- | --- | --- |
 | `claude/settings.json` | `~/.claude/settings.json` | Permission allow/ask/deny lists, attribution, hooks |
 | `claude/CLAUDE.md` | `~/.claude/CLAUDE.md` | Standing instructions for the agent |
+| `codex/config.toml` | `~/.codex/config.toml` | Sandbox mode, approval policy, trusted project — codex's `settings.json` |
 | `codex/AGENTS.md` | `~/.codex/AGENTS.md` | The same standing instructions, for codex |
 | `bin/*` | `~/.local/bin/*` | Custom commands on `PATH` (e.g. `qa`) |
 | `shellrc.sh` | `~/.bashrc` | Aliases, prompt, env |
