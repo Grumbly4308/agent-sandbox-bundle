@@ -1,0 +1,39 @@
+# Hosts that must never go on the egress allowlist. `./sandbox allow` refuses
+# them; `./sandbox reload` and `./sandbox doctor` warn when a hand edit to
+# allowlist.base.txt or a vendor block lets one in.
+#
+# Same shape as the allowlist: one host per line, `#` comments. An entry
+# without a leading dot names that host (and any allowlist pattern wide enough
+# to cover it — `.googleapis.com` is how storage.googleapis.com gets back in).
+# An entry with a leading dot covers the domain and everything beneath it.
+#
+# Two kinds of host belong here. Multi-tenant sinks, where anyone can create a
+# destination and the hostname alone says nothing about who receives the data;
+# and parent domains so wide that allowing them opens far more than any one
+# project needs. Nothing here is "bad" — it is just never the right answer for
+# a default-deny list. Need one? Allow the specific host you are talking to.
+
+# --- Shared storage: the bucket owner, not the hostname, decides who reads ---
+storage.googleapis.com     # any GCS bucket; anyone can PUT to a signed URL
+amazonaws.com              # all of AWS; allow the one endpoint host you need
+s3.amazonaws.com           # path-style S3: every bucket of every tenant
+.blob.core.windows.net     # Azure storage, same story
+
+# --- Tunnels: a hostname here is somebody's laptop -------------------------
+.ngrok.io                  # ngrok tunnels
+.ngrok-free.app
+.trycloudflare.com         # Cloudflare quick tunnels, no account needed
+
+# --- Anonymous drops and pastes -------------------------------------------
+pastebin.com               # public paste
+transfer.sh                # anonymous file upload
+file.io
+0x0.st
+
+# --- Request catchers and webhooks: exist to receive whatever is sent -------
+.discord.com               # webhooks accept a POST with no auth beyond the URL
+.discordapp.com
+webhook.site
+.pipedream.net
+.burpcollaborator.net      # pentest callback hosts — the textbook exfil target
+.interact.sh

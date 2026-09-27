@@ -47,6 +47,7 @@ Something broken: `./sandbox doctor`, then `../docs/08-troubleshooting.md`.
 | `agent/` | The agent image and the entrypoint that rebuilds `$HOME` from `profile/`. |
 | `proxy/` | A stock Squid configured as a default-deny allowlist. No third-party image. |
 | `proxy/agents/` | Per-vendor allowlist blocks; the active one is compiled into `allowlist.txt`. |
+| `proxy/never-allow.txt` | Upload sinks and over-wide parent domains `./sandbox allow` refuses and `reload`/`doctor` warn about. |
 | `profile/` | **Your defaults, version-controlled.** Survives every sandbox regeneration. |
 | `scripts/verify.sh` | Self-test: read-only rootfs, dropped caps, blocked egress, mounts. |
 | `scripts/make-seccomp.sh` | Optional Layer 4 — a tightened seccomp profile. |

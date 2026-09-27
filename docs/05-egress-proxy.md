@@ -127,9 +127,29 @@ swaps exactly the vendor block and nothing else. Your own entries go in the
 base file and survive the swap:
 
 ```bash
-./sandbox allow docs.internal.example.com     # append to base + regenerate + SIGHUP
+./sandbox allow docs.internal.example.com --reason 'the API docs the tests quote'
 ./sandbox reload                              # after editing the source files by hand
 ```
+
+`allow` appends to the base file, regenerates and SIGHUPs squid — and it is
+fussy about what it appends. The argument has to look like a hostname
+(lowercase, optional leading dot; not a URL, a port or an IP address, each of
+which gets a hint about what to type instead), and the reason is required: it
+lands in the file as `# added by ./sandbox allow: <reason>` above the entry, so
+six months on the list still says why each line is there. A trailing `'# why'`
+argument works as shorthand for `--reason`.
+
+Some hosts `allow` refuses outright. `proxy/never-allow.txt` lists the
+multi-tenant upload sinks (`storage.googleapis.com`, `transfer.sh`, `.ngrok.io`,
+Discord webhooks…) and the parent domains far wider than any project needs
+(`amazonaws.com` bare), each with a one-line reason. A hostname alone says
+nothing about who owns the bucket or the paste on the other end, so allowing one
+is allowing everyone. An allowlist pattern wide enough to cover an entry counts
+too — `.googleapis.com` does not smuggle `storage.googleapis.com` back in. The
+same check runs on every `./sandbox reload` and in `./sandbox doctor`, so a hand
+edit to `allowlist.base.txt` that adds one gets a warning rather than silence.
+Need one of them anyway? Allow the specific host you are talking to, not the
+parent.
 
 Keep this list short and boring. Every entry is a channel data could leave
 through — `.github.com` is already a generous one.
