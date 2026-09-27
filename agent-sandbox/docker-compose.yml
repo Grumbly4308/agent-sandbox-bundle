@@ -75,7 +75,7 @@ services:
       - ./profile:/opt/profile:ro          # defaults it can read, never edit
       - ./logs:/logs                       # audit trail, written outside
       - ./secrets:/run/secrets:ro          # deploy key, if you use one
-      - ./auth:/run/auth:ro                # saved agent login (rw — see below)
+      - ./auth:/run/auth:ro                # saved agent login (rw only for login — see below)
 
     # --- Privileges ---------------------------------------------------------
     cap_drop: [ALL]
