@@ -53,6 +53,7 @@ agent-sandbox/
 ├── profile/                 # ★ your defaults, version-controlled, mounted read-only
 │   ├── claude/settings.json #   permission rules + hooks
 │   ├── claude/CLAUDE.md     #   standing instructions
+│   ├── codex/config.toml    #   sandbox mode, approval policy, trusted project
 │   ├── codex/AGENTS.md      #   the same standing instructions, for codex
 │   ├── bin/qa               #   custom commands on PATH
 │   ├── shellrc.sh           #   aliases, prompt

@@ -62,6 +62,9 @@ echo "── profile ──"
 if [ "${SANDBOX_AGENT:-claude}" = codex ]; then
   check "AGENTS.md materialised"                   '[ -f "$HOME/.codex/AGENTS.md" ]'
   check "AGENTS.md forbids AI attribution"         'grep -qi "co-authored-by" "$HOME/.codex/AGENTS.md"'
+  check "config.toml materialised"                 '[ -f "$HOME/.codex/config.toml" ]'
+  # Without this codex sandboxes itself inside the container and loses the proxy.
+  check "codex sandbox deferred to the container"  'grep -q "^sandbox_mode = \"danger-full-access\"" "$HOME/.codex/config.toml"'
 else
   check "settings.json materialised"               '[ -f "$HOME/.claude/settings.json" ]'
   check "settings.json is valid JSON"              'jq -e . "$HOME/.claude/settings.json"'

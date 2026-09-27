@@ -1,0 +1,40 @@
+# Codex reads this as ~/.codex/config.toml — its settings.json. The entrypoint
+# copies it in from the read-only profile mount at every start, so the agent
+# runs under these settings but cannot rewrite them.
+
+# The container IS the sandbox: read-only root, tmpfs $HOME, squid as the only
+# route out. Codex's own Landlock/seccomp sandbox would sit inside that, and in
+# its restricted modes it cuts the network — including the CONNECT to the
+# proxy that every model call and `git fetch` needs. Full access here is full
+# access to a container that has none.
+sandbox_mode = "danger-full-access"
+
+# Ask when Codex itself judges a step risky; never wave the lot through. As
+# with profile/claude/settings.json, the mounts and the allowlist are the
+# controls — this decides what you get prompted about.
+approval_policy = "on-request"
+
+# --- Less certain — keys not verified against a pinned Codex, so inert -------
+# A key Codex does not recognise can stop it from starting. The ones below are
+# from memory of the config reference; uncomment one at a time and make sure
+# `codex` still launches. Top-level keys stay ABOVE the first [table].
+#
+# Self-update cannot work here (read-only /usr/local, the image is the
+# artifact — ./sandbox upgrade rebuilds it) and the check is one more network
+# call. The Claude profile's DISABLE_AUTOUPDATER=1 is the same decision.
+# check_for_update_on_startup = false
+
+# The workspace is a throwaway clone of your own repo. Trusting it up front
+# skips the first-run "do you trust this directory" prompt, which would
+# otherwise come back every session because $HOME does not persist.
+[projects."/workspace/repo"]
+trust_level = "trusted"
+
+# Web search runs on OpenAI's servers, not through squid, so the allowlist
+# never sees it. The Claude profile puts the equivalent behind a prompt.
+# [tools]
+# web_search = false
+
+# A repo's own MCP servers are commands to spawn. None are declared here; an
+# empty table is the explicit way of saying so.
+# [mcp_servers]
