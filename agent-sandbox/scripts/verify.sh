@@ -29,6 +29,9 @@ check "/workspace/repo is a usable git repo"       'git -C /workspace/repo rev-p
 check "/workspace/repo is a clone, not a worktree" '[ -d /workspace/repo/.git ]'
 check "/logs is writable"                          'touch /logs/.probe && rm /logs/.probe'
 deny  "profile mount is read-only"                 'touch /opt/profile/.probe'
+# Only ./sandbox login mounts auth/ read-write; a normal session must not be
+# able to plant anything in the login every later session loads.
+deny  "saved login mount is read-only"             'touch /run/auth/.probe'
 
 echo
 echo "── credentials ──"

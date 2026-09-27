@@ -75,7 +75,7 @@ services:
       - ./profile:/opt/profile:ro          # defaults it can read, never edit
       - ./logs:/logs                       # audit trail, written outside
       - ./secrets:/run/secrets:ro          # deploy key, if you use one
-      - ./auth:/run/auth                   # saved agent login (rw — see below)
+      - ./auth:/run/auth:ro                # saved agent login (rw — see below)
 
     # --- Privileges ---------------------------------------------------------
     cap_drop: [ALL]
@@ -109,9 +109,9 @@ services:
       # Both vendors' keys pass through here because interpolation cannot
       # branch; the entrypoint unsets whichever belongs to the inactive agent.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      # Set by `./sandbox login`; makes the entrypoint save the session back to
-      # auth/ on exit. Unset for normal runs: the login is read, never rewritten.
-      SANDBOX_PERSIST_AUTH: ${SANDBOX_PERSIST_AUTH:-}
+      # SANDBOX_PERSIST_AUTH is deliberately absent: `./sandbox login` adds
+      # docker-compose.login.yml, which sets it AND remounts auth/ read-write.
+      # A normal run reads the saved login and can never rewrite it.
       # Optional: a long-lived token instead of an interactive login.
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
 

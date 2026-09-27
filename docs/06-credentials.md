@@ -168,11 +168,13 @@ key has a spend limit you set. Best option for unattended runs.
 ./sandbox logout         # delete it again
 ```
 
-Mechanically: `auth/` is bind-mounted read-write at `/run/auth`; the entrypoint
-copies `.credentials.json` (the session) and `.claude.json` (account and
-onboarding state, without which the CLI redoes first-run setup) into place at
-start. It only ever writes *back* when `./sandbox login` sets
-`SANDBOX_PERSIST_AUTH=1`, so an ordinary session cannot modify your saved login.
+Mechanically: `auth/` is bind-mounted **read-only** at `/run/auth`; the
+entrypoint copies `.credentials.json` (the session) and `.claude.json` (account
+and onboarding state, without which the CLI redoes first-run setup) into place
+at start. Only `./sandbox login` layers `docker-compose.login.yml` on top, which
+remounts `auth/` read-write and sets `SANDBOX_PERSIST_AUTH=1` so the entrypoint
+writes *back* at exit. An ordinary session cannot modify your saved login — not
+even a compromised one, because the mount itself refuses the write.
 
 Be clear-eyed about the tradeoff. `auth/.credentials.json` is a live login to
 your Claude account — broader than a scoped API key, and it now sits on disk
@@ -203,9 +205,10 @@ Two hygiene points the swap enforces, and one it cannot:
   `$HOME`, and drops the inactive vendor's API keys from the environment; the
   repo's own install hooks (`profile/setup.sh`) run with no key at all — not
   the active vendor's, not `GIT_TOKEN` — only the proxy variables;
-- but `auth/` itself is one read-write mount, so a saved login for the *other*
-  vendor stays readable from inside the container until `./sandbox logout`
-  removes it. Switching vendors for good? Log out first, then switch.
+- but `auth/` itself is one mount — read-only, yet owned by the agent's uid —
+  so a saved login for the *other* vendor stays readable from inside the
+  container until `./sandbox logout` removes it. Switching vendors for good?
+  Log out first, then switch.
 
 ## Pulling without stored credentials
 

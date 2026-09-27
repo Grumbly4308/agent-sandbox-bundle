@@ -911,8 +911,11 @@ cmd_verify() {
 # login / logout — authenticate once, reuse across containers
 #
 # $HOME in the container is a tmpfs, so a normal login dies with the session.
-# auth/ is a host directory mounted read-write at /run/auth; the entrypoint
-# copies credentials in at start and back out at exit.
+# auth/ is a host directory mounted read-only at /run/auth; the entrypoint
+# copies credentials in at start. `login` is the one run that layers
+# docker-compose.login.yml on top, remounting auth/ read-write and setting
+# SANDBOX_PERSIST_AUTH=1 so the entrypoint copies them back out at exit. A
+# normal session can therefore read the saved login but never rewrite it.
 # --------------------------------------------------------------------------
 cmd_login() {
   require_init
@@ -938,7 +941,11 @@ cmd_login() {
   echo "Finish the browser flow, then exit. The session is saved to auth/ and"
   echo "reused by every later ./sandbox go until you run ./sandbox logout."
   echo
-  SANDBOX_PERSIST_AUTH=1 dc_run agent agent-cli || true
+  # Last -f wins per mount target: this run, and only this run, gets auth/
+  # read-write and SANDBOX_PERSIST_AUTH=1.
+  detect_runtime
+  COMPOSE_ARGS+=(-f "$ROOT/docker-compose.login.yml")
+  dc_run agent agent-cli || true
 
   [ "$made_stub" -eq 1 ] && rmdir "$WORKTREE_DIR" 2>/dev/null || true
 
@@ -1088,7 +1095,7 @@ cmd_agent() {
 
   # The swap does not touch the other vendor's credentials. The entrypoint
   # drops the inactive vendor's env keys and does not materialise its saved
-  # login — but auth/ itself stays mounted read-write at /run/auth, owned by
+  # login — but auth/ itself stays mounted (read-only) at /run/auth, owned by
   # the same uid the agent runs as, so a saved login for the OTHER vendor is
   # still readable from inside the container. Only removing it fixes that.
   if [ "$want" = codex ]; then
