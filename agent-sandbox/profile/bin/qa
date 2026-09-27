@@ -4,19 +4,25 @@
 # Point it at whatever your project actually uses. Because it lives in the
 # profile, it is identical in every sandbox you ever regenerate, and because
 # it is a stable name, CLAUDE.md can reference it without knowing your stack.
+#
+# Zero checks is a failure, not a pass. A stack this script does not know, or
+# a runner that is not installed, must surface here — not as a green "PASS"
+# the agent then quotes back at you.
 set -uo pipefail
 cd /workspace/repo || exit 1
 
-status=0
-run() { echo; echo "── $* ──"; "$@" || status=1; }
+status=0 ran=0 found=0
+run() { echo; echo "── $* ──"; ran=$((ran+1)); "$@" || status=1; }
 
 if [ -f package.json ]; then
+  found=1
   jq -e '.scripts.lint'  package.json >/dev/null 2>&1 && run npm run lint
   jq -e '.scripts.test'  package.json >/dev/null 2>&1 && run npm run test
   jq -e '.scripts.build' package.json >/dev/null 2>&1 && run npm run build
 fi
 
 if [ -f pyproject.toml ] || [ -f setup.py ] || [ -d tests ]; then
+  found=1
   command -v ruff   >/dev/null && run ruff check .
   command -v pytest >/dev/null && run pytest -q
 fi
@@ -24,5 +30,13 @@ fi
 [ -f Makefile ] && grep -qE '^test:' Makefile && run make test
 
 echo
-[ $status -eq 0 ] && echo "qa: PASS" || echo "qa: FAIL"
+if [ $ran -eq 0 ]; then
+  if [ $found -eq 1 ]; then
+    echo "qa: FAIL — project detected but no check ran (no lint/test/build script, ruff or pytest)"
+  else
+    echo "qa: FAIL — nothing to run; teach profile/bin/qa about this stack"
+  fi
+  exit 1
+fi
+[ $status -eq 0 ] && echo "qa: PASS ($ran run)" || echo "qa: FAIL"
 exit $status
