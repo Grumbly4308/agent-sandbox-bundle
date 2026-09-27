@@ -296,9 +296,11 @@ you ever create, on every machine.
 
 Per-session bootstrap, run before the agent starts. The shipped version detects
 `package-lock.json` → `npm ci`, `requirements.txt` or `pyproject.toml` → venv +
-install. The venv's `PATH` entry goes into `~/.profile`, which the entrypoint
-sources before it starts the agent — `~/.bashrc` would only reach the
-interactive shell, not the agent's own tool calls. It runs with the proxy
+install. The venv lands in `/tmp/venv`, and the entrypoint puts its `bin/` on
+`PATH` before it starts the agent — `~/.bashrc` would only reach the
+interactive shell, not the agent's own tool calls, and sourcing a file
+`setup.sh` wrote would let the repo's install hooks run code with the keys they
+were just denied. It runs with the proxy
 variables and nothing secret: the entrypoint strips the model keys and
 `GIT_TOKEN` from its environment, because `npm ci` and `pip install` execute
 the repo's own hooks.
