@@ -196,8 +196,9 @@ codex counterpart of `.credentials.json`.
 Two hygiene points the swap enforces, and one it cannot:
 
 - the entrypoint materialises **only the active vendor's** saved login into
-  `$HOME`, and drops the inactive vendor's API keys from the environment before
-  the repo's own install hooks run;
+  `$HOME`, and drops the inactive vendor's API keys from the environment; the
+  repo's own install hooks (`profile/setup.sh`) run with no key at all — not
+  the active vendor's, not `GIT_TOKEN` — only the proxy variables;
 - but `auth/` itself is one read-write mount, so a saved login for the *other*
   vendor stays readable from inside the container until `./sandbox logout`
   removes it. Switching vendors for good? Log out first, then switch.
