@@ -37,9 +37,9 @@ fi
 
 # --- 4. Saved login ---------------------------------------------------------
 # The tmpfs $HOME means an interactive `/login` would have to be repeated every
-# single session. auth/ on the host is mounted read-write here; we copy the
-# session in at start, and (only when ./sandbox login asked for it) back out at
-# exit. Nothing else in $HOME is ever persisted.
+# single session. auth/ on the host is mounted read-only here; we copy the
+# session in at start. Only ./sandbox login remounts it read-write and asks for
+# the copy back out at exit. Nothing else in $HOME is ever persisted.
 # .credentials.json is the session itself; .claude.json carries the account and
 # onboarding state, and without it the CLI re-runs first-run setup every time.
 #
@@ -69,7 +69,7 @@ restore_auth() {
 
 save_auth() {
   if [ ! -w "$AUTH_DIR" ]; then
-    echo "sandbox: /run/auth is not writable; login not saved" >&2
+    echo "sandbox: /run/auth is read-only; login not saved (only ./sandbox login can)" >&2
     return 0
   fi
   if [ "${SANDBOX_AGENT:-claude}" = codex ]; then
@@ -97,10 +97,8 @@ fi
 # --- 4b. Credential hygiene --------------------------------------------------
 # Only the active vendor's secrets stay in the environment. Compose passes both
 # vendors' keys through unconditionally — interpolation cannot branch on
-# SANDBOX_AGENT — so the inactive one is dropped here, and it has to happen
-# BEFORE profile/setup.sh below: that step runs the repo's own install hooks
-# (npm lifecycle scripts, pip builds), which is exactly the untrusted code the
-# key must not be visible to.
+# SANDBOX_AGENT — so the inactive one is dropped here, before the agent starts.
+# profile/setup.sh below gets none of them at all (step 7).
 if [ "${SANDBOX_AGENT:-claude}" = codex ]; then
   unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN
 else
@@ -183,14 +181,32 @@ fi
 # --- 7. Per-project bootstrap ----------------------------------------------
 # Non-fatal on purpose: a broken lockfile should drop you into a shell you can
 # debug, not kill the container.
+#
+# It runs the repo's own install hooks (npm lifecycle scripts, pip builds) —
+# untrusted code that has no business seeing a credential, the active vendor's
+# key included. The agent needs them; the install does not. The proxy variables
+# stay, or nothing installs.
 if [ -x "$PROFILE_DIR/setup.sh" ]; then
-  "$PROFILE_DIR/setup.sh" || echo "sandbox: profile/setup.sh exited $? (continuing)" >&2
+  env -u ANTHROPIC_API_KEY -u CLAUDE_CODE_OAUTH_TOKEN -u OPENAI_API_KEY -u GIT_TOKEN \
+    "$PROFILE_DIR/setup.sh" || echo "sandbox: profile/setup.sh exited $? (continuing)" >&2
+fi
+# setup.sh is a child process, so its PATH change cannot reach us — and it may
+# not hand back shell code to source either: the hooks it just ran could have
+# written that, and this process holds the keys they were denied. It leaves a
+# directory; put it on PATH here, before the exec, so the agent and every
+# non-interactive shell it spawns inherit it.
+if [ -d /tmp/venv/bin ]; then
+  export PATH="/tmp/venv/bin:$PATH"
 fi
 
 # --- 8. Run the agent -------------------------------------------------------
 # Not `exec`, because we may need to copy the login back out afterwards.
 # tini is still PID 1, so subprocess reaping is unaffected.
-if [ -n "${SANDBOX_PERSIST_AUTH:-}" ]; then
+#
+# An exact "1", not merely non-empty: docker-compose.login.yml is the only
+# thing that sets it, and podman-compose has handed the container the literal
+# string `${SANDBOX_PERSIST_AUTH:-}` for a variable defined nowhere.
+if [ "${SANDBOX_PERSIST_AUTH:-}" = 1 ]; then
   trap save_auth EXIT INT TERM
   "$@"
 else

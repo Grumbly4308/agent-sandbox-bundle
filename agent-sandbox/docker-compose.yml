@@ -75,14 +75,19 @@ services:
       - ./profile:/opt/profile:ro          # defaults it can read, never edit
       - ./logs:/logs                       # audit trail, written outside
       - ./secrets:/run/secrets:ro          # deploy key, if you use one
-      - ./auth:/run/auth                   # saved agent login (rw — see below)
+      - ./auth:/run/auth:ro                # saved agent login (rw only for login — see below)
 
     # --- Privileges ---------------------------------------------------------
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
-      # Uncomment after running ./scripts/make-seccomp.sh (Part 12):
-      # - seccomp=./agent-seccomp.json
+      # Docker's default profile minus ptrace, mount, unshare, bpf and friends
+      # (scripts/make-seccomp.sh, committed output). cap_drop does not stop a
+      # same-uid ptrace, so this is what keeps one process out of another's
+      # memory. The path is relative to this file: docker compose reads it
+      # here and sends the JSON inline; podman-compose hands it to podman from
+      # this directory, which is also where ./sandbox always runs.
+      - seccomp=./agent-seccomp.json
 
     # --- Resources ----------------------------------------------------------
     pids_limit: 512
@@ -109,13 +114,15 @@ services:
       # Both vendors' keys pass through here because interpolation cannot
       # branch; the entrypoint unsets whichever belongs to the inactive agent.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      # Set by `./sandbox login`; makes the entrypoint save the session back to
-      # auth/ on exit. Unset for normal runs: the login is read, never rewritten.
-      SANDBOX_PERSIST_AUTH: ${SANDBOX_PERSIST_AUTH:-}
+      # SANDBOX_PERSIST_AUTH is deliberately absent: `./sandbox login` adds
+      # docker-compose.login.yml, which sets it AND remounts auth/ read-write.
+      # A normal run reads the saved login and can never rewrite it.
       # Optional: a long-lived token instead of an interactive login.
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
 
-      GIT_TOKEN: ${GIT_TOKEN:-}
+      # GIT_TOKEN is deliberately absent: you push from the host, so the
+      # container holds no repo credential. SANDBOX_FORWARD_GIT_TOKEN=1 in .env
+      # adds docker-compose.git-token.yml, which is the only place it enters.
       GIT_AUTHOR_NAME: ${GIT_AUTHOR_NAME:-agent}
       GIT_AUTHOR_EMAIL: ${GIT_AUTHOR_EMAIL:-agent@sandbox.local}
       # Self-hosted git over SSH on a non-standard port (see docs/06).

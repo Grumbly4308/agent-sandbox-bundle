@@ -168,6 +168,7 @@ regen_allowlist() {
     warn "proxy/allowlist.txt is hand-maintained (no GENERATED marker) — leaving it alone."
     warn "to enable the per-agent swap, move your custom entries into"
     warn "proxy/allowlist.base.txt and delete proxy/allowlist.txt, then re-run."
+    check_never_allow || true
     return 0
   fi
   {
@@ -178,6 +179,82 @@ regen_allowlist() {
     echo
     cat "$ALLOWLIST_BASE"
   } > "$ALLOWLIST"
+  # `allow` refuses these outright; a hand edit gets a warning, not a veto.
+  check_never_allow || warn "    remove the entry from its source file, then: ./sandbox reload"
+}
+
+# --------------------------------------------------------------------------
+# Hosts that never belong on the allowlist — proxy/never-allow.txt
+#
+# Multi-tenant upload sinks (anyone can own a bucket or a paste there) and
+# parent domains far wider than any project needs. An entry without a leading
+# dot names one host; with it, the domain and everything beneath. An
+# allowlist pattern wide enough to cover an entry counts as a hit too, so
+# `.googleapis.com` does not smuggle storage.googleapis.com back in.
+# --------------------------------------------------------------------------
+NEVER_ALLOW="$ROOT/proxy/never-allow.txt"
+
+# Prints the never-allow entry covering $1, with its reason; false if none.
+never_allow_hit() {
+  local host="$1" bare="${1#.}" entry reason nbare
+  [ -f "$NEVER_ALLOW" ] || return 1
+  while read -r entry reason; do
+    case "$entry" in ''|'#'*) continue ;; esac
+    nbare="${entry#.}"
+    if [ "$bare" = "$nbare" ] \
+       || { [ "${host:0:1}" = . ] && [[ "$nbare" == *".$bare" ]]; } \
+       || { [ "${entry:0:1}" = . ] && [[ "$bare" == *".$nbare" ]]; }; then
+      reason="${reason#\#}"; reason="${reason#"${reason%%[![:space:]]*}"}"
+      printf '%s%s\n' "$entry" "${reason:+ — $reason}"
+      return 0
+    fi
+  done < "$NEVER_ALLOW"
+  return 1
+}
+
+# Warns about every never-allow hit in the files squid's list is built from
+# (the vendor block and the base list, or a hand-maintained allowlist.txt).
+# Returns 1 if there was any, so doctor can count it.
+check_never_allow() {
+  local flagged=0 f entry _ hit
+  local -a files
+  if [ "$(allowlist_target)" = "$ALLOWLIST_BASE" ]; then
+    resolve_agent
+    files=("$ROOT/proxy/agents/$AGENT.txt" "$ALLOWLIST_BASE")
+  else
+    files=("$ALLOWLIST")
+  fi
+  for f in "${files[@]}"; do
+    [ -f "$f" ] || continue
+    while read -r entry _; do
+      case "$entry" in ''|'#'*) continue ;; esac
+      if hit="$(never_allow_hit "$entry")"; then
+        warn "${f#"$ROOT/"} allows $entry, which is on proxy/never-allow.txt ($hit)"
+        flagged=1
+      fi
+    done < "$f"
+  done
+  return "$flagged"
+}
+
+# What `allow` accepts: lowercase labels of letters, digits and hyphens, at
+# least one dot, optionally a leading one for the domain and everything under
+# it. A URL, a port or an address pasted in by mistake would either be ignored
+# by squid or match something other than what was meant — so refuse, and say
+# what to type instead.
+valid_host() {
+  local h="$1"
+  case "$h" in
+    *://*)   die "'$h' has a scheme — allow the bare hostname" ;;
+    */*)     die "'$h' has a path — the proxy matches hostnames, not URLs" ;;
+    *:*:*)   die "'$h' is an IP address — squid matches the name the agent connects to; allow that" ;;
+    *:*)     die "'$h' has a port — ports are the Safe_ports/SSL_ports ACLs in proxy/squid.conf; allow the hostname" ;;
+    *[A-Z]*) die "'$h' has uppercase letters — hostnames go in lowercase" ;;
+  esac
+  [[ "${h#.}" =~ ^[0-9.]+$ ]] \
+    && die "'$h' is an IP address — squid matches the name the agent connects to; allow that"
+  [[ "$h" =~ ^\.?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] \
+    || die "'$h' is not a hostname — expected something like docs.example.com or .example.com"
 }
 
 # Where custom entries belong: the base list while ./sandbox manages the
@@ -219,6 +296,13 @@ detect_runtime() {
     if [ "$userns" != "off" ]; then
       COMPOSE_ARGS+=(-f "$ROOT/docker-compose.podman-userns.yml")
     fi
+  fi
+  # The base file never forwards GIT_TOKEN: the container holds no repo
+  # credential unless asked for it in so many words. A filled-in .env line is
+  # not that ask; SANDBOX_FORWARD_GIT_TOKEN=1 is.
+  local fwd; fwd="${SANDBOX_FORWARD_GIT_TOKEN:-$(env_get SANDBOX_FORWARD_GIT_TOKEN)}"
+  if [ "$fwd" = 1 ]; then
+    COMPOSE_ARGS+=(-f "$ROOT/docker-compose.git-token.yml")
   fi
 }
 
@@ -395,6 +479,10 @@ ensure_image() {
 # image on every start, which is exactly what ensure_image exists to avoid.
 dc_run() {
   ensure_image
+  # docker-compose.yml applies agent-seccomp.json on every start; without the
+  # file the runtime fails with an error that does not name it.
+  [ -s "$ROOT/agent-seccomp.json" ] \
+    || die "agent-seccomp.json is missing — git checkout agent-seccomp.json, or ./scripts/make-seccomp.sh"
   dc run --rm "$@"
 }
 
@@ -470,10 +558,6 @@ require_init() {
   [ -d "$PROJECT_DIR/.git" ] || die "no project yet — run: ./sandbox init <repo-url>"
 }
 
-current_branch() {
-  git -C "$WORKTREE_DIR" branch --show-current 2>/dev/null || true
-}
-
 default_branch() {
   git -C "$PROJECT_DIR" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null \
     | sed 's|^origin/||' \
@@ -482,6 +566,72 @@ default_branch() {
 
 upstream_url() {
   git -C "$PROJECT_DIR" remote get-url origin 2>/dev/null || true
+}
+
+# --------------------------------------------------------------------------
+# Host-side git against workspace/
+#
+# workspace/.git is the agent's to write, and git runs whatever a repo's own
+# config points it at — a hook, a fsmonitor daemon, a pager, an external diff,
+# an ext:: transport — as the user who invoked it. On the host that user is
+# you, with your credentials. So every host-side git call against the
+# worktree goes through wgit, which overrides those keys on the command line,
+# and nothing on the host trusts the remote URL in that config: `new` records
+# the real one in .env, which the container never sees, and push and fetch
+# use the recorded copy.
+# --------------------------------------------------------------------------
+# Not diff.external: it has no "off" value — `-c diff.external=` makes git try
+# to run an empty command and abort — so wgit never asks for a patch (`--stat`
+# and `log` do not consult it) and check_workspace_git flags it instead.
+WGIT_OVERRIDES=(core.hooksPath=/dev/null core.fsmonitor= core.pager=cat protocol.ext.allow=never)
+
+wgit() {
+  local args=() kv
+  for kv in "${WGIT_OVERRIDES[@]}"; do args+=(-c "$kv"); done
+  git -C "$WORKTREE_DIR" "${args[@]}" "$@"
+}
+
+# The same overrides for gh/glab, which run git themselves.
+wgit_params() {
+  local out="" kv
+  for kv in "${WGIT_OVERRIDES[@]}"; do out+="'$kv' "; done
+  printf '%s' "${out% }"
+}
+
+current_branch() {
+  wgit branch --show-current 2>/dev/null || true
+}
+
+workspace_origin() {
+  local url; url="$(env_get WORKSPACE_ORIGIN)"
+  [ -n "$url" ] || url="$(upstream_url)"   # workspaces made before `new` recorded it
+  printf '%s' "$url"
+}
+
+# Repo-local keys that make git run something or hand credentials to someone
+# else. `new` writes none of them, so if one is set, the agent set it.
+WORKSPACE_CONFIG_SUSPECT='^(core\.(hookspath|fsmonitor|sshcommand|pager)|diff\.(external|.*\.command)|credential\.helper|url\..*\.(push)?insteadof)$'
+
+check_workspace_git() {
+  [ -d "$WORKTREE_DIR/.git" ] || return 0
+  local flagged=0 recorded url k v
+  recorded="$(env_get WORKSPACE_ORIGIN)"
+  url="$(wgit config --local --get remote.origin.url 2>/dev/null || true)"
+  if [ -n "$recorded" ] && [ "$url" != "$recorded" ]; then
+    warn "workspace origin is '$url' but ./sandbox new recorded '$recorded' — push uses the recorded one"
+    flagged=1
+  fi
+  url="$(wgit config --local --get remote.origin.pushurl 2>/dev/null || true)"
+  if [ -n "$url" ]; then
+    warn "workspace sets remote.origin.pushurl=$url — ./sandbox new never does; push ignores it"
+    flagged=1
+  fi
+  while read -r k v; do
+    [ -n "$k" ] || continue
+    warn "workspace .git/config sets $k=$v — ./sandbox new never does; look before you push"
+    flagged=1
+  done <<<"$(wgit config --local --get-regexp "$WORKSPACE_CONFIG_SUSPECT" 2>/dev/null || true)"
+  return "$flagged"
 }
 
 # --------------------------------------------------------------------------
@@ -530,7 +680,8 @@ url_port() {
 # The empty helper entry first clears any configured `store` or keychain
 # helper: git offers every helper the credential after a successful fetch,
 # and those would write it to disk. The variable is deliberately not
-# GIT_TOKEN — compose forwards that one into the agent container.
+# GIT_TOKEN — that one is meant for the agent container, and goes there when
+# SANDBOX_FORWARD_GIT_TOKEN=1 is set.
 # --------------------------------------------------------------------------
 PULL_AUTH_READY=""
 pull_auth() {
@@ -673,7 +824,7 @@ cmd_new() {
   if [ -e "$WORKTREE_DIR" ]; then
     local old; old="$(current_branch)"
     warn "replacing existing workspace${old:+ (branch $old)}"
-    if [ -n "$old" ] && [ -n "$(git -C "$WORKTREE_DIR" status --porcelain 2>/dev/null)" ]; then
+    if [ -n "$old" ] && [ -n "$(wgit status --porcelain 2>/dev/null)" ]; then
       warn "it has uncommitted changes"
     fi
     read -rp "Discard it? [y/N] " reply
@@ -687,15 +838,18 @@ cmd_new() {
   git clone --quiet --no-hardlinks "$PROJECT_DIR" "$WORKTREE_DIR"
 
   if [ -n "$upstream" ]; then
-    # Without this, workspace's origin is the local project/ directory and
-    # `./sandbox push` would push into a folder on your disk, not to the remote.
-    git -C "$WORKTREE_DIR" remote set-url origin "$upstream"
-    git -C "$WORKTREE_DIR" fetch --quiet origin "+refs/heads/$base:refs/remotes/origin/$base" \
+    # Without this, workspace's origin is the local project/ directory, which
+    # is not mounted — so the agent's own `git fetch` would fail inside the box.
+    wgit remote set-url origin "$upstream"
+    wgit fetch --quiet origin "+refs/heads/$base:refs/remotes/origin/$base" \
       || warn "could not fetch origin/$base from the real remote; using the local copy"
   fi
+  # The copy push and review trust from now on; the one in workspace/.git/config
+  # is the agent's to rewrite.
+  env_set WORKSPACE_ORIGIN "$upstream"
 
   info "creating branch $branch from origin/$base"
-  git -C "$WORKTREE_DIR" checkout --quiet -B "$branch" "origin/$base"
+  wgit checkout --quiet -B "$branch" "origin/$base"
 
   bold "workspace ready: $WORKTREE_DIR  (branch $branch)"
 }
@@ -841,8 +995,11 @@ cmd_verify() {
 # login / logout — authenticate once, reuse across containers
 #
 # $HOME in the container is a tmpfs, so a normal login dies with the session.
-# auth/ is a host directory mounted read-write at /run/auth; the entrypoint
-# copies credentials in at start and back out at exit.
+# auth/ is a host directory mounted read-only at /run/auth; the entrypoint
+# copies credentials in at start. `login` is the one run that layers
+# docker-compose.login.yml on top, remounting auth/ read-write and setting
+# SANDBOX_PERSIST_AUTH=1 so the entrypoint copies them back out at exit. A
+# normal session can therefore read the saved login but never rewrite it.
 # --------------------------------------------------------------------------
 cmd_login() {
   require_init
@@ -868,7 +1025,11 @@ cmd_login() {
   echo "Finish the browser flow, then exit. The session is saved to auth/ and"
   echo "reused by every later ./sandbox go until you run ./sandbox logout."
   echo
-  SANDBOX_PERSIST_AUTH=1 dc_run agent agent-cli || true
+  # Last -f wins per mount target: this run, and only this run, gets auth/
+  # read-write and SANDBOX_PERSIST_AUTH=1.
+  detect_runtime
+  COMPOSE_ARGS+=(-f "$ROOT/docker-compose.login.yml")
+  dc_run agent agent-cli || true
 
   [ "$made_stub" -eq 1 ] && rmdir "$WORKTREE_DIR" 2>/dev/null || true
 
@@ -1018,7 +1179,7 @@ cmd_agent() {
 
   # The swap does not touch the other vendor's credentials. The entrypoint
   # drops the inactive vendor's env keys and does not materialise its saved
-  # login — but auth/ itself stays mounted read-write at /run/auth, owned by
+  # login — but auth/ itself stays mounted (read-only) at /run/auth, owned by
   # the same uid the agent runs as, so a saved login for the OTHER vendor is
   # still readable from inside the container. Only removing it fixes that.
   if [ "$want" = codex ]; then
@@ -1043,16 +1204,46 @@ cmd_agent() {
 
 # --------------------------------------------------------------------------
 # allow / reload — egress policy
+#
+# Every entry is a channel data could leave through, so `allow` is fussy: the
+# argument has to look like a hostname, must not be on proxy/never-allow.txt,
+# and needs a reason — written above the entry, so the list still explains
+# itself once whoever added it has forgotten why.
 # --------------------------------------------------------------------------
 cmd_allow() {
-  [ $# -gt 0 ] || die "usage: ./sandbox allow <domain> [domain...]"
-  local list; list="$(allowlist_target)"
-  for d in "$@"; do
+  local usage="usage: ./sandbox allow <domain> [domain...] --reason '<why>'   (or a trailing '# why')"
+  local reason="" hosts=() d hit
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason)   [ $# -ge 2 ] || die "$usage"; reason="$2"; shift ;;
+      --reason=*) reason="${1#--reason=}" ;;
+      '#'*)       reason="${1#\#}" ;;
+      -*)         die "$usage" ;;
+      *)          hosts+=("$1") ;;
+    esac
+    shift
+  done
+  reason="${reason//$'\n'/ }"; reason="${reason#"${reason%%[![:space:]]*}"}"
+  { [ ${#hosts[@]} -gt 0 ] && [ -n "$reason" ]; } || die "$usage"
+
+  # Check everything before writing anything, so a bad second argument does
+  # not leave the first one already in the list.
+  for d in "${hosts[@]}"; do
+    valid_host "$d"
+    if hit="$(never_allow_hit "$d")"; then
+      die "$d is on proxy/never-allow.txt ($hit) — allow the specific host you need, not this one"
+    fi
+  done
+
+  local list added=""; list="$(allowlist_target)"
+  for d in "${hosts[@]}"; do
     if grep -qxF "$d" "$list"; then
       info "$d already allowed"
     else
+      [ -n "$added" ] || printf '\n# added by ./sandbox allow: %s\n' "$reason" >> "$list"
       printf '%s\n' "$d" >> "$list"
       info "allowed $d"
+      added=1
     fi
   done
   cmd_reload
@@ -1084,18 +1275,20 @@ cmd_review() {
   [ -d "$WORKTREE_DIR/.git" ] || die "no workspace to review"
   local base; base="$(default_branch)"
 
-  pull_auth "$(upstream_url)"
-  git -C "$WORKTREE_DIR" fetch --quiet origin "+refs/heads/$base:refs/remotes/origin/$base" 2>/dev/null \
+  local remote; remote="$(workspace_origin)"
+  pull_auth "$remote"
+  wgit fetch --quiet "$remote" "+refs/heads/$base:refs/remotes/origin/$base" 2>/dev/null \
     || warn "could not refresh origin/$base; comparing against the last known copy"
+  check_workspace_git || true
 
   bold "=== files changed vs origin/$base ==="
-  git -C "$WORKTREE_DIR" diff --stat "origin/$base"...HEAD || true
+  wgit diff --stat "origin/$base"...HEAD || true
   echo
   bold "=== commits ==="
-  git -C "$WORKTREE_DIR" log --oneline "origin/$base"..HEAD || true
+  wgit log --oneline "origin/$base"..HEAD || true
   echo
   bold "=== attribution check (no AI trailers) ==="
-  if git -C "$WORKTREE_DIR" log --format='%B' "origin/$base"..HEAD 2>/dev/null \
+  if wgit log --format='%B' "origin/$base"..HEAD 2>/dev/null \
        | grep -inE 'co-authored-by.*(claude|anthropic|ai)|generated with|🤖'; then
     warn "attribution trailer found — see the git conventions in profile/claude/CLAUDE.md"
   else
@@ -1103,7 +1296,7 @@ cmd_review() {
   fi
   echo
   bold "=== untracked files (the agent's leftovers) ==="
-  git -C "$WORKTREE_DIR" ls-files --others --exclude-standard || true
+  wgit ls-files --others --exclude-standard || true
   echo
 
   bold "=== secret scan ==="
@@ -1122,13 +1315,11 @@ cmd_push() {
   require_init
   local branch; branch="$(current_branch)"
   [ -n "$branch" ] || die "no workspace branch to push"
-  local remote; remote="$(git -C "$WORKTREE_DIR" remote get-url origin 2>/dev/null || true)"
-  case "$remote" in
-    "$PROJECT_DIR"|"$PROJECT_DIR"/*)
-      die "workspace origin still points at project/ — re-run ./sandbox new so it points at the real remote" ;;
-  esac
+  # The URL recorded by `new`, never the one in workspace/.git/config.
+  local remote; remote="$(workspace_origin)"
+  [ -n "$remote" ] || die "no remote recorded for the workspace — re-run ./sandbox new"
   info "pushing $branch to $remote (from your environment, not the sandbox)"
-  git -C "$WORKTREE_DIR" push -u origin "$branch"
+  wgit push -u "$remote" "$branch"
 }
 
 # pr — push, then open a pull/merge request against the default branch.
@@ -1139,21 +1330,26 @@ cmd_pr() {
   [ -n "$branch" ] || die "no workspace branch"
   local base; base="$(default_branch)"
   local title="${1:-}"
-  [ -n "$title" ] || title="$(git -C "$WORKTREE_DIR" log -1 --pretty=%s)"
+  [ -n "$title" ] || title="$(wgit log -1 --pretty=%s)"
 
   cmd_push
 
   local remote host path
-  remote="$(git -C "$WORKTREE_DIR" remote get-url origin)"
+  remote="$(workspace_origin)"
   host="$(url_host "$remote")"
   path="$(printf '%s' "$remote" \
           | sed -E 's|^[a-z+]+://||; s|^[^@/]*@||; s|^[^/:]+[:/]||; s|^[0-9]+/||; s|\.git$||')"
 
+  # gh and glab read the workspace's git config too — to find the repo, and
+  # for every git command they run. Name the repo from the recorded URL and
+  # give their git the same overrides wgit uses.
+  export GIT_CONFIG_PARAMETERS; GIT_CONFIG_PARAMETERS="$(wgit_params)"
   case "$host" in
     github.com|*.github.com)
       if command -v gh >/dev/null 2>&1; then
         info "opening a pull request with gh"
-        ( cd "$WORKTREE_DIR" && gh pr create --base "$base" --head "$branch" --title "$title" --body "" )
+        ( cd "$WORKTREE_DIR" && gh pr create --repo "$host/$path" --base "$base" --head "$branch" \
+            --title "$title" --body "" )
         return
       fi
       bold "Open the PR here:"
@@ -1162,15 +1358,16 @@ cmd_pr() {
     *)
       if command -v glab >/dev/null 2>&1; then
         info "opening a merge request with glab"
-        ( cd "$WORKTREE_DIR" && glab mr create --source-branch "$branch" --target-branch "$base" \
+        ( cd "$WORKTREE_DIR" && glab mr create --repo "https://$host/$path" \
+            --source-branch "$branch" --target-branch "$base" \
             --title "$title" --description "" --yes )
         return
       fi
       info "no glab — asking the server to open the MR via git push options"
-      if ! git -C "$WORKTREE_DIR" push -o merge_request.create \
-                                       -o merge_request.target="$base" \
-                                       -o merge_request.title="$title" \
-                                       origin "$branch"; then
+      if ! wgit push -o merge_request.create \
+                     -o merge_request.target="$base" \
+                     -o merge_request.title="$title" \
+                     "$remote" "$branch"; then
         warn "push options not supported by this server"
         bold "Open the MR here:"
         echo "  https://$host/$path/-/merge_requests/new?merge_request%5Bsource_branch%5D=$branch"
@@ -1212,7 +1409,8 @@ cmd_doctor() {
     fi
     issues=$((issues+1))
   elif [ -d "$WORKTREE_DIR/.git" ]; then
-    echo "  workspace/: ok (branch $(current_branch))"
+    echo "  workspace/: ok (branch $(current_branch), pushes to $(workspace_origin))"
+    check_workspace_git || issues=$((issues+1))
   else
     echo "  workspace/: none — ./sandbox new <task>"
   fi
@@ -1244,9 +1442,27 @@ cmd_doctor() {
   [ -s "$AUTH_DIR/.credentials.json" ] && echo "  saved OAuth session: yes" || echo "  saved OAuth session: no"
 
   echo
+  bold "== egress =="
+  if check_never_allow; then
+    echo "  allowlist: nothing from proxy/never-allow.txt"
+  else
+    echo "  allowlist: contains never-allow hosts (above) — remove them, then ./sandbox reload"
+    issues=$((issues+1))
+  fi
+
+  echo
   bold "== runtime =="
   detect_runtime
   echo "  runtime: $RUNTIME"
+  # Not a weaker sandbox when absent but one that will not start: the compose
+  # file names it unconditionally.
+  if [ -s "$ROOT/agent-seccomp.json" ]; then
+    echo "  seccomp: agent-seccomp.json present"
+  else
+    echo "  seccomp: agent-seccomp.json MISSING — no container will start until it is back:"
+    echo "           git checkout agent-seccomp.json, or ./scripts/make-seccomp.sh"
+    issues=$((issues+1))
+  fi
   if [ "$RUNTIME" = podman ]; then
     if podman_provider 2>/dev/null; then
       echo "  compose: $PODMAN_PROVIDER"
@@ -1311,8 +1527,8 @@ cmd_status() {
   bold "workspace"
   if [ -d "$WORKTREE_DIR/.git" ]; then
     echo "  branch: $(current_branch)"
-    echo "  origin: $(git -C "$WORKTREE_DIR" remote get-url origin 2>/dev/null)"
-    git -C "$WORKTREE_DIR" status -sb | head -20
+    echo "  origin: $(workspace_origin)"
+    wgit status -sb | head -20
   else
     echo "  (none — ./sandbox new <task>)"
   fi
@@ -1321,7 +1537,12 @@ cmd_status() {
   echo
   bold "credentials"
   [ -f "$ROOT/secrets/deploy_key" ] && echo "  deploy_key present" || echo "  no deploy key"
-  grep -qE '^GIT_TOKEN=.+' "$ENV_FILE" 2>/dev/null && echo "  GIT_TOKEN set" || echo "  GIT_TOKEN empty"
+  if grep -qE '^GIT_TOKEN=.+' "$ENV_FILE" 2>/dev/null; then
+    [ "$(env_get SANDBOX_FORWARD_GIT_TOKEN)" = 1 ] && echo "  GIT_TOKEN set, forwarded to the agent" \
+      || echo "  GIT_TOKEN set, NOT forwarded (SANDBOX_FORWARD_GIT_TOKEN=1 to change that)"
+  else
+    echo "  GIT_TOKEN empty"
+  fi
   [ "$(env_get SANDBOX_PULL_AUTH)" = prompt ] && echo "  pulls: read-only token, asked for on each fetch"
   if [ "$AGENT" = codex ]; then
     grep -qE '^OPENAI_API_KEY=.+' "$ENV_FILE" 2>/dev/null && echo "  OPENAI_API_KEY set" || echo "  OPENAI_API_KEY empty"
@@ -1396,7 +1617,10 @@ Maintenance
 Policy
   agent [claude|codex] Show or switch the coding agent; swaps the vendor
                        block of the allowlist and asks for a rebuild
-  allow <domain>...    Add hosts to the egress allowlist and reload
+  allow <domain>... --reason '<why>'
+                       Add hosts to the egress allowlist and reload; the
+                       reason is written next to the entry, and anything on
+                       proxy/never-allow.txt is refused
   reload               Regenerate the allowlist and reload the proxy
 
 Review (runs on the host, in your environment)

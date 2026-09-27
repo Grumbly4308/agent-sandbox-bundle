@@ -48,11 +48,13 @@ agent-sandbox/
 │   ├── squid.conf           # default-deny allowlist
 │   ├── allowlist.txt        # GENERATED: what squid reads — vendor block + base
 │   ├── allowlist.base.txt   # your policy: hosts allowed whichever agent runs
+│   ├── never-allow.txt      # upload sinks and over-wide domains `allow` refuses
 │   └── agents/              # per-vendor endpoint blocks (claude.txt, codex.txt)
 │
 ├── profile/                 # ★ your defaults, version-controlled, mounted read-only
 │   ├── claude/settings.json #   permission rules + hooks
 │   ├── claude/CLAUDE.md     #   standing instructions
+│   ├── codex/config.toml    #   sandbox mode, approval policy, trusted project
 │   ├── codex/AGENTS.md      #   the same standing instructions, for codex
 │   ├── bin/qa               #   custom commands on PATH
 │   ├── shellrc.sh           #   aliases, prompt
@@ -60,7 +62,7 @@ agent-sandbox/
 │
 ├── scripts/
 │   ├── verify.sh            # self-test: are the walls actually there?
-│   └── make-seccomp.sh      # optional syscall hardening
+│   └── make-seccomp.sh      # regenerates agent-seccomp.json from a pinned upstream
 │
 ├── project/                 # the canonical clone — NEVER mounted
 ├── workspace/               # a clone of project/ — the ONE host dir the agent sees
@@ -131,8 +133,8 @@ separate. The cost is disk — a second copy of the objects, on top of the one
 
 `./sandbox new <task>` does all of this for you, including fetching `origin`
 first so the branch starts from current upstream rather than from whatever you
-last pulled, and repointing `workspace`'s `origin` at the real remote so
-`./sandbox push` reaches the server rather than a folder on your disk.
+last pulled, and repointing `workspace`'s `origin` at the real remote — and
+recording that URL in `.env`, which is what `./sandbox push` actually pushes to.
 
 ## What gets committed
 
@@ -141,9 +143,9 @@ the parts that are per-session or secret:
 
 | Committed | Ignored |
 |---|---|
-| `sandbox`, `docker-compose.yml` | `.env`, `secrets/*`, `auth/` |
+| `sandbox`, `docker-compose.yml`, `agent-seccomp.json` | `.env`, `secrets/*`, `auth/` |
 | `agent/`, `proxy/`, `scripts/` | `project/`, `workspace/` |
-| **`profile/`** — your agent policy | `logs/*`, `agent-seccomp.json` |
+| **`profile/`** — your agent policy | `logs/*` |
 | `proxy/allowlist.base.txt` + `proxy/agents/` — your egress policy | |
 | `proxy/allowlist.txt` — generated from the two above | |
 

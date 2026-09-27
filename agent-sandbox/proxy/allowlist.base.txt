@@ -4,8 +4,9 @@
 #
 # The file squid reads (allowlist.txt) is GENERATED from this file plus
 # proxy/agents/<agent>.txt for whichever agent is active. Edit and apply with:
-#     ./sandbox allow <domain>        (or edit here + ./sandbox reload)
-# Everything not listed is unreachable from the agent container.
+#     ./sandbox allow <domain> --reason '<why>'   (or edit here + ./sandbox reload)
+# Everything not listed is unreachable from the agent container; anything on
+# proxy/never-allow.txt is refused by `allow` and flagged by `reload`.
 
 # --- Source hosting ---------------------------------------------------------
 # .github.com covers github.com, api.github.com, codeload.github.com and

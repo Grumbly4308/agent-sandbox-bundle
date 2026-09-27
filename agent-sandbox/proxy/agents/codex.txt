@@ -5,8 +5,11 @@
 api.openai.com
 
 # --- Sign in with ChatGPT ---------------------------------------------------
-# Needed only for the interactive login (`./sandbox login`). On an
-# API-key-only setup (OPENAI_API_KEY in .env) you can delete this block —
-# every line is a destination data could leave through.
+# Needed for the whole session when you sign in with a ChatGPT account
+# (`./sandbox login`), not just for the login itself: chatgpt.com is where the
+# inference goes on that plan and auth.openai.com refreshes the token, so
+# neither can be dropped once signed in. On an API-key-only setup
+# (OPENAI_API_KEY in .env) you can delete this block — every line is a
+# destination data could leave through.
 auth.openai.com
 chatgpt.com

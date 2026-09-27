@@ -42,15 +42,18 @@ Something broken: `./sandbox doctor`, then `../docs/08-troubleshooting.md`.
 | `sandbox` | The CLI. Every command you need. |
 | `docker-compose.yml` | Two services: the locked-down agent, and the egress proxy. |
 | `docker-compose.podman.yml` | Applied on top when `SANDBOX_RUNTIME=podman`. |
+| `docker-compose.git-token.yml` | Applied only when `SANDBOX_FORWARD_GIT_TOKEN=1`; the one place `GIT_TOKEN` enters the container. |
+| `docker-compose.login.yml` | Applied only by `./sandbox login`; the one run that mounts `auth/` read-write. |
 | `agent/` | The agent image and the entrypoint that rebuilds `$HOME` from `profile/`. |
 | `proxy/` | A stock Squid configured as a default-deny allowlist. No third-party image. |
 | `proxy/agents/` | Per-vendor allowlist blocks; the active one is compiled into `allowlist.txt`. |
+| `proxy/never-allow.txt` | Upload sinks and over-wide parent domains `./sandbox allow` refuses and `reload`/`doctor` warn about. |
 | `profile/` | **Your defaults, version-controlled.** Survives every sandbox regeneration. |
 | `scripts/verify.sh` | Self-test: read-only rootfs, dropped caps, blocked egress, mounts. |
-| `scripts/make-seccomp.sh` | Optional Layer 4 — a tightened seccomp profile. |
+| `scripts/make-seccomp.sh` | Regenerates `agent-seccomp.json` (Docker's default filter minus `ptrace`, `mount`, `unshare`, …) from a pinned, checksummed upstream. The output is committed and applied on every start. |
 | `project/` | The canonical clone. Never mounted into the container. |
 | `workspace/` | A clone of `project/` that **is** mounted. The only host dir the agent sees. |
-| `auth/` | A saved agent login, if you use one. `chmod 700`, gitignored. |
+| `auth/` | A saved agent login, if you use one. `chmod 700`, gitignored, mounted read-only except during `login`. |
 | `secrets/` | A deploy key, if you use one. Mounted read-only. |
 
 ## The profile
@@ -63,6 +66,7 @@ into the container's ephemeral `$HOME` at every start:
 | --- | --- | --- |
 | `claude/settings.json` | `~/.claude/settings.json` | Permission allow/ask/deny lists, attribution, hooks |
 | `claude/CLAUDE.md` | `~/.claude/CLAUDE.md` | Standing instructions for the agent |
+| `codex/config.toml` | `~/.codex/config.toml` | Sandbox mode, approval policy, trusted project — codex's `settings.json` |
 | `codex/AGENTS.md` | `~/.codex/AGENTS.md` | The same standing instructions, for codex |
 | `bin/*` | `~/.local/bin/*` | Custom commands on `PATH` (e.g. `qa`) |
 | `shellrc.sh` | `~/.bashrc` | Aliases, prompt, env |
@@ -89,7 +93,12 @@ instead:
 
 The codex image is built on the next start (each agent has its own image, shared
 by every bundle copy on the account); `./sandbox upgrade` builds it from scratch
-right away instead.
+right away instead. Pinning works the same for both agents: `./sandbox upgrade
+<version>` writes `AGENT_CLI=@openai/codex@<version>` (or
+`@anthropic-ai/claude-code@<version>`) into `.env`, and the next build installs
+exactly that — write it by hand if you prefer, `upgrade` keeps it until you
+say `latest`. Switching agents resets the pin, since it belonged to the other
+package.
 
 `SANDBOX_AGENT` in `.env` records the choice; `OPENAI_API_KEY` is the codex
 equivalent of `ANTHROPIC_API_KEY`. The egress allowlist is generated from
@@ -102,7 +111,7 @@ One agent per bundle, deliberately: one image, one credential set, one vendor
 on the allowlist. Run the same repo under both agents by copying the bundle,
 as with any two projects (below).
 
-One caveat the swap cannot fix for you: `auth/` is mounted read-write into
+One caveat the swap cannot fix for you: `auth/` is mounted (read-only) into
 every session, so a *saved login* for the other vendor stays readable from
 inside the container until you `./sandbox logout`. The entrypoint drops the
 inactive vendor's API keys from the environment and does not materialise its
