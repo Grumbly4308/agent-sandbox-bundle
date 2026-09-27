@@ -93,9 +93,11 @@ If you only do some of this, do it in this order:
 5. **Agent-level permission rules** ([07](07-profile.md)). Catches what OS
    isolation can't: actions that are technically permitted inside the sandbox
    but aren't what you asked for.
-6. **seccomp / gVisor** ([Part 12](../sandboxing-ai-coding-agent.md)), and rootless
-   Podman ([11](11-podman.md)) ahead of both. Worth it if the agent routinely
-   runs code you did not write.
+6. **seccomp** ([04](04-container.md), on by default — it is what closes the
+   same-uid `ptrace` gap that dropped capabilities leave open), then
+   **gVisor** ([Part 12](../sandboxing-ai-coding-agent.md)), and rootless
+   Podman ([11](11-podman.md)) ahead of both. gVisor is worth it if the agent
+   routinely runs code you did not write.
 
 Be clear-eyed about what none of it covers — see
 [Part 14 of the guide](../sandboxing-ai-coding-agent.md).

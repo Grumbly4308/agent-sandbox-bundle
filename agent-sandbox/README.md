@@ -50,7 +50,7 @@ Something broken: `./sandbox doctor`, then `../docs/08-troubleshooting.md`.
 | `proxy/never-allow.txt` | Upload sinks and over-wide parent domains `./sandbox allow` refuses and `reload`/`doctor` warn about. |
 | `profile/` | **Your defaults, version-controlled.** Survives every sandbox regeneration. |
 | `scripts/verify.sh` | Self-test: read-only rootfs, dropped caps, blocked egress, mounts. |
-| `scripts/make-seccomp.sh` | Optional Layer 4 — a tightened seccomp profile. |
+| `scripts/make-seccomp.sh` | Regenerates `agent-seccomp.json` (Docker's default filter minus `ptrace`, `mount`, `unshare`, …) from a pinned, checksummed upstream. The output is committed and applied on every start. |
 | `project/` | The canonical clone. Never mounted into the container. |
 | `workspace/` | A clone of `project/` that **is** mounted. The only host dir the agent sees. |
 | `auth/` | A saved agent login, if you use one. `chmod 700`, gitignored, mounted read-only except during `login`. |

@@ -81,8 +81,13 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
-      # Uncomment after running ./scripts/make-seccomp.sh (Part 12):
-      # - seccomp=./agent-seccomp.json
+      # Docker's default profile minus ptrace, mount, unshare, bpf and friends
+      # (scripts/make-seccomp.sh, committed output). cap_drop does not stop a
+      # same-uid ptrace, so this is what keeps one process out of another's
+      # memory. The path is relative to this file: docker compose reads it
+      # here and sends the JSON inline; podman-compose hands it to podman from
+      # this directory, which is also where ./sandbox always runs.
+      - seccomp=./agent-seccomp.json
 
     # --- Resources ----------------------------------------------------------
     pids_limit: 512
