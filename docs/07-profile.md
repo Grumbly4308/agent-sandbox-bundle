@@ -77,13 +77,14 @@ technically permitted inside the sandbox but aren't what you asked for.
     "allow": [
       "Bash(git status:*)", "Bash(git diff:*)", "Bash(git commit:*)",
       "Bash(npm run test:*)", "Bash(pytest:*)", "Bash(qa:*)",
-      "Read(//workspace/repo/**)", "Edit(//workspace/repo/**)"
+      "Read(//workspace/repo/**)", "Edit(//workspace/repo/**)",
+      "WebFetch"
     ],
     "ask": [
       "Bash(git push:*)", "Bash(git reset:*)",
       "Bash(npm install:*)", "Bash(npm i:*)", "Bash(npx:*)",
       "Bash(pip install:*)", "Bash(python3 -m pip:*)",
-      "WebFetch", "WebSearch"
+      "WebSearch"
     ],
     "deny": [
       "Bash(sudo:*)", "Bash(curl:*)", "Bash(wget:*)", "Bash(nc:*)",
@@ -131,6 +132,8 @@ gets its own prompt instead of blanket approval.
 they ask. `WebSearch` asks for a different reason: it runs on Anthropic's
 servers, not in the container, so it never passes through squid or the
 allowlist — the one tool whose network access the proxy cannot see.
+`WebFetch` is allowed outright: it fetches from inside the container through
+squid, so the allowlist already decides where it can go.
 
 **These rules are advisory against interpreters.** `curl` is denied, but
 `python3 -c 'import urllib...'` and `node -e 'fetch(...)'` are not, and

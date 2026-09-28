@@ -4,6 +4,7 @@
   "permissions": {
     "defaultMode": "acceptEdits",
 
+    "// allow": "WebFetch runs in the container and goes out through squid, so the allowlist already bounds where it can reach. A prompt on top would add friction, not a wall.",
     "allow": [
       "Bash(git status:*)",
       "Bash(git diff:*)",
@@ -22,7 +23,8 @@
       "Bash(qa:*)",
       "Read(//workspace/repo/**)",
       "Edit(//workspace/repo/**)",
-      "Write(//workspace/repo/**)"
+      "Write(//workspace/repo/**)",
+      "WebFetch"
     ],
 
     "// ask": "WebSearch runs on Anthropic's servers, not in the container, so it never passes through squid or the allowlist. It stays available, but only on a prompt.",
@@ -40,7 +42,6 @@
       "Bash(python3 -m pip:*)",
       "Bash(python -m pip:*)",
       "Bash(uv pip install:*)",
-      "WebFetch",
       "WebSearch"
     ],
 
