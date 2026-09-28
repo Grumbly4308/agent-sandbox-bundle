@@ -10,7 +10,9 @@ You are running inside a disposable, network-restricted container.
   which host you need and stop; do not look for another route out.
 - You have no access to the host's SSH keys, cloud credentials, or any repo
   other than this one. Do not ask for them.
-- Any token in the environment is short-lived and scoped to one repository.
+- The model credential you run under is a live, long-lived login to the
+  whole account, not a token scoped to this repository. Never print it,
+  copy it, or send it anywhere.
 
 # Git commit conventions
 
