@@ -937,8 +937,32 @@ check_deploy_key() {
   fi
 }
 
+# Every credential the active agent could start with, one per line. Keep it to
+# one: with a key AND a login both live, revoking the one you think you are
+# using leaves the other working, and the CLI decides which it picks.
+auth_methods() {
+  if [ "$AGENT" = codex ]; then
+    grep -qE '^OPENAI_API_KEY=.+' "$ENV_FILE" 2>/dev/null && echo "OPENAI_API_KEY in .env"
+    [ -s "$AUTH_DIR/codex-auth.json" ] && echo "saved codex session in auth/"
+  else
+    grep -qE '^ANTHROPIC_API_KEY=.+' "$ENV_FILE" 2>/dev/null && echo "ANTHROPIC_API_KEY in .env"
+    grep -qE '^CLAUDE_CODE_OAUTH_TOKEN=.+' "$ENV_FILE" 2>/dev/null && echo "CLAUDE_CODE_OAUTH_TOKEN in .env"
+    [ -s "$AUTH_DIR/.credentials.json" ] && echo "saved OAuth session in auth/"
+  fi
+  return 0
+}
+
+check_auth_overlap() {
+  local methods; methods="$(auth_methods)"
+  [ "$(printf '%s' "$methods" | grep -c .)" -gt 1 ] || return 0
+  warn "more than one credential is set up for $AGENT — keep exactly one:"
+  printf '%s\n' "$methods" | while read -r m; do warn "    $m"; done
+  warn "blank the key in .env, or ./sandbox logout to drop the saved session"
+}
+
 check_auth() {
   resolve_agent
+  check_auth_overlap
   local have_key=0 have_oauth=0
   if [ "$AGENT" = codex ]; then
     grep -qE '^OPENAI_API_KEY=.+' "$ENV_FILE" 2>/dev/null && have_key=1
@@ -1551,6 +1575,7 @@ cmd_status() {
     grep -qE '^ANTHROPIC_API_KEY=.+' "$ENV_FILE" 2>/dev/null && echo "  ANTHROPIC_API_KEY set" || echo "  ANTHROPIC_API_KEY empty"
     [ -s "$AUTH_DIR/.credentials.json" ] && echo "  saved OAuth session in auth/" || echo "  no saved OAuth session"
   fi
+  check_auth_overlap
 }
 
 cmd_logs() {
