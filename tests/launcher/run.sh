@@ -58,7 +58,12 @@ before "the sidecar is waited for before the credential goes in" "^exec${tab}$s-
 before "the service is waited for"                    "^exec${tab}$s-svc-redis${tab}redis-cli${tab}-h${tab}127.0.0.1${tab}ping" "sandbox-launch"
 before "the credential goes in before the code"       "sidecar-load"                        "sandbox-import"
 before "the code goes in before the CLI starts"       "sandbox-import"                      "sandbox-launch"
-has    "the barrier checks ran, quick, on this session" "$T/config/verify.calls" "--quick $s"
+has    "the barrier checks ran, quick, on this session" "$T/config/verify.calls" "--quick --credential-fd 3 $s"
+if grep -qx 'credential-bytes=0' "$T/config/verify.calls"; then
+  fail "verify was handed an empty credential to search for"
+else
+  pass "verify is handed the credential on a file descriptor, not in its arguments"
+fi
 
 # --- networks and volume ---------------------------------------------------------
 line_has "the agent's network is internal"            "^network${tab}create.*$s-sandbox$" "--internal"
@@ -176,7 +181,7 @@ status=0
 check "a second session starts" test "$status" -eq 0
 line_has "it gets the next free subnet"       "^network${tab}create.*-sandbox$" "--subnet${tab}10.201.1.0/24"
 line_has "its branch is named after it"       "sandbox-import" "sandbox-import${tab}agent/asb-src-"
-check "the barrier checks are not repeated for images that passed" test "$(wc -l < "$T/config/verify.calls")" -eq 1
+check "the barrier checks are not repeated for images that passed" test "$(grep -c -- "^--quick" "$T/config/verify.calls")" -eq 1
 if grep -q "sandbox-launch${tab}--auto" "$log"; then fail "--auto was passed without being asked for"; else pass "without --auto the CLI keeps its prompts"; fi
 says "with two sessions a command asks which one" "more than one session" "$ROOT/sandbox" shell
 SANDBOX_SESSION="$s" "$ROOT/sandbox" destroy >/dev/null 2>&1
@@ -187,7 +192,7 @@ check "and leaves the other one" test -n "$(only_session)"
 status=0
 FAKE_PODMAN_LAUNCH_EXIT=3 "$ROOT/sandbox" run "$T/src" --strict </dev/null >/dev/null 2>&1 || status=$?
 check "run returns the CLI's exit status" test "$status" -eq 3
-check "--strict repeats the barrier checks" test "$(wc -l < "$T/config/verify.calls")" -eq 2
+check "--strict repeats the barrier checks" test "$(grep -c -- "^--quick" "$T/config/verify.calls")" -eq 2
 check "the session stays when the CLI exits" test "$(find "$SANDBOX_STATE_DIR" -type f -name state | wc -l)" -eq 2
 
 # --- destroy --all leaves nothing  [logical B31, closes L1] ------------------------

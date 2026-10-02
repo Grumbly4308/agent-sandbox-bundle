@@ -186,6 +186,11 @@ STANDIN
   cat > "$ROOT/scripts/verify.sh" <<'STANDIN'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$SANDBOX_CONFIG_DIR/verify.calls"
+# The launcher hands the credential over on a file descriptor; note how many
+# bytes arrived, never the bytes.
+if [ "${2:-}" = --credential-fd ]; then
+  printf 'credential-bytes=%s\n' "$(wc -c <&"$3" | tr -d ' ')" >> "$SANDBOX_CONFIG_DIR/verify.calls"
+fi
 printf 'PASS B01 stand-in \033[31mcheck\033[0m\n'
 exit "${FAKE_VERIFY_EXIT:-0}"
 STANDIN

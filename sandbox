@@ -38,6 +38,9 @@ fi
 # Your settings and your own allowlist entries.
 SANDBOX_CONFIG_DIR="${SANDBOX_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-sandbox}"
 export SANDBOX_ROOT SANDBOX_VERSION SANDBOX_STATE_DIR SANDBOX_CONFIG_DIR
+# Keep your host's address out of every container's /etc/hosts; see the file
+# for why.  [physical B13]
+export CONTAINERS_CONF_OVERRIDE="$SANDBOX_ROOT/policy/containers.conf"
 
 LABEL="agent-sandbox.session"
 SESSION_PATTERN='^asb-[a-z0-9]([a-z0-9-]*[a-z0-9])?-[0-9a-f]{6}$'
@@ -430,9 +433,16 @@ credential_json() {
     # sitting in your shell should not end up in a sandbox by accident.
     secret="$SANDBOX_TEST_ANTHROPIC_KEY"
   elif ! secret="$(keyring_get "$agent" "$auth")" || [ -z "$secret" ]; then
-    [ -t 0 ] || die "no $auth credential for $agent in your keyring. Store one first: ./sandbox login --agent $agent --auth $auth"
-    read -rsp "Credential for $agent ($auth), used for this session only: " secret
-    printf '\n' >&2
+    if [ -t 0 ]; then
+      read -rsp "Credential for $agent ($auth), used for this session only: " secret
+      printf '\n' >&2
+    else
+      # No terminal: one line on standard input, so a script can supply it
+      # without it ever being an argument or a variable of this process's
+      # parent.
+      IFS= read -r secret || true
+      [ -n "$secret" ] || die "no $auth credential for $agent in your keyring. Store one first: ./sandbox login --agent $agent --auth $auth"
+    fi
   fi
   looks_like_token "$secret" \
     || die "the $auth credential for $agent does not look like a token. Store it again: ./sandbox login --agent $agent --auth $auth"
@@ -1229,7 +1239,6 @@ cmd_run() {
   # --- The credential goes in on stdin, to the sidecar only  [logical B22] --
   printf '%s' "$credential" | podman exec -i "$SESSION-credsidecar" sidecar-load >/dev/null \
     || die "the credential sidecar did not accept the credential"
-  credential=""
   if [ "$GIT_RELAY" = 1 ]; then
     wait_for "the git relay" 30 podman exec "$SESSION-gitrelay" gitrelay-healthcheck
     printf '{"token":"%s","username":"%s"}' "$relay_token" "$relay_user" \
@@ -1253,10 +1262,14 @@ cmd_run() {
   image_ids="$(podman image inspect --format '{{.Id}}' "$(image_tag "agent-$AGENT:$TOOLCHAIN")" "$(image_tag proxy)" "$(image_tag credsidecar)" | tr '\n' ' ')"
   if [ "$strict" -eq 1 ] || ! grep -qxF "$image_ids" "$SANDBOX_CONFIG_DIR/verified" 2>/dev/null; then
     info "checking the barriers (verify --quick)"
-    "$SANDBOX_ROOT/scripts/verify.sh" --quick "$SESSION" 2>&1 | filter_control \
+    # verify searches the agent's container for the real credential, on this
+    # host. It is handed over on a file descriptor, never as an argument.
+    "$SANDBOX_ROOT/scripts/verify.sh" --quick --credential-fd 3 "$SESSION" \
+      3< <(printf '%s' "$credential") 2>&1 | filter_control \
       || die "a barrier check failed, so the session was not started. See the FAIL lines above."
     printf '%s\n' "$image_ids" >> "$SANDBOX_CONFIG_DIR/verified"
   fi
+  credential=""
 
   if [ "$WORKSPACE_DRIVER" = local ] || { [ "$AGENT" = codex ] && [ "$AUTH" = oauth ]; }; then
     start_watchdog
