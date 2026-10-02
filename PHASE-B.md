@@ -5,10 +5,11 @@ that could be tested without one was (`make test`). Nothing that needs Podman
 has been run: no image has been built, no container started, and **no `verify`
 check has passed or failed**.
 
-This file is the plan for finishing the job on a real host: what to set up,
-what to run in which order, what a good result looks like, and where to look
-when a step fails. After the plan come the full list of `verify` checks and
-the list of things still unproven, by component.
+[test_card.md](test_card.md) is the same plan as a tick-box card, with the
+install and onboarding steps spelled out. This file is the reference behind
+it: what to set up, what to run in which order, what a good result looks
+like, and where to look when a step fails. After the plan come the full list
+of `verify` checks and the list of things still unproven, by component.
 
 Two rules:
 
@@ -21,7 +22,9 @@ Two rules:
 - A Linux machine or VM you can throw away. Ubuntu 24.04 is the reference;
   Debian 13 and current Fedora should work the same. (A Mac with
   `podman machine` is an optional extra, step 19.)
-- About 8 GB of free memory and 15 GB of free disk.
+- 16 GB of memory and 30 GB of free disk. With the default settings one
+  session may take up to about 10.5 GB (its files are held in memory), and
+  `doctor` refuses to start one the host cannot hold.
 - An **API key from a dedicated Anthropic workspace with a spend cap**, for
   the automated cycle and Part 2.
 - For Part 3: a dedicated Claude subscription account, a dedicated ChatGPT
@@ -37,7 +40,8 @@ As an admin user:
 ```bash
 # Ubuntu 24.04. On Fedora: dnf install podman git jq make ShellCheck nodejs gitleaks
 sudo apt update
-sudo apt install -y podman uidmap passt git jq curl make shellcheck nodejs gitleaks libsecret-tools
+sudo apt install -y podman uidmap slirp4netns passt catatonit dbus-user-session \
+  git jq curl make shellcheck nodejs gitleaks libsecret-tools
 
 # The account the sandbox runs from: no sudo, and its containers may outlive a login.
 sudo adduser --disabled-password --gecos "" sandboxer

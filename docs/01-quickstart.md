@@ -39,7 +39,7 @@ join. Version 4.4 or newer is needed.
 
 ```bash
 # Debian 13 / Ubuntu 24.04 or newer (as an admin user)
-sudo apt install -y podman uidmap passt git
+sudo apt install -y podman uidmap slirp4netns passt catatonit dbus-user-session git jq
 
 # Fedora
 sudo dnf install -y podman git

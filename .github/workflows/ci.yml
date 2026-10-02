@@ -33,7 +33,7 @@ jobs:
       - name: Podman and the host tools
         # gitleaks is the export's secret scan: without it the cycle's export
         # step reports "not run" and counts as a failure.
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends podman uidmap passt jq gitleaks
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends podman uidmap slirp4netns passt catatonit dbus-user-session jq gitleaks
       - name: Images build and pass the quick checks
         run: tests/phase-b/images.sh
       - name: doctor, run, verify, export, destroy
