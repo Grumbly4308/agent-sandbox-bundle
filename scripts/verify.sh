@@ -1108,9 +1108,10 @@ verify_session() {
 
   SELINUX="$(podman info --format '{{.Host.Security.SELinuxEnabled}}' 2>/dev/null || true)"
   # One host from each of the proxy's lists, to try from both sides.
-  ALLOWED_HOST="$(head -n 1 "$SESSION_DIR/proxy/agent.domains" 2>/dev/null || true)"
-  VENDOR_HOST="$(head -n 1 "$SESSION_DIR/proxy/sidecar.domains" 2>/dev/null || true)"
-  ALLOWED_HOST="${ALLOWED_HOST#.}"; VENDOR_HOST="${VENDOR_HOST#.}"
+  # A line starting with a dot is a whole domain, and its bare name may not
+  # answer; a line without one is a host that does.
+  ALLOWED_HOST="$(grep -v -m 1 '^\.' "$SESSION_DIR/proxy/agent.domains" 2>/dev/null || true)"
+  VENDOR_HOST="$(grep -v -m 1 '^\.' "$SESSION_DIR/proxy/sidecar.domains" 2>/dev/null || true)"
   DENIED_HOST="v$(rand_hex 8).example.com"
   ALLOW_HTTP=0
   if grep -q 'url_regex' "$SESSION_DIR/proxy/extra.conf" 2>/dev/null; then ALLOW_HTTP=1; fi
@@ -1249,6 +1250,9 @@ STARTED=0
 own_session() {
   local waited=0 dir
   OWN=""
+  # With the test key set, these sessions use it and need nothing in the
+  # keyring (./sandbox reads it for claude with --auth apikey only).
+  [ -z "${SANDBOX_TEST_ANTHROPIC_KEY:-}" ] || set -- --agent claude --auth apikey "$@"
   ( cd "$ROOT" && exec nohup ./sandbox run "$T/repo" "$@" </dev/null >"$T/run.log" 2>&1 ) &
   RUN_PID=$!
   # Images may have to be built on the first run: up to twenty minutes.
@@ -1474,8 +1478,9 @@ EOF
   chmod +x "$T/shim/podman"
   status=0
   ( cd "$ROOT" && PATH="$T/shim:$PATH" SANDBOX_SESSION="$OWN" bounded 300 ./sandbox export --out "$T/out-endless" ) > "$T/endless.log" 2>&1 || status=$?
-  # Anything kept that is larger than the workspace itself is the stream.
-  left="$(find "$SANDBOX_STATE_DIR/$OWN/export" -name '*.bundle' -size "+$(( $(kv "$state" WORKSPACE_BYTES) / 1024 ))k" 2>/dev/null | head -n 1 || true)"
+  # export writes what it reads beside its destination and removes it when
+  # it refuses; a bundle still there is the stream, kept.
+  left="$(find "$T/out-endless" -maxdepth 1 -name '.*.bundle' 2>/dev/null | head -n 1 || true)"
   if [ "$status" -eq 124 ]; then
     fail B27-endless-stream "fed export a stream that never ends in place of the bundle: after five minutes it was still reading" "export must stop reading at the workspace size cap (./sandbox, cmd_export)"
   elif [ "$status" -eq 0 ] || [ "$status" -eq 2 ] || [ -d "$T/out-endless/$OWN/repo.git" ] || [ -n "$left" ]; then
