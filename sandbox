@@ -70,6 +70,7 @@ usage: ./sandbox <command>
       --git-relay   let the agent push the session branch itself (skips export)
       --mem N  --cpus N  --pids N  --ttl D  --budget N
       --workspace-size N  --workspace-driver memory|local  --io-limit N
+      -- args...    everything after -- goes to the agent's CLI unchanged
   shell                       a shell inside the agent container
   verify [--quick]            attempt every bypass in the barrier register
   allow <host>[:port] --reason "<why>" [--until YYYY-MM-DD]
@@ -968,7 +969,7 @@ cmd_run() {
   local mem cpus pids nproc ttl budget tmp_size home_size workspace_size
   local mem_bytes tmp_bytes home_bytes ttl_seconds total helpers used credential
   local relay_host="" relay_token="" relay_user=x-access-token image_ids
-  local doctor_args=() tty=(-i) launch_args=() status=0
+  local doctor_args=() tty=(-i) launch_args=() cli_args=() status=0
 
   AGENT="$(setting AGENT)"; AUTH="$(setting AUTH)"; TOOLCHAIN="$(setting TOOLCHAIN)"
   mem="$(setting MEM)"; cpus="$(setting CPUS)"; pids="$(setting PIDS)"; nproc="$(setting NPROC)"
@@ -1005,6 +1006,12 @@ cmd_run() {
         die "--keep no longer exists. A session always stays until you run ./sandbox destroy; its workspace outlives the time limit." ;;
       --accept-rootful)
         die "--accept-rootful no longer exists. The only runtime is rootless Podman, and there is no override." ;;
+      --)
+        # Everything after -- is handed to the agent's CLI unchanged, so a
+        # script can give it a prompt (for example: -- -p "fix the tests").
+        shift
+        cli_args=("$@")
+        break ;;
       -*) die "run: unknown option $1 (options are written '--mem 8g', with a space)" ;;
       *)  [ -z "$source" ] || die "run takes one repository; got '$source' and '$1'"
           source="$1" ;;
@@ -1262,7 +1269,8 @@ cmd_run() {
   say "From here on every byte on this screen is the agent's. Do not type a password into it."
   if [ -t 0 ] && [ -t 1 ]; then tty=(-it); fi
   if [ "$auto" -eq 1 ]; then launch_args=(--auto); fi
-  podman exec "${tty[@]}" "${EXEC_ENV[@]}" "$SESSION-agent" sandbox-launch ${launch_args[@]+"${launch_args[@]}"} || status=$?
+  podman exec "${tty[@]}" "${EXEC_ENV[@]}" "$SESSION-agent" sandbox-launch \
+    ${launch_args[@]+"${launch_args[@]}"} ${cli_args[@]+"${cli_args[@]}"} || status=$?
 
   say ""
   say "The agent's CLI has exited$([ "$status" -eq 0 ] || printf ' with status %s' "$status"). Session $SESSION is still there, holding its workspace."

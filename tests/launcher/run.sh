@@ -19,7 +19,7 @@ export ANTHROPIC_API_KEY="sk-ant-MUST-NEVER-BE-USED"
 export HTTPS_PROXY="http://operator:proxy-password@corp-proxy.example.test:8080"
 
 status=0
-out="$("$ROOT/sandbox" run "$T/src" --branch agent/test --service redis:7 --auto </dev/null 2>&1)" || status=$?
+out="$("$ROOT/sandbox" run "$T/src" --branch agent/test --service redis:7 --auto -- -p "say hi" </dev/null 2>&1)" || status=$?
 [ "$status" -eq 0 ] || fail "run exited $status: $out"
 s="$(only_session)"
 dir="$SANDBOX_STATE_DIR/$s"
@@ -148,6 +148,7 @@ check "the source repository was not touched" test "$(git -C "$T/src" branch --l
 # --- attach ---------------------------------------------------------------------
 launch="sandbox-launch"
 line_has "the CLI is started in the agent container, with --auto" "$launch" "$s-agent${tab}sandbox-launch${tab}--auto"
+line_has "arguments after -- reach the CLI unchanged" "$launch" "sandbox-launch${tab}--auto${tab}-p${tab}say hi"
 line_has "the CLI is told the credential mode"   "$launch" "--env${tab}SANDBOX_AUTH=apikey"
 line_has "the CLI gets your git name"            "$launch" "--env${tab}GIT_COMMITTER_NAME=Test Operator"
 line_has "the CLI gets your git email"           "$launch" "--env${tab}GIT_AUTHOR_EMAIL=operator@example.test"
