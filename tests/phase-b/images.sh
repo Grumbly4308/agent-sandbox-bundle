@@ -16,6 +16,10 @@ cd "$root"
 work="$(mktemp -d)"
 export SANDBOX_STATE_DIR="$work/state"
 export SANDBOX_CONFIG_DIR="$work/config"
+# Small sizes: the test repositories are tiny, and with these a session may
+# take about 4.6 GB of the host's memory instead of the default 10.5 GB.
+mkdir -p "$SANDBOX_CONFIG_DIR"
+printf '%s\n' MEM=2g WORKSPACE_SIZE=1g TMP_SIZE=512m HOME_SIZE=512m > "$SANDBOX_CONFIG_DIR/settings"
 trap './sandbox destroy --all >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
 
 cp -R tests/fixtures/mini-node "$work/mini-node"

@@ -26,7 +26,7 @@ is what it is for.
 | | |
 |---|---|
 | ☐ | A Linux machine or VM you can throw away. **Ubuntu 24.04** is the reference. Debian 13 and current Fedora should behave the same. |
-| ☐ | **16 GB of memory, 30 GB of free disk.** One session with default settings may take about 10.5 GB of memory, because its files are held in memory, and `doctor` refuses a session the host cannot hold. |
+| ☐ | **8 GB of memory, 30 GB of free disk.** This card runs sessions with small sizes, about 4.6 GB each (step C5). With the default settings a session may take about 10.5 GB, because its files are held in memory, and `doctor` refuses a session the host cannot hold. |
 | ☐ | Admin (`sudo`) access for the setup in section B only. |
 | ☐ | An **Anthropic API key from a dedicated workspace with a spend cap**. Used for sections D and E. |
 | ☐ | A scratch repository on GitHub or GitLab that you own (steps E6 and E8). |
@@ -186,7 +186,43 @@ Needs to reach `raw.githubusercontent.com`.
 
 ☐ pass ☐ fail
 
-### C5. Check the host
+### C5. Your settings
+
+Defaults live in `~/.config/agent-sandbox/settings`: one `NAME=value` line
+per setting, each with a comment. A flag on the command line wins over a line
+there, and a later line wins over an earlier one. The first `./sandbox doctor`
+writes the file.
+
+```bash
+./sandbox doctor > /dev/null 2>&1 || true        # writes the file; its verdict comes in C6
+cat ~/.config/agent-sandbox/settings
+```
+
+For this card, make sessions small enough for an 8 GB machine:
+
+```bash
+printf '%s\n' MEM=2g WORKSPACE_SIZE=1g TMP_SIZE=512m HOME_SIZE=512m >> ~/.config/agent-sandbox/settings
+```
+
+A session's files are held in memory, so its ceiling is the sum of these:
+
+| Setting | Default | For this card | What it is |
+|---|---|---|---|
+| `MEM` | `4g` | `2g` | memory for the agent's processes |
+| `WORKSPACE_SIZE` | `4g` | `1g` | the repository, its dependencies and package caches |
+| `TMP_SIZE` | `1g` | `512m` | `/tmp` |
+| `HOME_SIZE` | `1g` | `512m` | the agent's home directory |
+| | | | plus about 0.6 GB for shared memory, the proxy, the sidecar and the keeper |
+| **A session may take up to** | **about 10.5 GB** | **about 4.6 GB** | |
+
+Others you may want later: `PIDS` and `NPROC` (default 512; raise both when a
+build cannot start more processes), `TTL` (default 4 hours) and `BUDGET`
+(default 500 model requests).
+
+☐ pass ☐ fail — the file exists, lists these settings, and ends with the
+four lines you added.
+
+### C6. Check the host
 
 ```bash
 ./sandbox doctor
@@ -199,37 +235,13 @@ has a `fix:` line under it. The ones to expect on a fresh machine:
 |---|---|
 | `cgroup v2, but your user may not set limits for: cpu` | Run the printed command as an admin (it writes one small systemd file), then log out and back in as `sandboxer`. |
 | `your subordinate UID range does not reach 61003` | Run the printed `usermod` command as an admin. |
-| `the session may use up to ... of memory and this host has ... available` | Use a bigger machine, or lower the sizes in step C6. |
+| `the session may use up to ... of memory and this host has ... available` | Step C5 was skipped, or other programs on the host are using the memory. |
 | `images/PINS still has UNPINNED base images` | Step C3 was skipped. |
 | `Podman ... is too old` | Podman 4.4 or newer is needed. |
 
 A `warn` line saying the account can use sudo means step B2 was not followed.
 
 ☐ pass ☐ fail — `This host is ready.`
-
-### C6. Your settings
-
-The first `./sandbox` command wrote `~/.config/agent-sandbox/settings`: one
-`NAME=value` line per default, each with a comment. A flag on the command
-line wins over a line there.
-
-```bash
-cat ~/.config/agent-sandbox/settings
-```
-
-The ones you are most likely to change:
-
-| Setting | Default | Change it when |
-|---|---|---|
-| `MEM` | `4g` | builds run out of memory |
-| `WORKSPACE_SIZE` | `4g` | the repository and its dependencies do not fit |
-| `PIDS`, `NPROC` | `512` | a build says it cannot start more processes. Raise both; raise `NPROC` further if you run several sessions at once. |
-| `TTL` | `4h` | sessions need longer |
-| `BUDGET` | `500` | the number of model requests a session may make |
-
-Leave them at their defaults for this card.
-
-☐ pass ☐ fail — the file exists and lists these settings.
 
 ### C7. The test key
 
@@ -620,8 +632,8 @@ enough to fix from.
 | C2 static tests | | |
 | C3 pin images | | |
 | C4 system-call filter identical | | |
-| C5 doctor | | |
-| C6 settings | | |
+| C5 settings | | |
+| C6 doctor | | |
 | D1 images | | |
 | D2 cycle and deadline test | | |
 | E1 start a session | | |

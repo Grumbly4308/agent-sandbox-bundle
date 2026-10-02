@@ -22,9 +22,10 @@ Two rules:
 - A Linux machine or VM you can throw away. Ubuntu 24.04 is the reference;
   Debian 13 and current Fedora should work the same. (A Mac with
   `podman machine` is an optional extra, step 19.)
-- 16 GB of memory and 30 GB of free disk. With the default settings one
+- 8 GB of memory and 30 GB of free disk. With the default settings one
   session may take up to about 10.5 GB (its files are held in memory), and
-  `doctor` refuses to start one the host cannot hold.
+  `doctor` refuses to start one the host cannot hold; the test scripts and
+  the test card use smaller sizes, about 4.6 GB a session.
 - An **API key from a dedicated Anthropic workspace with a spend cap**, for
   the automated cycle and Part 2.
 - For Part 3: a dedicated Claude subscription account, a dedicated ChatGPT

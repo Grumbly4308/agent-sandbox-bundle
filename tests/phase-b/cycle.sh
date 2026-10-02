@@ -24,6 +24,10 @@ work="$(mktemp -d)"
 # Sessions made by this script are kept apart from your own.
 export SANDBOX_STATE_DIR="$work/state"
 export SANDBOX_CONFIG_DIR="$work/config"
+# Small sizes: the test repositories are tiny, and with these a session may
+# take about 4.6 GB of the host's memory instead of the default 10.5 GB.
+mkdir -p "$SANDBOX_CONFIG_DIR"
+printf '%s\n' MEM=2g WORKSPACE_SIZE=1g TMP_SIZE=512m HOME_SIZE=512m > "$SANDBOX_CONFIG_DIR/settings"
 
 step() { printf '\n==== %s\n' "$*"; }
 problems=0
