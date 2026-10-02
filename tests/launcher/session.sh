@@ -130,6 +130,9 @@ check  "only the latest bundle is kept" test "$(find "$dir/export" -name '*.bund
 # --- push and pr  [closes C1] ---------------------------------------------------------
 says   "push refuses when the secret scan did not pass" "secret scan did not pass" "$ROOT/sandbox" push
 check  "nothing was pushed" test -z "$(git --git-dir="$T/remote.git" branch --list agent/test)"
+FAKE_PODMAN_BUNDLE="$T/agent.bundle" FAKE_EXPORT_EXIT=2 FAKE_EXPORT_HISTORY=rewritten "$ROOT/sandbox" export --out "$T/exported" >/dev/null 2>&1 || true
+says   "push refuses when history below the starting commit was rewritten" "rewrote history" "$ROOT/sandbox" push
+check  "nothing was pushed then either" test -z "$(git --git-dir="$T/remote.git" branch --list agent/test)"
 FAKE_PODMAN_BUNDLE="$T/agent.bundle" "$ROOT/sandbox" export --out "$T/exported" >/dev/null 2>&1
 
 # The exported repository's own config names another remote; push must not

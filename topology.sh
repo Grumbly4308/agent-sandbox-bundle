@@ -122,6 +122,7 @@ _topo_hardening() {
     --name "${SANDBOX_SESSION:?}-${name}"
     --label "agent-sandbox.session=${SANDBOX_SESSION}"
     --pull=never                    # images are built or fetched by digest beforehand; nothing is pulled at start
+    --http-proxy=false              # [physical B15] Podman would otherwise copy your own proxy settings, and any password in them, into the container
     --read-only                     # [physical B07] root filesystem is immutable
     --read-only-tmpfs=false         # [physical B08] without this, Podman adds writable /tmp, /run, /var/tmp and /dev/shm itself
     --cap-drop=ALL                  # [physical B02] no Linux capabilities; none are added back anywhere in this file
@@ -359,6 +360,7 @@ topo_proxy() {
     --env "SANDBOX_AGENT_IP=${SANDBOX_AGENT_IP:?}"       # may reach the general allowlist
     --env "SANDBOX_SIDECAR_IP=${SANDBOX_SIDECAR_IP:?}"   # the only address that may reach the model vendor
     --env "SANDBOX_RELAY_IP=${SANDBOX_RELAY_IP:-}"       # may reach the relay's one git host; empty unless --git-relay
+    --env "SANDBOX_EGRESS_SUBNET=${SANDBOX_EGRESS_SUBNET:?}"   # so the proxy refuses names that resolve into its own outbound network
     --env "SANDBOX_ALLOW_HTTP=${SANDBOX_ALLOW_HTTP:-0}"  # plaintext port 80 is off unless asked for
     # Size caps. They apply to plaintext HTTP only: inside an HTTPS tunnel
     # the proxy cannot see sizes.
@@ -416,6 +418,8 @@ topo_gitrelay() {
     --tmpfs "/run/relay:size=1m,mode=1777,nosuid,nodev,noexec"   # holds the token, in memory
     --network "${SANDBOX_SESSION}-sandbox:ip=${SANDBOX_RELAY_IP:?}"
     --dns=none                      # resolves nothing itself
+    --env "RELAY_UPSTREAM=${SANDBOX_RELAY_UPSTREAM:?}"        # the one repository it forwards to: the address recorded at `run`
+    --env "RELAY_BRANCH=${SANDBOX_BRANCH:?}"                   # the one branch it lets a push through to
     --env "HTTPS_PROXY=http://${SANDBOX_PROXY_IP:?}:3128"      # its only way out
     "localhost/agent-sandbox/gitrelay:${SANDBOX_VERSION:?}"
   )

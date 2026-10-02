@@ -203,7 +203,7 @@ git init --quiet --bare "$out/repo.git"
 git --git-dir="$out/repo.git" fetch --quiet "$bundle" "refs/heads/$branch:refs/heads/$branch"
 tip="$(git --git-dir="$out/repo.git" rev-parse "refs/heads/$branch")"
 printf '%s\n' "SCAN=${FAKE_EXPORT_SCAN:-passed}" "ATTRIBUTION=clean" "TIP=$tip" "BRANCH=$branch" \
-  "ORIGIN_URL=$origin" > "$out/export.status"
+  "ORIGIN_URL=$origin" "HISTORY=${FAKE_EXPORT_HISTORY:-intact}" > "$out/export.status"
 printf 'code diff from %s \033]0;owned\007title\n' "${base:0:7}"
 exit "${FAKE_EXPORT_EXIT:-0}"
 STANDIN

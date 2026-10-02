@@ -68,10 +68,11 @@ check  "the running session's proxy was told to re-read" grep -q "^exec${tab}$s-
 "$ROOT/sandbox" deny docs.example.com >/dev/null 2>&1 || fail "deny failed"
 if grep -qx "docs.example.com" "$proxy/agent.domains"; then fail "deny left the host on the list"; else pass "deny takes the host off the session's list"; fi
 
-# A session started now has a plaintext rule, so port 80 is opened for it.
+# A session started now has a plaintext rule. Port 80 as a whole stays closed:
+# the rule opens only its own path prefix.
 : > "$log"
 "$ROOT/sandbox" run "$T/src" </dev/null >/dev/null 2>&1 || fail "second run failed"
-check "port 80 is opened only once a plaintext rule exists" grep -qE "^create${tab}--name${tab}asb-src-[0-9a-f]{6}-proxy${tab}.*SANDBOX_ALLOW_HTTP=1" "$log"
+check "a plaintext rule does not open port 80 as a whole" grep -qE "^create${tab}--name${tab}asb-src-[0-9a-f]{6}-proxy${tab}.*SANDBOX_ALLOW_HTTP=0" "$log"
 second="$(for d in "$SANDBOX_STATE_DIR"/asb-*; do [ "${d##*/}" = "$s" ] || printf '%s' "${d##*/}"; done)"
 SANDBOX_SESSION="$second" "$ROOT/sandbox" destroy >/dev/null 2>&1
 

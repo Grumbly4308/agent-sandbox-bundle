@@ -814,6 +814,7 @@ default_session_memory() {
   export SANDBOX_SESSION="$SESSION" SANDBOX_SESSION_DIR="$SANDBOX_STATE_DIR/$SESSION"
   export SANDBOX_AGENT=claude SANDBOX_AUTH=oauth SANDBOX_TOOLCHAIN=node
   export SANDBOX_BUDGET=1 SANDBOX_TTL_SECONDS=1
+  export SANDBOX_SUBNET="$SUBNET" SANDBOX_EGRESS_SUBNET=10.202.0.0/24
   session_addresses
   # shellcheck source=topology.sh
   . "$SANDBOX_ROOT/topology.sh"
@@ -907,10 +908,10 @@ service_address() {
   printf '%s.%s' "${SUBNET%.0/24}" "$(( 20 + $1 ))"
 }
 
-# Podman copies your proxy variables into every container it creates. The
-# agent's are set explicitly in topology.sh; for the others your host's proxy
-# address (and any password in it) has no business inside, so they are
-# removed for this one call.  [physical B15]
+# Podman copies your proxy variables into every container it creates unless
+# told not to. topology.sh tells it not to (--http-proxy=false); removing
+# them for this one call as well means the result does not depend on the
+# Podman version honouring that flag.  [physical B15]
 podman_create() {
   env -u http_proxy -u https_proxy -u ftp_proxy -u no_proxy \
       -u HTTP_PROXY -u HTTPS_PROXY -u FTP_PROXY -u NO_PROXY \
@@ -1067,6 +1068,10 @@ cmd_run() {
 
   export SANDBOX_SESSION="$SESSION" SANDBOX_SESSION_DIR="$SESSION_DIR"
   export SANDBOX_SUBNET="$SUBNET" SANDBOX_EGRESS_SUBNET="$EGRESS_SUBNET"
+  # The relay's one branch and one repository (topology.sh, topo_gitrelay).
+  # The repository address is only known after the import below; until then
+  # a placeholder lets the memory total be added up.
+  export SANDBOX_BRANCH="$BRANCH" SANDBOX_RELAY_UPSTREAM="not-known-yet"
   export SANDBOX_AGENT="$AGENT" SANDBOX_AUTH="$AUTH" SANDBOX_TOOLCHAIN="$TOOLCHAIN"
   export SANDBOX_CPUS="$cpus" SANDBOX_PIDS="$pids" SANDBOX_NPROC="$nproc"
   export SANDBOX_BUDGET="$budget" SANDBOX_TTL_SECONDS="$ttl_seconds"
@@ -1121,6 +1126,11 @@ cmd_run() {
       *) die "--git-relay needs an https:// repository address; this one is $ORIGIN_URL" ;;
     esac
     relay_host="$(url_host "$ORIGIN_URL")"
+    # The relay is given the address without any user name or token in it:
+    # its one credential is the token typed below, nothing borrowed from a
+    # remote URL on your host.
+    SANDBOX_RELAY_UPSTREAM="$(printf '%s' "$ORIGIN_URL" | sed -E 's|^https://[^/@]*@|https://|')"
+    export SANDBOX_RELAY_UPSTREAM
     case "$relay_host" in *gitlab*) relay_user=oauth2 ;; esac
     say "The git relay lets the agent push branch $BRANCH to $ORIGIN_URL by itself."
     say "What it pushes does NOT go through export: no diff review, no secret scan."
@@ -1146,10 +1156,8 @@ cmd_run() {
   . "$SANDBOX_ROOT/scripts/allowlist.sh"
   allowlist_render "$SESSION_DIR" "$AGENT" ${relay_host:+"$relay_host"} \
     || die "the allowlist could not be written; see the message above"
-  # Plaintext port 80 stays closed unless you have allowed a plaintext URL.
-  if grep -q 'url_regex' "$SESSION_DIR/proxy/extra.conf" 2>/dev/null; then
-    export SANDBOX_ALLOW_HTTP=1
-  fi
+  # Plaintext port 80 stays closed. A plaintext URL you allowed opens only
+  # its own path prefix; the proxy's rules for those come before the refusal.
 
   # --- Images: built here when missing, never pulled at start ---------------
   ensure_image "agent-$AGENT:$TOOLCHAIN"
@@ -1179,10 +1187,8 @@ cmd_run() {
   topo_sidecar;          podman_create "${TOPO[@]}"
   names="$SESSION-keeper $SESSION-proxy $SESSION-credsidecar"
   if [ "$GIT_RELAY" = 1 ]; then
-    # The relay is told its one repository and one branch here; topology.sh
-    # has no line for them yet.
     topo_gitrelay
-    podman_create --env "RELAY_UPSTREAM=$ORIGIN_URL" --env "RELAY_BRANCH=$BRANCH" "${TOPO[@]}"
+    podman_create "${TOPO[@]}"
     names="$names $SESSION-gitrelay"
   fi
   count=0
@@ -1380,7 +1386,7 @@ cmd_allow() {
       say "For HTTPS only the host name is enforced: the proxy cannot see paths inside an encrypted connection, so all of $host is now allowed."
       say "Path rules apply to plaintext http:// URLs only." ;;
     url:http://*)
-      say "A plaintext rule: the path is enforced. Port 80 is opened for sessions started from now on, not for ones already running." ;;
+      say "A plaintext rule: only this path prefix is opened, on port 80. It applies to running sessions at once." ;;
   esac
   if [ -n "$host" ] && allowlist_upload_capable "$host"; then
     warn "$host accepts uploads. The proxy checks only the host name, so with an account of the attacker's own the whole workspace can leave through it."
@@ -1482,6 +1488,11 @@ exported_repository() {
   attribution="$(kv_get "$status" ATTRIBUTION)"
   tip="$(kv_get "$status" TIP)"
   [ "$scan" = passed ] || die "the secret scan did not pass (SCAN=${scan:-missing}). Fix what export reported, then export again."
+  # History below the commit recorded at `run` was rewritten: the diff export
+  # printed was against nothing, and what would be pushed is not a
+  # continuation of your branch. That needs your eyes, not a push.
+  [ "$(kv_get "$status" HISTORY)" = intact ] \
+    || die "the agent rewrote history below the starting commit (HISTORY=$(kv_get "$status" HISTORY)). Read the export output; push it by hand from $EXPORT_REPO if that is really what you want."
   case "$attribution" in
     clean|stripped) ;;
     *) die "AI attribution could not be removed from the commits (ATTRIBUTION=${attribution:-missing}). Export again after fixing it." ;;

@@ -18,6 +18,8 @@ export SANDBOX_NPROC=512 SANDBOX_FSIZE_BYTES=4294967296
 export SANDBOX_TMP_SIZE=1g SANDBOX_HOME_SIZE=1g SANDBOX_TTL_SECONDS=14400
 export SANDBOX_AGENT=claude SANDBOX_TOOLCHAIN=node SANDBOX_VERSION=test
 export SANDBOX_AUTH=oauth SANDBOX_BUDGET=500
+export SANDBOX_BRANCH=agent/asb-test-0a1b2c
+export SANDBOX_RELAY_UPSTREAM=https://git.example/you/project.git
 export SANDBOX_SESSION_DIR=/nonexistent/asb-test-0a1b2c
 
 fails=0
@@ -66,7 +68,8 @@ for c in $containers; do
   # Hardening every container must carry (B02, B03, B06, B07, B10, B11, B28).
   for flag in --read-only --read-only-tmpfs=false --cap-drop=ALL \
     --security-opt=no-new-privileges --ipc=private --pid=private \
-    --cgroupns=private --restart=no --pull=never --log-driver=k8s-file; do
+    --cgroupns=private --restart=no --pull=never --http-proxy=false \
+    --log-driver=k8s-file; do
     has "$flag" || fail "$c: missing $flag"
   done
   has_pair --ulimit core=0:0 || fail "$c: core dumps not switched off"
