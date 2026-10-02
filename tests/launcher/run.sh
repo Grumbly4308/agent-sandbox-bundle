@@ -153,6 +153,7 @@ check "the source repository was not touched" test "$(git -C "$T/src" branch --l
 # --- attach ---------------------------------------------------------------------
 launch="sandbox-launch"
 line_has "the CLI is started in the agent container, with --auto" "$launch" "$s-agent${tab}sandbox-launch${tab}--auto"
+line_has "a service variable with an empty value keeps its = (a bare name would copy yours in)" "^create${tab}--name${tab}$s-svc-redis" "--env${tab}EMPTY=${tab}"
 line_has "arguments after -- reach the CLI unchanged" "$launch" "sandbox-launch${tab}--auto${tab}-p${tab}say hi"
 line_has "the CLI is told the credential mode"   "$launch" "--env${tab}SANDBOX_AUTH=apikey"
 line_has "the CLI gets your git name"            "$launch" "--env${tab}GIT_COMMITTER_NAME=Test Operator"
@@ -177,11 +178,11 @@ check "the deadline is the start plus --ttl" test "$((deadline - created))" -eq 
 # --- a second session, side by side -----------------------------------------------
 : > "$log"
 status=0
-"$ROOT/sandbox" run "$T/src" --ttl 2h </dev/null >/dev/null 2>&1 || status=$?
+"$ROOT/sandbox" run "$T/src" --ttl 2h --service redis:7 </dev/null >/dev/null 2>&1 || status=$?
 check "a second session starts" test "$status" -eq 0
 line_has "it gets the next free subnet"       "^network${tab}create.*-sandbox$" "--subnet${tab}10.201.1.0/24"
 line_has "its branch is named after it"       "sandbox-import" "sandbox-import${tab}agent/asb-src-"
-check "the barrier checks are not repeated for images that passed" test "$(grep -c -- "^--quick" "$T/config/verify.calls")" -eq 1
+check "the barrier checks are not repeated for the same images and the same shape of session" test "$(grep -c -- "^--quick" "$T/config/verify.calls")" -eq 1
 if grep -q "sandbox-launch${tab}--auto" "$log"; then fail "--auto was passed without being asked for"; else pass "without --auto the CLI keeps its prompts"; fi
 says "with two sessions a command asks which one" "more than one session" "$ROOT/sandbox" shell
 SANDBOX_SESSION="$s" "$ROOT/sandbox" destroy >/dev/null 2>&1
@@ -190,7 +191,7 @@ check "and leaves the other one" test -n "$(only_session)"
 
 # --- --strict, and a CLI that exits non-zero ---------------------------------------
 status=0
-FAKE_PODMAN_LAUNCH_EXIT=3 "$ROOT/sandbox" run "$T/src" --strict </dev/null >/dev/null 2>&1 || status=$?
+FAKE_PODMAN_LAUNCH_EXIT=3 "$ROOT/sandbox" run "$T/src" --strict --service redis:7 </dev/null >/dev/null 2>&1 || status=$?
 check "run returns the CLI's exit status" test "$status" -eq 3
 check "--strict repeats the barrier checks" test "$(grep -c -- "^--quick" "$T/config/verify.calls")" -eq 2
 check "the session stays when the CLI exits" test "$(find "$SANDBOX_STATE_DIR" -type f -name state | wc -l)" -eq 2

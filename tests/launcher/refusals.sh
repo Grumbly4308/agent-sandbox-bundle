@@ -104,7 +104,8 @@ refused "an invalid branch name" "is not a branch name" run --branch 'a..b'
 refused "two repositories" "takes one repository" run "$T/src"
 refused "no repository" "usage: ./sandbox run" "$ROOT/sandbox" run
 refused "a directory that is not a repository" "is not a git repository" "$ROOT/sandbox" run "$T/home"
-refused "a repository address with a password in it" "has a password in it" "$ROOT/sandbox" run "https://me:hunter2@git.example.test/x.git"
+refused "a repository address with a password in it" "user name or token in it" "$ROOT/sandbox" run "https://me:hunter2@git.example.test/x.git"
+refused "a repository address with a token as its user name" "user name or token in it" "$ROOT/sandbox" run "https://ghp_0123456789abcdefABCDEF@git.example.test/x.git"
 
 # --- workspace on disk  [physical B08] --------------------------------------------
 refused "the local driver without a store" "needs a disk store" run --workspace-driver local
@@ -159,5 +160,15 @@ if ls "$T"/agent-sandbox-import.* >/dev/null 2>&1 || ls "${TMPDIR:-/tmp}"/agent-
 else
   pass "no temporary clone is left behind"
 fi
+
+
+# --- a state directory that is not yours -----------------------------------------
+# In a shared /tmp another user can make the directory first, or put a link
+# there. Every command must notice before it reads or changes anything in it.
+mkdir "$T/elsewhere"
+ln -s "$T/elsewhere" "$T/state-link"
+out="$(SANDBOX_STATE_DIR="$T/state-link" "$ROOT/sandbox" allow docs.example.com --reason "test" 2>&1)" && fail "a linked state directory was accepted"
+case "$out" in *"not a directory of yours"*) pass "a state directory that is a link is refused, for every command" ;; *) fail "linked state directory: $out" ;; esac
+check "and the place it points to was not touched" test "$(stat -c %a "$T/elsewhere" 2>/dev/null || stat -f %Lp "$T/elsewhere")" != 700
 
 finish

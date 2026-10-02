@@ -311,6 +311,11 @@ check_confinement() {
 check_store() {
   local owner device parent_device make
   make="sudo fallocate -l 20G /var/lib/agent-sandbox-store.img && sudo mkfs.ext4 -q /var/lib/agent-sandbox-store.img && sudo mkdir -p '$STORE' && sudo mount -o loop,nosuid,nodev /var/lib/agent-sandbox-store.img '$STORE' && sudo chown $(id -u):$(id -g) '$STORE'"
+  if [ -L "$STORE" ]; then
+    # A link would be judged by the place it sits in, not the place it leads to.
+    bad "the disk store $STORE is a symbolic link" "set STORE to the real path of the store's mount point"
+    return 0
+  fi
   if [ ! -d "$STORE" ]; then
     bad "the disk store $STORE does not exist" "$make"
     return 0

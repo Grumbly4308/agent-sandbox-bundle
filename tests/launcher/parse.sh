@@ -109,4 +109,13 @@ check  "it explains each setting" grep -q '^# Size of /tmp' "$T/config/settings"
 printf 'MEM=8g\n' >> "$T/config/settings"
 equals "your value wins over the default" 8g setting MEM
 
+
+# --- KEY=value files ---------------------------------------------------------
+# A value may end in `=` (a branch name, an address); it must come back whole.
+printf '%s\n' 'BRANCH=fix=' 'ORIGIN_URL=https://git.example.test/x.git?a=' 'EMPTY=' > "$T/kv"
+equals "a value ending in = is read back whole"       "fix="                                  kv_get "$T/kv" BRANCH
+equals "a value with = inside and at the end is kept" "https://git.example.test/x.git?a="     kv_get "$T/kv" ORIGIN_URL
+equals "an empty value is empty"                      ""                                      kv_get "$T/kv" EMPTY
+equals "a missing key is empty"                       ""                                      kv_get "$T/kv" NOPE
+
 finish

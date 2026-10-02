@@ -74,7 +74,7 @@ kill -STOP "$watchdog"      # hold it still: the looks below are the test's own
 # --- the watch  [logical B33] ----------------------------------------------------------
 : > "$log"
 FAKE_PODMAN_DU=1000000 "$ROOT/sandbox" __watchdog "$s" --once || fail "a look within the share failed"
-check  "the share is measured from inside Podman's user namespace" grep -qx "unshare${tab}du${tab}-sb${tab}$T/store/$s" "$log"
+check  "the share is measured from inside Podman's user namespace" grep -qx "unshare${tab}du${tab}-s${tab}--block-size=1${tab}$T/store/$s" "$log"
 if grep -q "^stop${tab}" "$log"; then fail "a session within its share was stopped"; else pass "a session within its share keeps running"; fi
 
 : > "$log"

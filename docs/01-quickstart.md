@@ -103,8 +103,9 @@ What happens, in order:
    sees a git credential.
 3. The containers start: the agent, the proxy, the credential sidecar and a
    small keeper that holds the workspace.
-4. The barrier checks run (the first time for each image; every time with
-   `--strict`). Any failure stops the run.
+4. The barrier checks run: the first time for a given set of images, Podman
+   version, kernel and shape of session, and every time with `--strict`. Any
+   failure stops the run.
 5. You are attached to the agent.
 
 Useful options:

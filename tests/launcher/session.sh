@@ -98,14 +98,14 @@ says "push before any export is refused" "nothing has been exported" "$ROOT/sand
 
 : > "$log"
 refuse "export fails when the helper writes nothing" "$ROOT/sandbox" export --out "$T/exported"
-check  "a failed export leaves no bundle" test -z "$(find "$dir/export" -name '*.bundle')"
+check  "a failed export leaves no bundle" test -z "$(find "$T" -name ".$s.bundle")"
 
 # An endless stream: the launcher must stop reading at the workspace cap.
 : > "$log"
 out="$(FAKE_PODMAN_BUNDLE_BYTES=$((64 * 1024 * 1024)) "$ROOT/sandbox" export --out "$T/exported" 2>&1)" && fail "an oversized stream was exported"
 case "$out" in *"larger than the workspace"*) pass "a stream past the workspace cap is refused" ;; *) fail "oversize: $out" ;; esac
 check  "reading stopped at the cap, before the stream ended" test ! -e "$FAKE_PODMAN_STATE/bundle-read-to-the-end"
-check  "nothing of the oversized stream is kept" test -z "$(find "$dir/export" -name '*.bundle')"
+check  "nothing of the oversized stream is kept" test -z "$(find "$T" -name ".$s.bundle")"
 check  "export.sh is not run on a refused stream" test ! -e "$T/config/export.calls"
 
 : > "$log"
@@ -115,9 +115,10 @@ check  "export succeeds" test "$status" -eq 0
 called "the bundle is written by a fresh container with no network" "^run${tab}--name${tab}$s-export${tab}.*--network${tab}none.*sandbox-bundle${tab}agent/test$"
 called "the helper is removed when it exits" "^run${tab}.*--rm${tab}"
 called "the helper sees the workspace read-only" "^run${tab}.*source=$s-workspace,destination=/workspace,ro"
-check  "the bundle is kept in the session directory" cmp -s "$T/agent.bundle" "$dir/export/1.bundle"
+check  "the bundle is removed once export.sh has read it" test ! -e "$T/exported/.$s.bundle"
+check  "no bundle is held in the memory-backed session directory" test -z "$(find "$dir" -name '*.bundle')"
 check  "export.sh gets bundle, out dir, session, starting commit, branch and origin" \
-  grep -qx "$dir/export/1.bundle $T/exported $s $base agent/test https://github.com/example/project.git" "$T/config/export.calls"
+  grep -qx "$T/exported/.$s.bundle $T/exported $s $base agent/test https://github.com/example/project.git" "$T/config/export.calls"
 check  "the exported repository holds the agent's commit" test "$(git --git-dir="$T/exported/$s/repo.git" rev-parse refs/heads/agent/test)" = "$tip"
 clean  "export output is filtered  [B32]" "$out"
 case "$out" in *"Read the dependency diff first"*) pass "export says what to read first" ;; *) fail "no reading hint: $out" ;; esac
@@ -125,7 +126,7 @@ case "$out" in *"Read the dependency diff first"*) pass "export says what to rea
 status=0
 FAKE_PODMAN_BUNDLE="$T/agent.bundle" FAKE_EXPORT_EXIT=2 FAKE_EXPORT_SCAN=failed "$ROOT/sandbox" export --out "$T/exported" >/dev/null 2>&1 || status=$?
 check  "export returns 2 when export.sh needs a human" test "$status" -eq 2
-check  "only the latest bundle is kept" test "$(find "$dir/export" -name '*.bundle' | wc -l)" -eq 1
+check  "no bundle is kept after an export that needs a human" test -z "$(find "$T" -name ".$s.bundle")"
 
 # --- push and pr  [closes C1] ---------------------------------------------------------
 says   "push refuses when the secret scan did not pass" "secret scan did not pass" "$ROOT/sandbox" push

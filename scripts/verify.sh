@@ -125,10 +125,11 @@ rand_hex() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
 # kv <file> <KEY> — the value of the last KEY=value line. State and settings
 # files are data: read with `read`, never sourced.
 kv() {
-  local key value found=""
+  local line found=""
   [ -f "$1" ] || return 0
-  while IFS='=' read -r key value || [ -n "$key" ]; do
-    if [ "$key" = "$2" ]; then found="$value"; fi
+  # Split by hand at the first `=`, so a value ending in `=` is kept whole.
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in "$2"=*) found="${line#*=}" ;; esac
   done < "$1"
   printf '%s' "$found"
 }

@@ -107,8 +107,9 @@ setup() {
 # they call.
 make_root() {
   mkdir -p "$ROOT/scripts" "$ROOT/agents/claude" "$ROOT/agents/codex" "$ROOT/seccomp" \
-           "$ROOT/images" "$ROOT/services/redis" "$ROOT/services/unpinned"
+           "$ROOT/images" "$ROOT/services/redis" "$ROOT/services/unpinned" "$ROOT/policy"
   cp "$REPO/sandbox" "$REPO/topology.sh" "$REPO/VERSION" "$ROOT/"
+  cp "$REPO/policy/containers.conf" "$ROOT/policy/"
   cp "$REPO/scripts/doctor.sh" "$ROOT/scripts/"
   printf '{}\n' > "$ROOT/seccomp/agent-seccomp.json"
   printf '%s\n' '# stand-in' \
@@ -118,7 +119,7 @@ make_root() {
   printf '%s\n' 'CODEX_HOME=/home/agent/.codex' > "$ROOT/agents/codex/env"
   printf '%s\n' '# stand-in' 'IMAGE=docker.io/library/redis:7-alpine@sha256:3333' 'VERSIONS=7' \
     'USER=999:1000' 'COMMAND_ARG=redis-server' 'COMMAND_ARG=--save' 'COMMAND_ARG=' \
-    'ENV=EXAMPLE=1' 'TMPFS=/data:size=8m,mode=1777,nosuid,nodev,noexec' \
+    'ENV=EXAMPLE=1' 'ENV=EMPTY=' 'TMPFS=/data:size=8m,mode=1777,nosuid,nodev,noexec' \
     'MEMORY=32m' 'PIDS=32' 'PORT=6379' 'URL_VAR=REDIS_URL' \
     'URL_TEMPLATE=redis://{host}:6379/0' 'HEALTH=redis-cli -h 127.0.0.1 ping' \
     > "$ROOT/services/redis/service.conf"

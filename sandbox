@@ -109,10 +109,12 @@ filter_control() {
 # this way (settings, session state, service descriptions, export results)
 # are data: they are parsed with `read`, never sourced or evaluated.
 kv_get() {
-  local file="$1" want="$2" key value found=""
+  local file="$1" want="$2" line found=""
   [ -f "$file" ] || return 0
-  while IFS='=' read -r key value || [ -n "$key" ]; do
-    if [ "$key" = "$want" ]; then found="$value"; fi
+  # The line is split by hand at the first `=`: letting `read` split it would
+  # drop an `=` at the end of the value (a branch or an address may end so).
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in "$want"=*) found="${line#*=}" ;; esac
   done < "$file"
   printf '%s' "$found"
 }
@@ -267,12 +269,14 @@ set_selinux_opt() {
 }
 
 ensure_state_dir() {
-  mkdir -p "$SANDBOX_STATE_DIR"
-  chmod 700 "$SANDBOX_STATE_DIR"
-  # In a shared /tmp somebody else could have made this directory first.
-  if [ -L "$SANDBOX_STATE_DIR" ] || [ ! -O "$SANDBOX_STATE_DIR" ]; then
+  # In a shared /tmp somebody else could have made this directory first, or
+  # put a link in its place, and filled it with files of their choosing. Look
+  # before touching anything in it; every command comes through here.
+  [ -e "$SANDBOX_STATE_DIR" ] || [ -L "$SANDBOX_STATE_DIR" ] || ( umask 077; mkdir -p "$SANDBOX_STATE_DIR" )
+  if [ -L "$SANDBOX_STATE_DIR" ] || [ ! -d "$SANDBOX_STATE_DIR" ] || [ ! -O "$SANDBOX_STATE_DIR" ]; then
     die "$SANDBOX_STATE_DIR is not a directory of yours; set SANDBOX_STATE_DIR to one that is"
   fi
+  chmod 700 "$SANDBOX_STATE_DIR"
 }
 
 # ---------------------------------------------------------------------------
@@ -296,6 +300,7 @@ write_state() {
       DEADLINE_EPOCH "$DEADLINE_EPOCH" SUBNET "$SUBNET" EGRESS_SUBNET "$EGRESS_SUBNET" \
       WORKSPACE_DRIVER "$WORKSPACE_DRIVER" SERVICES "$SERVICES" GIT_RELAY "$GIT_RELAY" \
       CREATED_EPOCH "$CREATED_EPOCH" WORKSPACE_BYTES "$WORKSPACE_BYTES" STORE "$STORE" \
+      VERSION "$SANDBOX_VERSION" \
       > "$file.tmp" )
   mv -f "$file.tmp" "$file"
 }
@@ -322,6 +327,12 @@ read_state() {
   CREATED_EPOCH="$(kv_get "$file" CREATED_EPOCH)"
   WORKSPACE_BYTES="$(kv_get "$file" WORKSPACE_BYTES)"
   STORE="$(kv_get "$file" STORE)"
+  # The session's images carry the version it was started with. After you
+  # update this checkout, `export` must still name those images.
+  if [ -n "$(kv_get "$file" VERSION)" ]; then
+    SANDBOX_VERSION="$(kv_get "$file" VERSION)"
+    export SANDBOX_VERSION
+  fi
   export SANDBOX_SESSION="$SESSION" SANDBOX_SESSION_DIR="$SESSION_DIR"
   export SANDBOX_AGENT="$AGENT" SANDBOX_TOOLCHAIN="$TOOLCHAIN"
 }
@@ -485,15 +496,21 @@ codex_lock() {
   until mkdir "$lock" 2>/dev/null; do
     owner=""
     if [ -f "$lock/pid" ]; then IFS= read -r owner < "$lock/pid" || true; fi
-    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
-      rm -rf "$lock"     # its owner is gone
+    # The owner is gone, or the lock has sat for a minute with no owner
+    # written in it (its maker died in between). Renaming is atomic, so of
+    # several waiters only one takes the stale lock away.
+    if { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } \
+       || { [ -z "$owner" ] && [ "$tries" -ge 60 ]; }; then
+      if mv "$lock" "$lock.stale.$$" 2>/dev/null; then rm -rf "$lock.stale.$$"; fi
       continue
     fi
     tries=$((tries + 1))
     [ "$tries" -lt 90 ] || return 1
     sleep 1
   done
-  printf '%s\n' "$$" > "$lock/pid"
+  # The process that holds the lock is the one running this function, which
+  # may be a subshell: ask a child for its parent's id.
+  sh -c 'echo "$PPID"' > "$lock/pid"
 }
 codex_unlock() { rm -rf "$SANDBOX_STATE_DIR/codex-refresh.lock"; }
 
@@ -553,7 +570,9 @@ watchdog_tick() {
     # inside Podman's user namespace. Past its share the session is stopped;
     # the work stays for `export`. This lags by one interval: the hard wall
     # is the size of the store itself.
-    used="$(podman unshare du -sb "$STORE/$SESSION" 2>/dev/null | cut -f1)"
+    # Blocks really taken, not the sum of file lengths: a million one-byte
+    # files take gigabytes of the store while adding up to a megabyte.
+    used="$(podman unshare du -s --block-size=1 "$STORE/$SESSION" 2>/dev/null | cut -f1)"
     case "$used" in ''|*[!0-9]*) used=0 ;; esac
     if [ "$used" -gt "$WORKSPACE_BYTES" ]; then
       stop_session_containers "$SESSION"
@@ -715,7 +734,7 @@ SVC_TMPFS=() SVC_ENV=() SVC_COMMAND=()
 # load_service <name>[:<version>] — reads the description into the SVC_
 # variables topology.sh uses.
 load_service() {
-  local name="${1%%:*}" version="" file key value known found=0
+  local name="${1%%:*}" version="" file line key value known found=0
   case "$1" in *:*) version="${1#*:}" ;; esac
   [[ "$name" =~ ^[a-z][a-z0-9-]*$ ]] || die "--service: '$1' is not name:version"
   file="$SANDBOX_ROOT/services/$name/service.conf"
@@ -723,7 +742,11 @@ load_service() {
   SVC_IMAGE="" SVC_USER="" SVC_MEMORY="" SVC_PIDS="" SVC_URL_VAR=""
   SVC_URL_TEMPLATE="" SVC_HEALTH="" SVC_VERSIONS=""
   SVC_TMPFS=() SVC_ENV=() SVC_COMMAND=()
-  while IFS='=' read -r key value || [ -n "$key" ]; do
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Split by hand at the first `=`, so `ENV=NAME=` keeps its empty value.
+    # (Podman reads a bare `--env NAME` as "copy NAME from the host".)
+    case "$line" in *=*) ;; *) continue ;; esac
+    key="${line%%=*}" value="${line#*=}"
     case "$key" in
       IMAGE)        SVC_IMAGE="$value" ;;
       USER)         SVC_USER="$value" ;;
@@ -816,12 +839,16 @@ helpers_memory() {
 # may take from the host. For `doctor`, which calls it as $(...): the session
 # it describes is imaginary and its values must not outlive the call.
 default_session_memory() {
-  local agent
+  local agent mem tmp home helpers
   SESSION=asb-doctor-000000 SUBNET=10.201.0.0/24 GIT_RELAY=0 SERVICES=""
   WORKSPACE_DRIVER="$(setting WORKSPACE_DRIVER)"
-  WORKSPACE_BYTES="$(parse_size WORKSPACE_SIZE "$(setting WORKSPACE_SIZE)")"
-  agent="$(agent_memory_limit "$(parse_size MEM "$(setting MEM)")" \
-    "$(parse_size TMP_SIZE "$(setting TMP_SIZE)")" "$(parse_size HOME_SIZE "$(setting HOME_SIZE)")")"
+  # One assignment per value: a size that does not parse must stop this, not
+  # leave an empty number for the sum.
+  WORKSPACE_BYTES="$(parse_size WORKSPACE_SIZE "$(setting WORKSPACE_SIZE)")" || return 1
+  mem="$(parse_size MEM "$(setting MEM)")" || return 1
+  tmp="$(parse_size TMP_SIZE "$(setting TMP_SIZE)")" || return 1
+  home="$(parse_size HOME_SIZE "$(setting HOME_SIZE)")" || return 1
+  agent="$(agent_memory_limit "$mem" "$tmp" "$home")" || return 1
   export SANDBOX_SESSION="$SESSION" SANDBOX_SESSION_DIR="$SANDBOX_STATE_DIR/$SESSION"
   export SANDBOX_AGENT=claude SANDBOX_AUTH=oauth SANDBOX_TOOLCHAIN=node
   export SANDBOX_BUDGET=1 SANDBOX_TTL_SECONDS=1
@@ -829,7 +856,8 @@ default_session_memory() {
   session_addresses
   # shellcheck source=topology.sh
   . "$SANDBOX_ROOT/topology.sh"
-  printf '%s' "$(( agent + $(helpers_memory) ))"
+  helpers="$(helpers_memory)" || return 1
+  printf '%s' "$(( agent + helpers ))"
 }
 
 # Which credential modes an agent takes is the plug-in's to say: they are the
@@ -872,7 +900,7 @@ new_session_name() {
 # never sees a git credential. Sets BASE_COMMIT and ORIGIN_URL.
 RUN_IMPORT_DIR=""
 import_repository() {
-  local source="$1" clone
+  local source="$1" clone authority
   RUN_IMPORT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-sandbox-import.XXXXXX")"
   clone="$RUN_IMPORT_DIR/repo.git"
   if [ -d "$source" ]; then
@@ -888,6 +916,14 @@ import_repository() {
   fi
   case "$ORIGIN_URL" in
     *[[:cntrl:]]*) die "the repository address has control characters in it" ;;
+    # user@ or user:password@ in an http(s) address is a credential (a token
+    # is often given as the user name). It would be written to the state
+    # file, printed, and handed to export. ssh://git@host is not affected.
+    http://*|https://*)
+      authority="${ORIGIN_URL#*://}"; authority="${authority%%/*}"
+      case "$authority" in
+        *@*) die "the repository address has a user name or token in it. Keep credentials in your git credential helper, not in the URL." ;;
+      esac ;;
     *://*:*@*) die "the repository address has a password in it. Keep the token in your git credential helper, not in the URL." ;;
   esac
   info "cloning $source on this host"
@@ -1189,6 +1225,12 @@ cmd_run() {
     podman image exists "$SVC_IMAGE" || podman pull "$SVC_IMAGE"
   done
 
+  # The time limit counts from now, not from before the images were built:
+  # Podman's own deadline starts when each container does.
+  CREATED_EPOCH="$(date +%s)"
+  DEADLINE_EPOCH=$(( CREATED_EPOCH + ttl_seconds ))
+  write_state
+
   # --- Create: networks, workspace, then the containers ---------------------
   # Every argument comes from topology.sh and is passed on unchanged.
   info "creating session $SESSION"
@@ -1259,7 +1301,13 @@ cmd_run() {
   # --- The barrier checks, before the agent has run anything ----------------
   # Once per set of images, or every time with --strict. A failed check means
   # a barrier is not there, so the session is not started.
+  # "Passed before" means: these images, this Podman, this kernel, these
+  # flags and this shape of session. Change any of them and the checks run
+  # again.
   image_ids="$(podman image inspect --format '{{.Id}}' "$(image_tag "agent-$AGENT:$TOOLCHAIN")" "$(image_tag proxy)" "$(image_tag credsidecar)" | tr '\n' ' ')"
+  image_ids="$image_ids|podman=$(podman version --format '{{.Client.Version}}' 2>/dev/null || true)|kernel=$(uname -r)"
+  image_ids="$image_ids|files=$(cat "$SANDBOX_ROOT/topology.sh" "$SANDBOX_ROOT/seccomp/agent-seccomp.json" "$SANDBOX_ROOT/policy/containers.conf" | cksum | tr ' ' ':')"
+  image_ids="$image_ids|relay=$GIT_RELAY|driver=$WORKSPACE_DRIVER|services=$SERVICES|runtime=${SANDBOX_RUNTIME_CLASS:-}|selinux=${SANDBOX_SELINUX_OPT:-}"
   if [ "$strict" -eq 1 ] || ! grep -qxF "$image_ids" "$SANDBOX_CONFIG_DIR/verified" 2>/dev/null; then
     info "checking the barriers (verify --quick)"
     # verify searches the agent's container for the real credential, on this
@@ -1438,7 +1486,7 @@ cmd_deny() {
 # ---------------------------------------------------------------------------
 
 cmd_export() {
-  local out="" number=1 bundle size status=0 file
+  local out="" bundle size status=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --out) [ $# -ge 2 ] || die "--out needs a directory"; out="$2"; shift ;;
@@ -1453,14 +1501,11 @@ cmd_export() {
   mkdir -p "$out"
   out="$(cd "$out" && pwd)"
 
-  # One bundle is kept: the session directory is held in memory.
-  for file in "$SESSION_DIR"/export/*.bundle; do
-    [ -f "$file" ] || continue
-    file="${file##*/}"
-    if [ "${file%.bundle}" -ge "$number" ]; then number=$(( ${file%.bundle} + 1 )); fi
-    rm -f "$SESSION_DIR/export/$file"
-  done
-  bundle="$SESSION_DIR/export/$number.bundle"
+  # The bundle goes next to where it will be unpacked, on disk. The session
+  # directory is held in memory, and a bundle can be as large as the
+  # workspace. It is removed as soon as export.sh has read it.
+  bundle="$out/.$SESSION.bundle"
+  rm -f "$bundle"
 
   # shellcheck source=topology.sh
   . "$SANDBOX_ROOT/topology.sh"
@@ -1486,6 +1531,7 @@ cmd_export() {
   status=0
   SANDBOX_EXPORT_MAX_BYTES="$WORKSPACE_BYTES" "$SANDBOX_ROOT/scripts/export.sh" "$bundle" "$out" "$SESSION" "$BASE_COMMIT" "$BRANCH" ${ORIGIN_URL:+"$ORIGIN_URL"} 2>&1 \
     | filter_control || status="${PIPESTATUS[0]}"
+  rm -f "$bundle"
   say ""
   case "$status" in
     0) say "Exported to $out/$SESSION/repo.git. Read the dependency diff first, then the code diff."
@@ -1651,7 +1697,7 @@ cmd_login() {
 # session's directory, and its directory on the disk store if it has one.
 # Container logs belong to their containers and go with them.
 destroy_session() {
-  local session="$1" dir="$SANDBOX_STATE_DIR/$1" filter="label=$LABEL=$1" id ids driver store left=0
+  local session="$1" dir="$SANDBOX_STATE_DIR/$1" filter="label=$LABEL=$1" id ids driver store store_dir left=0
   stop_watchdog "$session"
   # A listing that fails must not pass for "nothing there".
   ids="$(podman ps -aq --filter "$filter")" || left=1
@@ -1662,6 +1708,15 @@ destroy_session() {
   for id in $ids; do
     podman network rm -f "$id" >/dev/null || left=1
   done
+  # A disk-backed workspace is a directory on the store. Where it is comes
+  # from the volume itself, so it is still found when the session directory
+  # is gone (a reboot empties it). Only a path that ends in this session's
+  # name is ever removed.
+  store_dir="$(podman volume inspect --format '{{index .Options "device"}}' "$session-workspace" 2>/dev/null || true)"
+  case "$store_dir" in
+    /*/"$session") ;;
+    *) store_dir="" ;;
+  esac
   ids="$(podman volume ls -q --filter "$filter")" || left=1
   for id in $ids; do
     podman volume rm -f "$id" >/dev/null || left=1
@@ -1672,10 +1727,13 @@ destroy_session() {
   fi
   driver="$(kv_get "$dir/state" WORKSPACE_DRIVER)"
   store="$(kv_get "$dir/state" STORE)"
-  if [ "$driver" = local ] && [ -n "$store" ] && [ -d "$store/$session" ]; then
+  if [ -z "$store_dir" ] && [ "$driver" = local ] && [ -n "$store" ]; then
+    store_dir="$store/$session"
+  fi
+  if [ -n "$store_dir" ] && [ -d "$store_dir" ]; then
     # The files belong to the container's user: removed from inside Podman's
     # user namespace, where that user exists.
-    podman unshare rm -rf "$store/$session"
+    podman unshare rm -rf "$store_dir"
   fi
   rm -rf "$dir"
   info "removed session $session"
@@ -1770,8 +1828,10 @@ EOF
 
 cmd_doctor() {
   [ $# -eq 0 ] || die "usage: ./sandbox doctor"
-  local store args=()
-  args=(--memory "$(default_session_memory)")
+  local store memory args=()
+  memory="$(default_session_memory)" \
+    || die "your settings file has a value that cannot be read (see above): $SANDBOX_CONFIG_DIR/settings"
+  args=(--memory "$memory")
   store="$(setting STORE)"
   if [ -n "$store" ]; then args+=(--store "$store"); fi
   "$SANDBOX_ROOT/scripts/doctor.sh" "${args[@]}"
@@ -1788,6 +1848,7 @@ main() {
   case "$command" in
     __watchdog) cmd_watchdog "$@"; return ;;
   esac
+  ensure_state_dir
   sweep_sessions
   case "$command" in
     run)     cmd_run "$@" ;;

@@ -131,14 +131,18 @@ fails.
   upstream as a bug; may change), and static `ip=` addresses work on it.
 - `--dns=none` leaves the image's empty `/etc/resolv.conf` in place.
 - `policy/containers.conf` (`host_containers_internal_ip = "none"`) keeps the
-  host's address out of `/etc/hosts`. If not, `B13-etc-hosts` fails.
+  host's address out of `/etc/hosts`. If not, `B13-etc-hosts` fails. The
+  variable that points Podman at that file may need Podman 4.5, while `doctor`
+  accepts 4.4: raise doctor's minimum if 4.4 ignores it.
 - `--timeout` kills each container at the deadline with the launcher gone.
 - `--http-proxy=false` and the proxy with both networks' name service off still
   resolves outside names through the host's resolvers.
 - `--cpus` and `--device-write-bps` under rootless (controller delegation).
 - Every `podman inspect --format` field name the launcher and `verify` read.
 - `podman unshare chown` / `du` / `rm` on the disk store.
-- macOS: everything, through `podman machine`.
+- macOS: everything, through `podman machine`. In particular, storing a
+  Codex login (about 8 KB once encoded) through the `security` tool may be cut
+  short by its line limit.
 
 ### Images
 
