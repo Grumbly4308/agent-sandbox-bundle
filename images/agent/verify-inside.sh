@@ -58,8 +58,8 @@ declare -A P=(
   [uid]=61000                                   # the agent's fixed user id [B01]
   [writable]="/tmp /home /dev/shm /workspace"   # the only places that may accept files [B08]
   [ws_driver]=memory
-  [proxy]=proxy
-  [sidecar]=sidecar
+  [proxy]=proxy [proxy_port]=3128               # where the egress proxy listens
+  [sidecar]=sidecar [sidecar_port]=8080         # where the credential sidecar listens
   [allow_http]=0
   [git_relay]=0
 )
@@ -984,8 +984,11 @@ c_B11_fsize() {
 
 # --- B12: no route out -----------------------------------------------------------------
 c_B12_no_route() {
-  local routes ifaces out4 out6 udp bad=""
-  routes="$(awk 'NR > 1 && $2 == "00000000" && $8 == "00000000" { print $1 }' /proc/net/route 2>/dev/null | tr '\n' ' ')" || routes=""
+  local routes="" ifaces out4 out6 udp bad="" iface dest mask _gw _flags _ref _use _metric _rest
+  # The kernel's IPv4 routing table: a default route is destination 0, mask 0.
+  while read -r iface dest _gw _flags _ref _use _metric mask _rest; do
+    if [ "$dest" = 00000000 ] && [ "$mask" = 00000000 ]; then routes="$routes$iface "; fi
+  done < /proc/net/route
   [ -z "$routes" ] || bad="$bad a default route exists (via $routes);"
   ifaces="$(net_ifaces)"
   [ "$(printf '%s' "$ifaces" | wc -w)" -le 1 ] || bad="$bad more than one network interface ($ifaces);"
@@ -1179,21 +1182,21 @@ proxy_expect() {
     "http $want") pass "$name" "$tried: the proxy answered $want $([ "$want" = 403 ] && printf '(refused)' || printf '(allowed)')" ;;
     http\ *) fail "$name" "$tried: the proxy answered ${got#http }, expected $want" "$fix" ;;
     unavailable*) skip "$name" no-probe "$tried: not attempted, ${got#unavailable }" "node must be in the agent image" ;;
-    *) fail "$name" "$tried: no answer from the proxy at $(param proxy):3128 ($got), so nothing was proven" "the proxy container must be running and reachable from the agent: ./sandbox logs proxy" ;;
+    *) fail "$name" "$tried: no answer from the proxy at $(param proxy):$(param proxy_port) ($got), so nothing was proven" "the proxy container must be running and reachable from the agent: ./sandbox logs proxy" ;;
   esac
 }
 c_B20_denied_host() {
   local host
   host="$(param denied_host)"; [ -n "$host" ] || host=example.com
   proxy_expect B20-denied-host "asked the proxy for a tunnel to $host:443, a host on no list" \
-    "$(netprobe connect "$(param proxy)" 3128 "$host:443" 8000)" 403 "$PROXY_FIX"
+    "$(netprobe connect "$(param proxy)" "$(param proxy_port)" "$host:443" 8000)" 403 "$PROXY_FIX"
 }
 c_B20_allowed_host() {
   local host
   host="$(param allowed_host)"
   if [ -z "$host" ]; then skip B20-allowed-host unknown "verify.sh did not name a host from the allowlist" "the session's agent.domains list is empty: nothing can be reached at all"; return; fi
   proxy_expect B20-allowed-host "asked the proxy for a tunnel to $host:443, a host on the agent's list (the control: refusals mean nothing if nothing is ever allowed)" \
-    "$(netprobe connect "$(param proxy)" 3128 "$host:443" 20000)" 200 "the proxy must be able to resolve and reach $host: check the host's own network, then $PROXY_FIX"
+    "$(netprobe connect "$(param proxy)" "$(param proxy_port)" "$host:443" 20000)" 200 "the proxy must be able to resolve and reach $host: check the host's own network, then $PROXY_FIX"
 }
 c_B20_port_80() {
   local host
@@ -1203,47 +1206,47 @@ c_B20_port_80() {
   fi
   if [ -z "$host" ]; then skip B20-port-80 unknown "verify.sh did not name a host from the allowlist" "the session's agent.domains list is empty"; return; fi
   proxy_expect B20-port-80 "asked the proxy for http://$host/ in plaintext on port 80 (an ALLOWED host, so only the port rule can refuse it)" \
-    "$(netprobe get "$(param proxy)" 3128 "http://$host/" 8000)" 403 "$PROXY_FIX"
+    "$(netprobe get "$(param proxy)" "$(param proxy_port)" "http://$host/" 8000)" 403 "$PROXY_FIX"
 }
 c_B20_connect_port() {
   local host
   host="$(param allowed_host)"
   if [ -z "$host" ]; then skip B20-connect-port unknown "verify.sh did not name a host from the allowlist" "the session's agent.domains list is empty"; return; fi
   proxy_expect B20-connect-port "asked the proxy for a tunnel to $host:8443 (an ALLOWED host, so only the port rule can refuse it)" \
-    "$(netprobe connect "$(param proxy)" 3128 "$host:8443" 8000)" 403 "$PROXY_FIX"
+    "$(netprobe connect "$(param proxy)" "$(param proxy_port)" "$host:8443" 8000)" 403 "$PROXY_FIX"
 }
 c_B20_ip_literal_v4() {
   proxy_expect B20-ip-literal-v4 "asked the proxy for a tunnel to the bare address 1.1.1.1:443" \
-    "$(netprobe connect "$(param proxy)" 3128 1.1.1.1:443 8000)" 403 "$PROXY_FIX"
+    "$(netprobe connect "$(param proxy)" "$(param proxy_port)" 1.1.1.1:443 8000)" 403 "$PROXY_FIX"
 }
 c_B20_ip_literal_v6() {
   proxy_expect B20-ip-literal-v6 "asked the proxy for a tunnel to the bare address [2606:4700:4700::1111]:443" \
-    "$(netprobe connect "$(param proxy)" 3128 '[2606:4700:4700::1111]:443' 8000)" 403 "$PROXY_FIX"
+    "$(netprobe connect "$(param proxy)" "$(param proxy_port)" '[2606:4700:4700::1111]:443' 8000)" 403 "$PROXY_FIX"
 }
 c_B21_vendor_plain() {
   local host
   host="$(param vendor_host)"
   if [ -z "$host" ]; then skip B21-vendor-plain unknown "verify.sh did not name the model vendor's host" "the session's sidecar.domains list is empty"; return; fi
   proxy_expect B21-vendor-plain "asked the proxy, from the agent, for a tunnel to the model vendor's host $host:443 (B21-sidecar-allowed shows the same request is allowed from the sidecar)" \
-    "$(netprobe connect "$(param proxy)" 3128 "$host:443" 8000)" 403 "$PROXY_FIX"
+    "$(netprobe connect "$(param proxy)" "$(param proxy_port)" "$host:443" 8000)" 403 "$PROXY_FIX"
 }
 c_B21_vendor_forged() {
   local host sidecar
   host="$(param vendor_host)"; sidecar="$(param sidecar)"
   if [ -z "$host" ]; then skip B21-vendor-forged unknown "verify.sh did not name the model vendor's host" "the session's sidecar.domains list is empty"; return; fi
   proxy_expect B21-vendor-forged "asked again for $host:443, this time claiming to be the sidecar with X-Forwarded-For: $sidecar and Forwarded: for=$sidecar" \
-    "$(netprobe connect "$(param proxy)" 3128 "$host:443" 8000 "X-Forwarded-For: $sidecar" "Forwarded: for=$sidecar")" 403 "$PROXY_FIX"
+    "$(netprobe connect "$(param proxy)" "$(param proxy_port)" "$host:443" 8000 "X-Forwarded-For: $sidecar" "Forwarded: for=$sidecar")" 403 "$PROXY_FIX"
 }
 
 # --- B23: the sidecar forwards only what the CLI needs ---------------------------------------------
 c_B23_unknown_path() {
   local out
-  out="$(netprobe post "$(param sidecar)" 8080 GET /verify-not-forwarded none path verify-dummy none 8000)"
+  out="$(netprobe post "$(param sidecar)" "$(param sidecar_port)" GET /verify-not-forwarded none path verify-dummy none 8000)"
   case "$out" in
     "http 404"*) pass B23-unknown-path "asked this session's sidecar for /verify-not-forwarded, a path no CLI uses: 404, not forwarded" ;;
     http\ *) fail B23-unknown-path "asked the sidecar for /verify-not-forwarded and it answered ${out#http }, expected 404" "the sidecar must forward only the routes in agents/<agent>/sidecar.json (images/credsidecar/sidecar.mjs)" ;;
     unavailable*) skip B23-unknown-path no-probe "not attempted: ${out#unavailable }" "node must be in the agent image" ;;
-    *) fail B23-unknown-path "no answer from the sidecar at $(param sidecar):8080 ($out), so nothing was proven" "the sidecar container must be running and reachable from the agent: ./sandbox logs sidecar" ;;
+    *) fail B23-unknown-path "no answer from the sidecar at $(param sidecar):$(param sidecar_port) ($out), so nothing was proven" "the sidecar container must be running and reachable from the agent: ./sandbox logs sidecar" ;;
   esac
 }
 
@@ -1279,7 +1282,7 @@ c_B30_tag()          { relay_push B30-tag "refs/tags/sandbox-verify-probe-$$" "a
 # ---------------------------------------------------------------------------
 # One request to a sidecar, as the CLI would send it, with a dummy credential.
 h_sidecar_probe() {
-  netprobe post "$(param target)" 8080 "$(param route_method)" "$(param route_path)" "$(param dialect)" "$(param kind)" "$(param dummy)" "$(param marker)" 30000
+  netprobe post "$(param target)" "$(param sidecar_port)" "$(param route_method)" "$(param route_path)" "$(param dialect)" "$(param kind)" "$(param dummy)" "$(param marker)" 30000
   REPORTED=1
 }
 # [B32] Writes escape sequences where the launcher will later print them:
@@ -1293,7 +1296,7 @@ h_plant_escapes() {
   else
     printf 'log failed\n'
   fi
-  printf 'request %s\n' "$(netprobe escget "$(param proxy)" 3128 "$(param denied_host)" "$marker" 8000)"
+  printf 'request %s\n' "$(netprobe escget "$(param proxy)" "$(param proxy_port)" "$(param denied_host)" "$marker" 8000)"
   REPORTED=1
 }
 
