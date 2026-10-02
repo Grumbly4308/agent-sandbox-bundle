@@ -1,0 +1,79 @@
+# falco-rules.yaml — Falco rules for watching one sandbox session from the
+# host.
+#
+# OPTIONAL. Needs root on the host (Falco loads a kernel probe). NOT one of
+# the sandbox's barriers: it stops nothing, it only reports. NEVER LOADED OR
+# TESTED by the authors; check it with `falco --validate falco-rules.yaml`
+# before relying on it, and read README.md in this directory first.
+#
+# How a session is recognised: every container of a session is named
+# <session>-<role> (asb-demo-0a1b2c-agent, -proxy, -credsidecar, -gitrelay,
+# -keeper, -svc-<name>) and carries the label agent-sandbox.session=<session>.
+#
+# Replace SESSION below with your session name (`./sandbox` prints it at
+# `run`), or with just `asb-` to watch every session.
+#
+# One thing to know first: Falco learns a container's name by asking the
+# container runtime, and for ROOTLESS Podman that means your user's Podman
+# API socket. The sandbox does not need that socket and is better off without
+# it. If it is not running, Falco sees the processes but not their container
+# name, and these rules match nothing. The alternative macro further down
+# matches on the user id instead and needs no socket.
+
+- macro: agent_sandbox_session
+  condition: (container.name startswith "SESSION-")
+
+# Alternative 1, by label. The spelling of the label field differs between
+# Falco versions; `falco --list | grep container.label` shows yours:
+#   condition: (container.label[agent-sandbox.session] = "SESSION")
+# Alternative 2, no Podman socket needed: the agent's user as the host sees
+# it, (start of your range in /etc/subuid) + 61000 - 1; 160999 when the range
+# starts at 100000. It matches the agent container of every session of your
+# host user and no other container. Look at one event's uid before trusting
+# the number:
+#   condition: (user.uid = 160999)
+
+- macro: agent_sandbox_gatekeeper
+  condition: >
+    (container.name startswith "SESSION-" and
+     (container.name endswith "-proxy" or
+      container.name endswith "-credsidecar" or
+      container.name endswith "-gitrelay"))
+
+- rule: agent-sandbox program started
+  desc: A program was started in a container of the sandbox session.
+  condition: evt.type in (execve, execveat) and evt.dir = < and agent_sandbox_session
+  output: >
+    agent-sandbox exec (container=%container.name uid=%user.uid
+    command=%proc.cmdline parent=%proc.pname cwd=%proc.cwd)
+  priority: INFO
+  tags: [agent-sandbox]
+
+- rule: agent-sandbox connection opened
+  desc: >
+    A container of the sandbox session opened a network connection. From the
+    agent these should only ever go to the proxy (:3128), the sidecar (:8080),
+    the git relay (:8081) or a sibling service.
+  condition: >
+    evt.type = connect and evt.dir = < and fd.type in (ipv4, ipv6)
+    and agent_sandbox_session
+  output: >
+    agent-sandbox connect (container=%container.name uid=%user.uid
+    command=%proc.cmdline connection=%fd.name)
+  priority: INFO
+  tags: [agent-sandbox, network]
+
+# The proxy, the sidecar and the relay each run one program. Anything else
+# starting there means somebody is inside a gatekeeper. `sh` is the proxy's
+# start script; `node` also covers the load and health-check commands
+# ./sandbox runs. Expect to adjust this list on first use.
+- rule: agent-sandbox unexpected program in a gatekeeper
+  desc: A program other than its own was started in the proxy, sidecar or git relay container.
+  condition: >
+    evt.type in (execve, execveat) and evt.dir = < and agent_sandbox_gatekeeper
+    and not proc.name in (squid, node, sh, entrypoint.sh)
+  output: >
+    agent-sandbox UNEXPECTED program in a gatekeeper (container=%container.name
+    uid=%user.uid command=%proc.cmdline parent=%proc.pname)
+  priority: WARNING
+  tags: [agent-sandbox]

@@ -1,0 +1,64 @@
+#cloud-config
+# cloud-init.yaml — first-boot setup for a throwaway Multipass virtual
+# machine to run the whole sandbox in, with nothing of yours inside it.
+#
+# EXAMPLE, NEVER STARTED by the authors (no Multipass on the machine this was
+# written on). Read README.md in this directory first.
+#
+#   multipass launch 24.04 --name agent-sandbox --cpus 4 --memory 12G --disk 30G \
+#       --cloud-init cloud-init.yaml
+#
+# Multipass mounts no folder of yours unless you run `multipass mount`, does
+# not offer your SSH agent to the VM, and forwards no ports: the three things
+# the Lima template has to switch off are already off here. Do not name the
+# VM `primary`: Multipass mounts your home directory into a VM of that name.
+
+package_update: true
+packages:
+  # rootless Podman and its networking
+  - podman
+  - uidmap
+  - slirp4netns
+  - passt
+  # the tiny first process `podman --init` puts in the keeper
+  - catatonit
+  # lets rootless Podman ask systemd to apply limits
+  - dbus-user-session
+  # the launcher uses both
+  - git
+  - jq
+  # only if you choose to run `login` in the VM
+  - libsecret-tools
+
+users:
+  # Multipass's own user (`ubuntu`): kept, it is how you get in. It has
+  # passwordless sudo, so the sandbox refuses to run as it.
+  - default
+  # The user the sandbox runs under: no sudo, no password, no SSH key.
+  # Creating it also gives it the subordinate id ranges rootless Podman needs.
+  - name: sandbox
+    shell: /bin/bash
+    lock_passwd: true
+
+write_files:
+  # Let that user's Podman set CPU, memory, process and disk-speed limits on
+  # its containers [physical B10].
+  - path: /etc/systemd/system/user@.service.d/delegate.conf
+    content: |
+      [Service]
+      Delegate=cpu cpuset io memory pids
+
+runcmd:
+  # gitleaks: the secret scan at export. Installed here and not in the list
+  # above, so that a release without the package still gets everything else;
+  # without it, export refuses to mark the scan as passed.
+  - apt-get install -y gitleaks || echo "gitleaks is not packaged here; install it by hand"
+  - systemctl daemon-reload
+  # Keep the user's service manager running without a login, and point shells
+  # at it; without these, rootless Podman cannot apply the limits.
+  - loginctl enable-linger sandbox
+  - |
+    printf '%s\n' \
+      'export XDG_RUNTIME_DIR="/run/user/$(id -u)"' \
+      'export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"' \
+      >> /home/sandbox/.profile

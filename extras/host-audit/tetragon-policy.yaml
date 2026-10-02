@@ -1,0 +1,62 @@
+# tetragon-policy.yaml — a Tetragon TracingPolicy that records the network
+# connections of one sandbox container, from the host.
+#
+# OPTIONAL. Needs root on the host (Tetragon loads eBPF programs). NOT one of
+# the sandbox's barriers: it stops nothing, it only records. NEVER LOADED OR
+# TESTED by the authors; read README.md in this directory first.
+#
+# Tetragon normally picks its targets with a podSelector. That is a
+# Kubernetes idea and matches nothing under Podman, and a policy has no
+# selector for a container name, a label or a cgroup path. What it can match
+# outside Kubernetes is a namespace, by number. Each container has its own
+# process namespace, so that number identifies one container for as long as
+# it lives.
+#
+# YOU MUST SUBSTITUTE the two placeholders, for every session (the number is
+# new each time a container is created):
+#
+#   SESSION    the session name, to tell policies apart
+#   PIDNS      the number of the agent container's process namespace:
+#                pid="$(podman inspect -f '{{.State.Pid}}' SESSION-agent)"
+#                readlink "/proc/$pid/ns/pid"      # prints pid:[4026532617]
+#              use the digits only. To cover the proxy, sidecar or relay as
+#              well, add their numbers to the `values` lists below.
+#
+# Program starts need no policy: Tetragon reports every process start and
+# exit by itself. To see only this container's, start Tetragon with
+# --enable-process-ns (so each event carries its namespace numbers) and
+# filter when reading:
+#   tetra getevents -o json | jq 'select(.process_exec.process.ns.pid.inum == PIDNS)'
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: agent-sandbox-SESSION
+spec:
+  kprobes:
+    # One event per outgoing TCP connection attempt, with both addresses.
+    # From the agent these should only ever go to the proxy (:3128), the
+    # sidecar (:8080), the git relay (:8081) or a sibling service.
+    - call: tcp_connect
+      syscall: false
+      args:
+        - index: 0
+          type: sock
+      selectors:
+        - matchNamespaces:
+            - namespace: Pid
+              operator: In
+              values:
+                - "PIDNS"
+    # UDP sends: there should be none at all (the sandbox has no DNS), so
+    # anything here is worth a look.
+    - call: udp_sendmsg
+      syscall: false
+      args:
+        - index: 0
+          type: sock
+      selectors:
+        - matchNamespaces:
+            - namespace: Pid
+              operator: In
+              values:
+                - "PIDNS"
