@@ -1,0 +1,31 @@
+# gitleaks.toml — the secret-scan configuration shipped with agent-sandbox.
+#
+# scripts/export.sh passes this file to gitleaks with `--config` [logical B27].
+# It is the ONLY configuration the scan uses. A `.gitleaks.toml`, a
+# `.gitleaksignore` or a `gitleaks:allow` comment inside the exported commits
+# was written by the agent and is ignored (reference finding L4): export also
+# passes `--ignore-gitleaks-allow` and points `--gitleaks-ignore-path` at an
+# empty file of its own.
+#
+# Rule for editing this file: add rules, never exceptions. There is no
+# allowlist here, and there must not be one: an allowlist entry is a way to
+# let a secret through.
+
+title = "agent-sandbox export scan"
+
+[extend]
+# Start from every rule built into the installed gitleaks (cloud keys, tokens,
+# private keys, ...), so a newer gitleaks brings newer rules without a change
+# here.
+useDefault = true
+
+# The built-in rules know Anthropic API keys (`sk-ant-api03-...`). They do not
+# know the other kinds of `sk-ant-` token, in particular the long-lived OAuth
+# token a Claude subscription login produces (`sk-ant-oat01-...`). That is the
+# credential this sandbox exists to keep away from the agent, so a copy of one
+# in a commit must stop the export.
+[[rules]]
+id = "agent-sandbox-anthropic-token"
+description = "Anthropic token of any kind (API key, OAuth access or refresh token)"
+regex = '''\bsk-ant-[a-z]{2,10}[0-9]{2}-[A-Za-z0-9_\-]{32,}'''
+keywords = ["sk-ant-"]
