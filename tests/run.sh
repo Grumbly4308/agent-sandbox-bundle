@@ -42,7 +42,8 @@ fi
 
 for dir in tests/*/; do
   name="$(basename "$dir")"
-  case "$name" in fakes | fixtures) continue ;; esac
+  # phase-b needs a real Podman; it is run by hand (see PHASE-B.md).
+  case "$name" in fakes | fixtures | phase-b) continue ;; esac
   [ -z "$only" ] || [ "$only" = "$name" ] || continue
   if [ -f "$dir/run.sh" ]; then
     run bash "$dir/run.sh"
