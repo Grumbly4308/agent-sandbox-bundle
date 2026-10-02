@@ -1,0 +1,63 @@
+# Containerfile — the credential sidecar image.  [logical B22-B25]
+#
+# A small web server that holds the real model token and puts it on the
+# agent's model requests, so the token is never in the agent's container.
+# The server is images/credsidecar/sidecar.mjs; read that file first.
+#
+# Build context: the repository root (the image needs agents/*/sidecar.json).
+# ./sandbox builds it with
+#     podman build --build-arg NODE_BASE=<pinned> -f images/credsidecar/Containerfile .
+# where <pinned> is the NODE_BASE line of images/PINS: the official Node 22
+# image, named by digest so that the same bytes are used every time (closes
+# reference finding M2, unpinned images). There is no default on purpose: a
+# build without the pin fails.
+#
+# Nothing is installed here: no package, no npm module, no network access
+# during the build. The server uses Node's standard library only.
+
+ARG NODE_BASE
+
+# Stage 1: pick each agent's sidecar.json out of agents/, keeping the
+# directory name. Done in a throwaway stage so that the rest of the plug-ins
+# (install scripts, launchers) never reach the final image, and so that a new
+# agent needs no change to this file.
+FROM ${NODE_BASE} AS routes
+COPY agents/ /src/agents/
+RUN set -eu; cd /src/agents; \
+    for f in */sidecar.json; do \
+      mkdir -p "/out/${f%/*}"; \
+      cp "$f" "/out/$f"; \
+    done; \
+    chmod -R a=rX /out
+
+# Stage 2: the image that runs.
+FROM ${NODE_BASE}
+
+# The base image ships npm, npx, corepack and yarn. The sidecar never
+# installs anything, so they go: fewer programs beside the token.
+RUN rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx \
+           /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-*
+
+# The server, and the two commands ./sandbox runs with `podman exec`:
+#   sidecar-load         stores the credential piped to it on standard input
+#   sidecar-healthcheck  exits 0 when the server answers
+# All owned by root and not writable by the sidecar's user; the root
+# filesystem is mounted read-only at run time in any case [physical B07].
+COPY --chmod=0644 images/credsidecar/sidecar.mjs /usr/share/sandbox/credsidecar/sidecar.mjs
+COPY --chmod=0755 images/credsidecar/sidecar-load images/credsidecar/sidecar-healthcheck /usr/local/bin/
+
+# What may be forwarded for each agent: /usr/share/sandbox/agents/<name>/sidecar.json
+COPY --from=routes /out/ /usr/share/sandbox/agents/
+
+# Its own user, by number: 61001 is not the agent's user (61000) and has no
+# entry in /etc/passwd, no home directory and no shell to log in to.
+# topology.sh passes the same numbers with --user.
+USER 61001:61001
+WORKDIR /
+
+# The one port. Plain HTTP, reachable only on the session's internal network.
+EXPOSE 8080
+
+# Node is the first process and handles SIGTERM itself. The only writable
+# place it needs is /run/sidecar, a memory-backed mount added by topology.sh.
+CMD ["node", "/usr/share/sandbox/credsidecar/sidecar.mjs"]

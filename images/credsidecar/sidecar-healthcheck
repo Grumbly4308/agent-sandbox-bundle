@@ -1,0 +1,29 @@
+#!/usr/bin/env node
+'use strict';
+// sidecar-healthcheck — exit 0 when the sidecar's listener answers.
+//
+// ./sandbox runs this inside the sidecar container (`podman exec`) while it
+// waits for the session to come up. It asks the server on this container's
+// own loopback address for /healthz, which the server answers itself and
+// never forwards. It says nothing about the credential: a sidecar with no
+// credential yet is healthy, and answers model requests with 503.
+//
+// SANDBOX_SIDECAR_LISTEN is set by the tests only; the port is 8080.
+
+const http = require('node:http');
+
+const listen = process.env.SANDBOX_SIDECAR_LISTEN || '0.0.0.0:8080';
+const port = Number(listen.slice(listen.lastIndexOf(':') + 1));
+
+function unhealthy(why) {
+  process.stderr.write(`sidecar-healthcheck: ${why}\n`);
+  process.exit(1);
+}
+
+const request = http.get({ host: '127.0.0.1', port, path: '/healthz', agent: false, timeout: 2000 }, (res) => {
+  res.resume();
+  if (res.statusCode === 200) process.exit(0);
+  unhealthy(`the sidecar answered ${res.statusCode}`);
+});
+request.on('timeout', () => unhealthy('the sidecar did not answer within two seconds'));
+request.on('error', (err) => unhealthy(`the sidecar is not listening on port ${port} (${err.code})`));
