@@ -21,6 +21,11 @@ if [ "${1:-}" = "--auto" ]; then
   shift
 fi
 
+# Every model request (/v1/messages, token counting, sub-agents, compaction,
+# web search) goes to the sidecar instead of the vendor. Its address is this
+# session's, handed in by topology.sh.
+export ANTHROPIC_BASE_URL="${SANDBOX_SIDECAR_URL:?launch(claude): SANDBOX_SIDECAR_URL is not set}"
+
 dummy_oauth_token="sk-ant-oat01-sandbox-dummy-not-a-credential"
 dummy_api_key="sk-ant-api03-sandbox-dummy-not-a-credential"
 

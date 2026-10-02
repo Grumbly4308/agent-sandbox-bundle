@@ -5,7 +5,8 @@
 # --auto, and that everything that looks like a credential is a dummy.
 #
 # The environment is built the way the container builds it: empty, plus the
-# plug-in's `env` file, plus what ./sandbox passes at `podman exec`.
+# plug-in's `env` file if it has one, plus the sidecar's address for the
+# session (topology.sh), plus what ./sandbox passes at `podman exec`.
 # shellcheck source-path=SCRIPTDIR source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -26,12 +27,14 @@ run_launch() {
   out="$scratch/out.$agent.$auth.$#"
   rm -rf "${home:?}" "${out:?}"
   mkdir -p "$home" "$out"
-  while IFS= read -r line; do
-    envs+=("$line")
-  done <"$root/agents/$agent/env"
+  if [ -f "$root/agents/$agent/env" ]; then
+    while IFS= read -r line; do
+      envs+=("$line")
+    done <"$root/agents/$agent/env"
+  fi
   status=0
   env -i PATH="$scratch/bin:/usr/local/bin:/usr/bin:/bin" HOME="$home" FAKE_OUT="$out" \
-    "${envs[@]}" SANDBOX_AUTH="$auth" \
+    ${envs[@]+"${envs[@]}"} ${sidecar_url:+SANDBOX_SIDECAR_URL="$sidecar_url"} SANDBOX_AUTH="$auth" \
     "$root/agents/$agent/launch" "$@" >"$out/stdout" 2>"$out/stderr" || status=$?
 }
 
@@ -78,6 +81,9 @@ refused() {   # <description>: the launch failed and never started the CLI
   if [ "$status" -ne 0 ] && [ ! -e "$out/argv" ]; then pass "$1"; else fail "$1"; fi
 }
 
+# The sidecar's address in a session, as topology.sh hands it in.
+sidecar_url="http://10.201.7.3:8080"
+
 settings='{"skipWebFetchPreflight":true,"attribution":{"commit":"","pr":""}}'
 
 # ---------------------------------------------------------------------------
@@ -88,7 +94,7 @@ started "claude oauth: launch succeeds"
 argv_is "claude oauth: argv is --settings <json>" --settings "$settings"
 env_has "claude oauth: dummy subscription token" "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-sandbox-dummy-not-a-credential"
 env_lacks "claude oauth: no API key variable" ANTHROPIC_API_KEY
-env_has "claude oauth: base URL is the sidecar" "ANTHROPIC_BASE_URL=http://sidecar:8080"
+env_has "claude oauth: base URL is the sidecar" "ANTHROPIC_BASE_URL=http://10.201.7.3:8080"
 env_has "claude oauth: non-essential traffic off" "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
 env_has "claude oauth: marketplace auto-install off" "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL=1"
 env_has "claude oauth: auto-updater off" "DISABLE_AUTOUPDATER=1"
@@ -136,14 +142,14 @@ argv_is "claude apikey --auto: adds the bypass flag" --settings "$settings" --da
 # A second start keeps what the CLI wrote into ~/.claude.json meanwhile.
 run_launch claude oauth
 printf '{"numStartups":3,"projects":{"/workspace/repo":{"lastSessionId":"x"},"/other":{"a":1}}}\n' >"$home/.claude.json"
-env -i PATH="$scratch/bin:/usr/bin:/bin" HOME="$home" FAKE_OUT="$out" SANDBOX_AUTH=oauth "$root/agents/claude/launch" >/dev/null 2>&1 || true
+env -i PATH="$scratch/bin:/usr/bin:/bin" HOME="$home" FAKE_OUT="$out" SANDBOX_SIDECAR_URL="$sidecar_url" SANDBOX_AUTH=oauth "$root/agents/claude/launch" >/dev/null 2>&1 || true
 if [ "$(jq -c '[.numStartups, .projects["/workspace/repo"].lastSessionId, .projects["/other"].a, .hasCompletedOnboarding, .projects["/workspace/repo"].hasTrustDialogAccepted]' "$home/.claude.json")" = '[3,"x",1,true,true]' ]; then
   pass "claude: a second start merges into the existing ~/.claude.json"
 else
   fail "claude: second start lost state: $(cat "$home/.claude.json")"
 fi
 printf 'not json\n' >"$home/.claude.json"
-env -i PATH="$scratch/bin:/usr/bin:/bin" HOME="$home" FAKE_OUT="$out" SANDBOX_AUTH=oauth "$root/agents/claude/launch" >/dev/null 2>&1 || true
+env -i PATH="$scratch/bin:/usr/bin:/bin" HOME="$home" FAKE_OUT="$out" SANDBOX_SIDECAR_URL="$sidecar_url" SANDBOX_AUTH=oauth "$root/agents/claude/launch" >/dev/null 2>&1 || true
 check "claude: a corrupt ~/.claude.json is replaced" jq -e '.hasCompletedOnboarding == true' "$home/.claude.json"
 
 run_launch claude ""
@@ -159,11 +165,11 @@ cfg="$home/.codex/config.toml"
 auth="$home/.codex/auth.json"
 for line in \
   'model_provider = "sidecar"' \
-  'chatgpt_base_url = "http://sidecar:8080/backend-api"' \
+  'chatgpt_base_url = "http://10.201.7.3:8080/backend-api"' \
   'sandbox_mode = "danger-full-access"' \
   'check_for_update_on_startup = false' \
   '[model_providers.sidecar]' \
-  'base_url = "http://sidecar:8080/backend-api/codex"' \
+  'base_url = "http://10.201.7.3:8080/backend-api/codex"' \
   'wire_api = "responses"' \
   'requires_openai_auth = true' \
   '[analytics]' \
@@ -184,7 +190,7 @@ for key in model_provider chatgpt_base_url sandbox_mode check_for_update_on_star
   if [ -n "$at" ] && [ "$at" -lt "$first_table" ]; then pass "codex oauth: $key is a top-level key"; else fail "codex oauth: $key is not above the first table"; fi
 done
 check_not "codex oauth: no approval policy is shipped" grep -q 'approval_policy' "$cfg"
-if grep -oE 'https?://[^"/]+' "$cfg" | grep -qv '^http://sidecar:8080$'; then
+if grep -oE 'https?://[^"/]+' "$cfg" | grep -qv '^http://10.201.7.3:8080$'; then
   fail "codex oauth: config.toml names a host other than the sidecar"
 else
   pass "codex oauth: every URL in config.toml is the sidecar"
@@ -220,7 +226,7 @@ for token in id_token access_token; do
   case "$s" in *dummy*) pass "codex oauth: $token signature is marked dummy" ;; *) fail "codex oauth: $token signature is not marked dummy" ;; esac
   case "$h$p$s" in *[!A-Za-z0-9_-]*) fail "codex oauth: $token is not base64url" ;; *) pass "codex oauth: $token is three base64url parts" ;; esac
 done
-env_has "codex oauth: refresh backstop points at the sidecar" "CODEX_REFRESH_TOKEN_URL_OVERRIDE=http://sidecar:8080/oauth/token"
+env_has "codex oauth: refresh backstop points at the sidecar" "CODEX_REFRESH_TOKEN_URL_OVERRIDE=http://10.201.7.3:8080/oauth/token"
 env_lacks "codex oauth: no API key variable" OPENAI_API_KEY
 env_lacks "codex oauth: no Codex API key variable" CODEX_API_KEY
 all_dummy "codex oauth: credentials are dummies"
@@ -234,7 +240,7 @@ started "codex apikey: launch succeeds"
 argv_is "codex apikey: no arguments added"
 cfg="$home/.codex/config.toml"
 for line in \
-  'openai_base_url = "http://sidecar:8080/v1"' \
+  'openai_base_url = "http://10.201.7.3:8080/v1"' \
   'sandbox_mode = "danger-full-access"' \
   'check_for_update_on_startup = false' \
   '[projects."/workspace/repo"]'; do
@@ -264,7 +270,7 @@ env_has "opencode apikey: auto-update off" "OPENCODE_DISABLE_AUTOUPDATE=1"
 content="$(sed -n 's/^OPENCODE_CONFIG_CONTENT=//p' "$out/env")"
 check "opencode apikey: OPENCODE_CONFIG_CONTENT is JSON" jq -e . <<<"$content"
 check "opencode apikey: Anthropic base URL is the sidecar, with /v1" \
-  jq -e '.provider.anthropic.options.baseURL == "http://sidecar:8080/v1"' <<<"$content"
+  jq -e '.provider.anthropic.options.baseURL == "http://10.201.7.3:8080/v1"' <<<"$content"
 check "opencode apikey: sharing is disabled" jq -e '.share == "disabled"' <<<"$content"
 check "opencode apikey: a default Anthropic model is pinned" jq -e '.model | startswith("anthropic/")' <<<"$content"
 check "opencode apikey: the key is not in the configuration" jq -e '[.. | objects | has("apiKey")] | any | not' <<<"$content"
@@ -292,6 +298,16 @@ for agent in claude codex opencode; do
   for banned in CLAUDE.md AGENTS.md settings.json opencode.json hooks; do
     check_not "$agent: ships no $banned" test -e "$root/agents/$agent/$banned"
   done
+done
+
+# ---------------------------------------------------------------------------
+# No sidecar address, no start: a CLI left to its default would go to the
+# vendor, and the proxy would refuse every request.
+# ---------------------------------------------------------------------------
+sidecar_url=""
+for pair in claude:oauth codex:oauth codex:apikey opencode:apikey; do
+  run_launch "${pair%%:*}" "${pair##*:}"
+  refused "${pair%%:*} ${pair##*:}: refuses to start without the sidecar's address"
 done
 
 finish

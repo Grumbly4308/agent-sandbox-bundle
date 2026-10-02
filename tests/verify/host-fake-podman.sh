@@ -307,6 +307,7 @@ CapAmb:0000000000000000
 NoNewPrivs:1
 Core:0 0
 Root:sh: can't create /.verify-probe: Read-only file system
+Hosts:mounted=no other=none
 EOF
 }
 set_field() {   # <role> <key> <value>
@@ -386,7 +387,7 @@ EOF
   printf 'local|tmpfs|tmpfs|size=268435456,nosuid,nodev,mode=1777\n' > "$F/volume"
   printf 'false\n' > "$F/selinux"
   printf 'true false\n' > "$F/info"
-  printf 'HOME=/home/agent\nHTTPS_PROXY=http://proxy:3128\nANTHROPIC_BASE_URL=http://sidecar:8080\n' > "$F/env.config"
+  printf 'HOME=/home/agent\nHTTPS_PROXY=http://10.201.7.2:3128\nSANDBOX_SIDECAR_URL=http://10.201.7.3:8080\n' > "$F/env.config"
   printf 'PATH=/usr/bin\0HOME=/home/agent\0' > "$F/environ"
   printf '{"claudeAiOauth":{"accessToken":"dummy-not-a-real-token"}}\n' > "$F/agentfs/home/agent/.claude/.credentials.json"
   printf 'hello\n' > "$F/agentfs/workspace/repo/README"
@@ -432,7 +433,7 @@ want_rc 0
 want_not '^FAIL '
 want_not 'counts as a failure'
 for name in B01-user B02-caps-all B03-nnp-all B04-ptrace B06-private-modes B07-readonly-all B08-workspace-volume B09-host-mounts \
-            B10-limits-all B11-core-all B12-network-attach B13-network-no-gateway B15-token-absent B20-never-allow B21-sidecar-allowed \
+            B10-limits-all B11-core-all B12-network-attach B13-network-no-gateway B13-hosts-all B15-token-absent B20-never-allow B21-sidecar-allowed \
             B22-credential-swap B22-credential-replace B23-mcp-servers B23-web-fetch B24-oversized B24-budget B25-search-logged \
             B25-proxy-log B26-deadline-set B26-keeper B28-log-driver B29-rootless B32-logs-filter; do
   want "^PASS $name — "
@@ -490,6 +491,16 @@ want 'FAIL B13-network-no-gateway — .*gateway address 10.201.7.1'; done_scenar
 scenario "the network has its name service on"
 new_world; sed -i.bak 's/"dns_enabled": false/"dns_enabled": true/' "$F/network.json"
 verify --quick "$SESSION"; want_rc 1; only_failures B13-network-no-gateway; done_scenario
+
+scenario "Podman wrote a container's /etc/hosts"
+new_world; set_probe credsidecar Hosts "mounted=yes other= 192.168.1.20"
+verify --quick "$SESSION"; want_rc 1; only_failures B13-hosts-all
+want 'FAIL B13-hosts-all — .*credsidecar: Podman has mounted its own /etc/hosts'; done_scenario
+
+scenario "a container's own /etc/hosts holds an outside address"
+new_world; set_probe proxy Hosts "mounted=no other= 192.168.1.20"
+verify --quick "$SESSION"; want_rc 1; only_failures B13-hosts-all
+want 'FAIL B13-hosts-all — .*proxy: /etc/hosts holds addresses that are not loopback: 192.168.1.20'; done_scenario
 
 scenario "the network is not internal"
 new_world; sed -i.bak 's/"internal": true/"internal": false/' "$F/network.json"

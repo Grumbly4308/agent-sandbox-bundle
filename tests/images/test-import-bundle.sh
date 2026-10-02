@@ -76,8 +76,8 @@ fi
 
 # With a relay address, and only then, the clone has a remote: the relay.
 mkdir -p "$scratch/ws-relay"
-if SANDBOX_WORKSPACE_FOR_TESTS="$scratch/ws-relay" "$import" "$branch" http://gitrelay:8081/repo.git <"$scratch/in.bundle" >/dev/null 2>&1 &&
-  [ "$(git -C "$scratch/ws-relay/repo" remote get-url origin 2>/dev/null)" = http://gitrelay:8081/repo.git ] &&
+if SANDBOX_WORKSPACE_FOR_TESTS="$scratch/ws-relay" "$import" "$branch" http://10.201.7.4:8081/repo.git <"$scratch/in.bundle" >/dev/null 2>&1 &&
+  [ "$(git -C "$scratch/ws-relay/repo" remote get-url origin 2>/dev/null)" = http://10.201.7.4:8081/repo.git ] &&
   [ "$(git -C "$scratch/ws-relay/repo" remote | wc -l)" -eq 1 ]; then
   pass "import: with a relay address, origin is the relay and nothing else"
 else

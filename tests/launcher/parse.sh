@@ -96,7 +96,7 @@ if [ -e "$T/executed" ]; then fail "a value was executed"; else pass "a value th
 equals "a missing key is empty"           ""          kv_get "$T/kv" Z
 
 # --- the agent's env file  [physical B15] --------------------------------------
-printf '%s\n' '# comment' '' 'ANTHROPIC_BASE_URL=http://sidecar:8080' > "$T/env.good"
+printf '%s\n' '# comment' '' 'DISABLE_AUTOUPDATER=1' > "$T/env.good"
 printf '%s\n' 'GOOD=1' 'ANTHROPIC_API_KEY' > "$T/env.bare"
 check  "an env file of NAME=value lines is accepted" check_env_file "$T/env.good"
 refuse "a bare NAME (copied in from the host) is refused" check_env_file "$T/env.bare"

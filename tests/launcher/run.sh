@@ -88,9 +88,11 @@ line_has "deadline from --ttl"             "$agent" "--timeout${tab}3600"
 line_has "largest file is the workspace cap" "$agent" "fsize=33554432:33554432"
 line_has "fixed address on the internal network" "$agent" "--network${tab}$s-sandbox:ip=10.201.0.10"
 line_has "no resolver"                     "$agent" "--dns=none"
-line_has "proxy and sidecar by /etc/hosts" "$agent" "--add-host${tab}proxy:10.201.0.2${tab}--add-host${tab}sidecar:10.201.0.3"
-line_has "the service by /etc/hosts"       "$agent" "--add-host${tab}redis:10.201.0.20"
-line_has "the service is reached directly" "$agent" "NO_PROXY=localhost,127.0.0.1,sidecar,10.201.0.3,redis,10.201.0.20"
+line_has "Podman writes no /etc/hosts  [B13]" "$agent" "--no-hosts"
+case "$agent" in *--add-host*) fail "the agent is given a name in /etc/hosts" ;; *) pass "nothing is found by name" ;; esac
+line_has "the proxy by address"            "$agent" "--env${tab}HTTPS_PROXY=http://10.201.0.2:3128"
+line_has "the sidecar by address"          "$agent" "--env${tab}SANDBOX_SIDECAR_URL=http://10.201.0.3:8080"
+line_has "sidecar and service are reached directly" "$agent" "NO_PROXY=localhost,127.0.0.1,10.201.0.3,10.201.0.20"
 line_has "the agent plug-in's env file"    "$agent" "--env-file${tab}$ROOT/agents/claude/env"
 line_has "the image for this agent and toolchain" "$agent" "localhost/agent-sandbox/agent-claude:node-$(cat "$REPO/VERSION")${tab}sandbox-idle"
 if grep -E "^create" "$log" | grep -qE -- "--privileged|--network${tab}host|--pid=host|podman.sock|--cap-add"; then
@@ -158,7 +160,7 @@ line_has "arguments after -- reach the CLI unchanged" "$launch" "sandbox-launch$
 line_has "the CLI is told the credential mode"   "$launch" "--env${tab}SANDBOX_AUTH=apikey"
 line_has "the CLI gets your git name"            "$launch" "--env${tab}GIT_COMMITTER_NAME=Test Operator"
 line_has "the CLI gets your git email"           "$launch" "--env${tab}GIT_AUTHOR_EMAIL=operator@example.test"
-line_has "the CLI gets the service's address"    "$launch" "--env${tab}REDIS_URL=redis://redis:6379/0"
+line_has "the CLI gets the service's address"    "$launch" "--env${tab}REDIS_URL=redis://10.201.0.20:6379/0"
 case "$out" in *"0.7 GB of this host's memory"*) pass "run prints the memory total" ;; *) fail "no memory total in: $out" ;; esac
 case "$out" in *"SANDBOX_SESSION=$s ./sandbox export"*"SANDBOX_SESSION=$s ./sandbox destroy"*) pass "run says how to export and destroy" ;; *) fail "no export/destroy hint" ;; esac
 check "no watchdog is started when none is needed" test ! -e "$dir/watchdog.pid"

@@ -21,13 +21,17 @@ vendor accepts the forwarded requests is not yet proven.
 
 ## Subscription (`--auth oauth`)
 
+`$SANDBOX_SIDECAR_URL` is the credential sidecar's address in this session,
+for example `http://10.201.0.3:8080`. `topology.sh` sets it on the container.
+It is an address, not a name: no container here is found by name.
+
 | Setting | Where it is applied | Why | Proven necessary |
 |---|---|---|---|
-| `model_provider = "sidecar"` with `[model_providers.sidecar]` `name = "sidecar"`, `base_url = "http://sidecar:8080/backend-api/codex"`, `wire_api = "responses"` | `config.toml` | Codex's built-in `openai` provider takes its address from the vendor's own reply and insists on HTTPS; it cannot be pointed at the sidecar. A provider defined here can. | yes |
+| `model_provider = "sidecar"` with `[model_providers.sidecar]` `name = "sidecar"`, `base_url = "$SANDBOX_SIDECAR_URL/backend-api/codex"`, `wire_api = "responses"` | `config.toml` | Codex's built-in `openai` provider takes its address from the vendor's own reply and insists on HTTPS; it cannot be pointed at the sidecar. A provider defined here can. | yes |
 | `requires_openai_auth = true` (same table) | `config.toml` | Makes Codex send its ChatGPT login to this provider, so the request has the shape the vendor expects once the sidecar swaps the token. | yes |
-| `chatgpt_base_url = "http://sidecar:8080/backend-api"` | `config.toml` | The account check the interactive interface makes at start (`/backend-api/wham/accounts/check`) goes to the sidecar, which forwards it. | yes, for the interactive interface |
+| `chatgpt_base_url = "$SANDBOX_SIDECAR_URL/backend-api"` | `config.toml` | The account check the interactive interface makes at start (`/backend-api/wham/accounts/check`) goes to the sidecar, which forwards it. | yes, for the interactive interface |
 | `auth.json` with dummy tokens: `id_token` and `access_token` shaped like JWTs that expire in 2100, a `refresh_token`, a dummy `account_id`, `last_refresh` = now | `launch` writes `auth.json` | Codex will not start a subscription session without a login file whose tokens parse and are not expired. Every value is a placeholder; the sidecar replaces the token and the account id with the real ones. | yes (see the note below) |
-| `CODEX_REFRESH_TOKEN_URL_OVERRIDE=http://sidecar:8080/oauth/token` | `env` | A backstop. If Codex ever decides to refresh the dummy login, the attempt goes to the sidecar, which does not forward that path, instead of leaving for the vendor's login host. | no |
+| `CODEX_REFRESH_TOKEN_URL_OVERRIDE=$SANDBOX_SIDECAR_URL/oauth/token` | `launch` | A backstop. If Codex ever decides to refresh the dummy login, the attempt goes to the sidecar, which does not forward that path, instead of leaving for the vendor's login host. | no |
 
 Note on `auth.json`: the spike's dummy tokens carried more claims (an email
 address, a plan type, a user id). The ones written here carry only an expiry
@@ -38,7 +42,7 @@ run; if Codex refuses it, add the claims back in `launch`.
 
 | Setting | Where it is applied | Why | Proven necessary |
 |---|---|---|---|
-| `openai_base_url = "http://sidecar:8080/v1"` | `config.toml` | Points the built-in provider at the sidecar. | yes |
+| `openai_base_url = "$SANDBOX_SIDECAR_URL/v1"` | `config.toml` | Points the built-in provider at the sidecar. | yes |
 | `CODEX_API_KEY` and `OPENAI_API_KEY` = `sk-sandbox-dummy-not-a-credential` | `launch` | Codex will not start without a key. A placeholder; the sidecar discards it and uses the real key. | yes (proven with `codex exec`; the interactive interface in this mode was not run) |
 
 ## Both modes
@@ -53,7 +57,7 @@ run; if Codex refuses it, add the claims back in `launch`.
 | `--dangerously-bypass-approvals-and-sandbox` | `launch`, only with `run --auto` | Your choice, not a compatibility setting: no approval prompts. Prompts are for a person who is watching. | not applicable |
 
 Two things the plug-in depends on but does not set itself: `NO_PROXY` must
-contain `sidecar` (set in `topology.sh`), and the sidecar must never answer
+contain the sidecar's address (set in `topology.sh`), and the sidecar must never answer
 401 (Codex would try to refresh the login; the sidecar answers 403 or 503
 instead).
 

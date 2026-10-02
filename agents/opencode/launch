@@ -50,7 +50,11 @@ export ANTHROPIC_API_KEY="sk-ant-api03-sandbox-dummy-not-a-credential"
 #                                       configuration.
 #   share                               no session-sharing links (they are
 #                                       uploads to the vendor's host).
-export OPENCODE_CONFIG_CONTENT='{"model":"anthropic/claude-sonnet-4-6","share":"disabled","provider":{"anthropic":{"options":{"baseURL":"http://sidecar:8080/v1"}}}}'
+# The sidecar's address is this session's, handed in by topology.sh.
+sidecar="${SANDBOX_SIDECAR_URL:?launch(opencode): SANDBOX_SIDECAR_URL is not set}"
+OPENCODE_CONFIG_CONTENT="$(jq -cn --arg url "$sidecar/v1" \
+  '{model: "anthropic/claude-sonnet-4-6", share: "disabled", provider: {anthropic: {options: {baseURL: $url}}}}')"
+export OPENCODE_CONFIG_CONTENT
 
 if [ "$auto" -eq 0 ]; then
   exec opencode "$@"

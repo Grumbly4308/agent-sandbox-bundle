@@ -74,11 +74,7 @@ Decided during design review:
 - The git relay cannot refuse a force-push.
 - The sidecar is a small Node program, not Caddy or nginx: it has to read
   request bodies to refuse some of them.
-
-Found while checking the parts against each other, not yet reviewed by the
-product owner:
-
-- Podman 5.4 or newer is required. Older ones write the host's address into
-  every container's `/etc/hosts` and have no setting to stop it. This rules
-  out Ubuntu 24.04 (Podman 4.9) as a host; `PHASE-B.md` says what supporting
-  it would take.
+- No container is found by name. Podman writes no `/etc/hosts` (its own names
+  the host and gives one of its addresses, and only recent versions can be
+  told not to), so the proxy, the sidecar, the git relay and sibling services
+  are reached by address. This keeps Podman 4.4 and so Ubuntu 24.04 as hosts.

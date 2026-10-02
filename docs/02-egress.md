@@ -117,9 +117,9 @@ need to decide whether to allow it.
 ## DNS
 
 The agent has no resolver (barrier B14). Its network has no name service, and
-the resolver file in its image is empty. It finds the proxy and the sidecar
-through fixed lines in `/etc/hosts`. Names are resolved by the proxy, and only
-after they have matched a list.
+the resolver file in its image is empty. It reaches the proxy and the sidecar
+by address: nothing inside a session is found by name. Names are resolved by
+the proxy, and only after they have matched a list.
 
 ## The host's own services
 
@@ -132,6 +132,9 @@ development server, a database. Here (barrier B13):
 - The agent's network is created with its name service off. Today Podman then
   gives it no gateway address at all. `./sandbox verify` checks this each time
   and does not assume it.
+- Podman normally writes a line into every container's `/etc/hosts` naming
+  your host and giving one of its addresses. Here it writes no `/etc/hosts`
+  at all: the agent sees the one in its image, which names only `localhost`.
 
 If `verify` ever reports that something answers at the gateway address, the
 host-side rule that closes it is, as root:

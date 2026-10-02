@@ -120,8 +120,10 @@ day. The SBOM records what you got.
    Linux packages (`npm view <pkg>@<version> dist.integrity`).
 3. In `sidecar.json`, name the vendor's host, the API paths the CLI uses, and
    how the credential is put on a request.
-4. In `env` and `launch`, point the CLI at `http://sidecar:8080` and give it a
-   dummy credential.
+4. In `launch`, point the CLI at `$SANDBOX_SIDECAR_URL` (the sidecar's
+   address in this session; there are no names to use) and give it a dummy
+   credential. Settings that are the same in every session can go in an `env`
+   file of `NAME=value` lines; it is optional.
 5. In `allowlist.txt`, list the model API host under `[sidecar]`.
 6. Write `compat.md` and `auth.md`.
 7. `./sandbox upgrade`. The sidecar's image holds a copy of every agent's

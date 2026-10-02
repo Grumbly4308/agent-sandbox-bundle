@@ -123,6 +123,7 @@ _topo_hardening() {
     --label "agent-sandbox.session=${SANDBOX_SESSION}"
     --pull=never                    # images are built or fetched by digest beforehand; nothing is pulled at start
     --http-proxy=false              # [physical B15] Podman would otherwise copy your own proxy settings, and any password in them, into the container
+    --no-hosts                      # [physical B13] Podman's own /etc/hosts would name your host and give one of its addresses; without it the container sees the file in its image (the agent image names only localhost)
     --read-only                     # [physical B07] root filesystem is immutable
     --read-only-tmpfs=false         # [physical B08] without this, Podman adds writable /tmp, /run, /var/tmp and /dev/shm itself
     --cap-drop=ALL                  # [physical B02] no Linux capabilities; none are added back anywhere in this file
@@ -213,8 +214,8 @@ topo_agent() {
     # Shared memory. Python's test tools need it. Counted in the memory limit.
     --tmpfs "/dev/shm:size=64m,mode=1777,nosuid,nodev,noexec"
     # [physical B09] The workspace volume. Nothing else is mounted here apart
-    # from three small read-only files Podman generates itself (/etc/hosts,
-    # /etc/hostname and a marker file).
+    # from two small read-only files Podman generates itself (/etc/hostname
+    # and a marker file).
     --mount "type=volume,source=${SANDBOX_SESSION}-workspace,destination=/workspace"
     --workdir /workspace            # where `podman exec` starts
 
@@ -231,42 +232,42 @@ topo_agent() {
     # capabilities the agent cannot change it [physical B16].
     --network "${SANDBOX_SESSION}-sandbox:ip=${SANDBOX_AGENT_IP:?}"
     # [physical B14] Podman writes no resolver configuration; the image ships
-    # an empty one, on a read-only root. Name lookups fail at once.
+    # an empty one, on a read-only root. Name lookups fail at once. Nothing
+    # here depends on names: the proxy, the sidecar, the git relay and any
+    # sibling service are reached by address.
     --dns=none
-    # Names written into /etc/hosts, so nothing here depends on DNS.
-    --add-host "proxy:${SANDBOX_PROXY_IP:?}"
-    --add-host "sidecar:${SANDBOX_SIDECAR_IP:?}"
+    # The container's own name, which the image's /etc/hosts points at
+    # loopback: some tools (Java, some test runners) look their own name up.
+    --hostname sandbox
 
-    # What this agent's CLI needs in its environment to find the sidecar. One
-    # file per agent plug-in, so a new agent needs no change here. Agents
-    # that take these settings from a file instead (Codex) get that file
-    # written into the memory-backed home at start; agents/<name>/compat.md
-    # lists every line. ./sandbox accepts only NAME=value lines in this file:
-    # a bare name would copy that variable in from your own environment.
-    --env-file "${SANDBOX_ROOT}/agents/${SANDBOX_AGENT:?}/env"
     --env HOME=/home/agent
+    # Where the credential sidecar is. agents/<name>/launch points the CLI at
+    # it; the address differs from session to session.
+    --env "SANDBOX_SIDECAR_URL=http://${SANDBOX_SIDECAR_IP:?}:8080"
     # The only way out for everything that is not a model call.
-    --env HTTP_PROXY=http://proxy:3128
-    --env HTTPS_PROXY=http://proxy:3128
-    --env http_proxy=http://proxy:3128    # lowercase too: curl, pip and git read these
-    --env https_proxy=http://proxy:3128
+    --env "HTTP_PROXY=http://${SANDBOX_PROXY_IP:?}:3128"
+    --env "HTTPS_PROXY=http://${SANDBOX_PROXY_IP}:3128"
+    --env "http_proxy=http://${SANDBOX_PROXY_IP}:3128"    # lowercase too: curl, pip and git read these
+    --env "https_proxy=http://${SANDBOX_PROXY_IP}:3128"
     # Reached directly. Left out, the CLI would send its model calls to the
-    # proxy instead and every one would fail. ./sandbox adds the names of any
-    # sibling services and the git relay.
-    --env "NO_PROXY=localhost,127.0.0.1,sidecar,${SANDBOX_SIDECAR_IP}${SANDBOX_NO_PROXY_EXTRA:-}"
-    --env "no_proxy=localhost,127.0.0.1,sidecar,${SANDBOX_SIDECAR_IP}${SANDBOX_NO_PROXY_EXTRA:-}"
+    # proxy instead and every one would fail. ./sandbox adds the addresses of
+    # any sibling services and the git relay.
+    --env "NO_PROXY=localhost,127.0.0.1,${SANDBOX_SIDECAR_IP}${SANDBOX_NO_PROXY_EXTRA:-}"
+    --env "no_proxy=localhost,127.0.0.1,${SANDBOX_SIDECAR_IP}${SANDBOX_NO_PROXY_EXTRA:-}"
     # Package caches go to the workspace, not the smaller home directory.
     --env npm_config_cache=/workspace/.cache/npm
     --env PIP_CACHE_DIR=/workspace/.cache/pip
     # [physical B15] No API key, no login, no git token. Connection strings
     # for sibling services are passed by ./sandbox when it starts the CLI.
   )
-  # One /etc/hosts line per sibling service and for the git relay, if asked
-  # for. SANDBOX_EXTRA_HOSTS holds "name:address" pairs separated by spaces.
-  local pair
-  for pair in ${SANDBOX_EXTRA_HOSTS:-}; do
-    TOPO+=(--add-host "$pair")
-  done
+  # Settings this agent's CLI needs that are the same in every session, if
+  # its plug-in has any. One file per agent, so a new agent needs no change
+  # here; agents/<name>/compat.md lists every line. ./sandbox accepts only
+  # NAME=value lines in this file: a bare name would copy that variable in
+  # from your own environment.
+  if [ -f "${SANDBOX_ROOT}/agents/${SANDBOX_AGENT:?}/env" ]; then
+    TOPO+=(--env-file "${SANDBOX_ROOT}/agents/${SANDBOX_AGENT}/env")
+  fi
   # Only with the disk-backed workspace: slow writes to the store's disk to
   # this many bytes a second. `doctor` checks your user may set this.
   if [ -n "${SANDBOX_IO_LIMIT:-}" ]; then

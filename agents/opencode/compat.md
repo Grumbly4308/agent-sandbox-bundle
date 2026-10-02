@@ -33,9 +33,13 @@ and the CLI did not work without it. "No" means the CLI works without it.
 The spike used a mock; that the vendor accepts the forwarded requests is not
 yet proven.
 
+`$SANDBOX_SIDECAR_URL` is the credential sidecar's address in this session,
+for example `http://10.201.0.3:8080`. `topology.sh` sets it on the container.
+It is an address, not a name: no container here is found by name.
+
 | Setting | Where it is applied | Why | Proven necessary |
 |---|---|---|---|
-| `provider.anthropic.options.baseURL = "http://sidecar:8080/v1"` in `OPENCODE_CONFIG_CONTENT` | `launch` | Sends Anthropic model requests to the sidecar. **The `/v1` at the end is mandatory**: without it requests go to the wrong path and fail. Given through this variable because it wins over the repository's and the user's configuration; `ANTHROPIC_BASE_URL` does not. | yes |
+| `provider.anthropic.options.baseURL = "$SANDBOX_SIDECAR_URL/v1"` in `OPENCODE_CONFIG_CONTENT` | `launch` | Sends Anthropic model requests to the sidecar. **The `/v1` at the end is mandatory**: without it requests go to the wrong path and fail. Given through this variable because it wins over the repository's and the user's configuration; `ANTHROPIC_BASE_URL` does not. | yes |
 | `ANTHROPIC_API_KEY=sk-ant-api03-sandbox-dummy-not-a-credential` | `launch`, in the environment | OpenCode does not offer the Anthropic provider without a key. A placeholder; the sidecar discards it and uses the real key. In the environment and not in the configuration: as a configuration value OpenCode drops the `anthropic-beta` request headers for extended thinking and streamed tool calls. | yes |
 | `model = "anthropic/claude-sonnet-4-6"` in `OPENCODE_CONFIG_CONTENT` | `launch` | A fixed default model. It is the one OpenCode 1.18.34 picks by itself when only an Anthropic key is present; stating it keeps the default from being taken from the repository's configuration. Choose another with `-m` or `/models`. | no |
 | `share = "disabled"` in `OPENCODE_CONFIG_CONTENT` | `launch` | Session sharing uploads the conversation to `opncd.ai`. The proxy refuses that host anyway; this saves the attempt. | no |
@@ -43,7 +47,7 @@ yet proven.
 | `OPENCODE_DISABLE_AUTOUPDATE=1` | `env` | The CLI is installed read-only and cannot update itself. Upgrading is `./sandbox upgrade`. The spike saw no change in traffic with it. | no |
 | `--auto` | `launch`, only with `run --auto` | Your choice, not a compatibility setting: OpenCode's flag that approves every permission request not explicitly denied. Prompts are for a person who is watching. | not applicable |
 
-`NO_PROXY` must contain `sidecar` (set in `topology.sh`); without it model
+`NO_PROXY` must contain the sidecar's address (set in `topology.sh`); without it model
 requests go to the proxy and fail.
 
 ## `--auto`: what is and is not proven

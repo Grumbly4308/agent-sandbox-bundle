@@ -22,8 +22,8 @@ http_port 3128
 # name with a DNS lookup at start, and gives up if it cannot.
 visible_hostname sandbox-proxy
 
-# Do not read /etc/hosts. Podman writes names for your host's own address
-# there; the proxy has no business knowing them.
+# Do not read /etc/hosts. A name must never be answered from a file in this
+# container instead of by a real lookup.
 hosts_file none
 
 # ---------------------------------------------------------------------------

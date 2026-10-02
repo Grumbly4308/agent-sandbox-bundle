@@ -217,13 +217,20 @@ RUN set -eu; \
 # with --dns=none, which tells Podman to write no /etc/resolv.conf of its
 # own, so the file in the image is the one the agent sees: no name server,
 # on a read-only filesystem, and every name lookup fails at once. The proxy
-# and the sidecar are found through /etc/hosts instead.
+# and the sidecar are reached by address instead.
 # UNPROVEN: builders manage /etc/resolv.conf themselves while building, so
 # whether this file survives into the image as written has to be checked on
 # a real build (`./sandbox verify` reads it). It is copied from the helper
 # stage, and last, because writing it in a RUN step would only change the
 # builder's temporary copy.
 COPY --from=empty /out/resolv.conf /etc/resolv.conf
+
+# The hosts file [physical B13]. The containers are started with --no-hosts,
+# which tells Podman to write no /etc/hosts of its own (its own would name
+# your host and give one of its addresses), so the file in the image is the
+# one the agent sees: localhost and the container's own name, nothing else.
+# UNPROVEN, and copied last, for the same reason as the file above.
+COPY images/agent/hosts /etc/hosts
 
 # The base image starts everything through its own entrypoint script. Clear
 # it: ./sandbox passes the exact command (sandbox-idle, sandbox-bundle,

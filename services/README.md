@@ -59,7 +59,7 @@ as a shell script, so nothing in it can run a command on your host.
 | `PIDS` | yes | Limit on processes and threads. |
 | `PORT` | yes | The TCP port the service listens on. |
 | `URL_VAR` | yes | Name of the environment variable the agent's CLI is started with, e.g. `DATABASE_URL`. |
-| `URL_TEMPLATE` | yes | Its value. `{host}` is replaced by the service's name, which resolves on the session network. |
+| `URL_TEMPLATE` | yes | Its value. `{host}` is replaced by the service's address on the session network (no container is found by name). |
 | `HEALTH` | yes | A command run inside the service container with `podman exec`; exit status 0 means ready. `./sandbox` waits for it before starting the agent's CLI. Plain words separated by spaces. |
 | `TMPFS` | repeatable, may be absent | A writable path, held in memory and capped: `path:size=...,mode=1777,nosuid,nodev,noexec`. The root filesystem is read-only, so every path the service writes to needs one. |
 | `ENV` | repeatable, may be absent | `NAME=value` for the service's environment. |

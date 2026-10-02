@@ -21,6 +21,12 @@ if [ "${1:-}" = "--auto" ]; then
   shift
 fi
 
+# The sidecar's address is this session's, handed in by topology.sh.
+sidecar="${SANDBOX_SIDECAR_URL:?launch(codex): SANDBOX_SIDECAR_URL is not set}"
+# A backstop. If Codex ever decides to refresh the dummy login, the attempt
+# goes to the sidecar, which does not forward it, and not to the vendor.
+export CODEX_REFRESH_TOKEN_URL_OVERRIDE="$sidecar/oauth/token"
+
 umask 077
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 mkdir -p "$codex_home"
@@ -70,12 +76,12 @@ case "${SANDBOX_AUTH:-}" in
     cat >"$codex_home/config.toml" <<EOF
 # Written by agents/codex/launch at every start. See compat.md.
 model_provider = "sidecar"
-chatgpt_base_url = "http://sidecar:8080/backend-api"
+chatgpt_base_url = "$sidecar/backend-api"
 $common_top
 
 [model_providers.sidecar]
 name = "sidecar"
-base_url = "http://sidecar:8080/backend-api/codex"
+base_url = "$sidecar/backend-api/codex"
 wire_api = "responses"
 requires_openai_auth = true
 
@@ -108,7 +114,7 @@ EOF
     # An API key. The built-in provider is used, pointed at the sidecar.
     cat >"$codex_home/config.toml" <<EOF
 # Written by agents/codex/launch at every start. See compat.md.
-openai_base_url = "http://sidecar:8080/v1"
+openai_base_url = "$sidecar/v1"
 $common_top
 
 $common_tables

@@ -216,13 +216,16 @@ field() {   # <role> <key>
 }
 
 # What the kernel says inside a container: capability sets, no-new-privileges,
-# the core-dump limit, and what happens on a write to /. Plain `sh`, so it
-# runs in the Alpine images too.
+# the core-dump limit, what happens on a write to /, and what /etc/hosts
+# holds. Plain `sh`, so it runs in the Alpine images too.
 # shellcheck disable=SC2016  # this text is run by the container's sh, not expanded here
 CONTAINER_PROBE='LC_ALL=C; export LC_ALL
 while read -r k v; do case "$k" in CapInh:|CapPrm:|CapEff:|CapBnd:|CapAmb:|NoNewPrivs:) echo "$k$v";; esac; done < /proc/self/status
 while read -r a b c d e f g; do if [ "$a $b $c $d" = "Max core file size" ]; then echo "Core:$e $f"; fi; done < /proc/self/limits
-if out=$( ( : > /.verify-probe ) 2>&1 ); then rm -f /.verify-probe; echo "Root:created a file"; else echo "Root:$out"; fi'
+if out=$( ( : > /.verify-probe ) 2>&1 ); then rm -f /.verify-probe; echo "Root:created a file"; else echo "Root:$out"; fi
+hm=no; while read -r a b c d mp f; do if [ "$mp" = /etc/hosts ]; then hm=yes; fi; done < /proc/self/mountinfo
+ho=""; if [ -r /etc/hosts ]; then while read -r a b; do case "$a" in ""|"#"*|127.*|::1|fe00::*|ff00::*|ff02::*) ;; *) ho="$ho $a";; esac; done < /etc/hosts; fi
+echo "Hosts:mounted=$hm other=${ho:-none}"'
 
 probe_load() {   # <role>
   podman exec "$SESSION-$1" sh -c "$CONTAINER_PROBE" > "$WORK/probe.$1" 2>"$WORK/probe-err.$1" || true
@@ -718,6 +721,28 @@ scan_for() {
   LC_ALL=C tr -c 'A-Za-z0-9._~+/=-' '\n' | LC_ALL=C grep -o -F -f <(printf '%s\n' "$1") | sort -u || true
 }
 
+# [physical B13] Podman's own /etc/hosts names the host and gives one of its
+# addresses. Every container is created with --no-hosts, so none should have
+# one; a sibling service counts, because the agent can run code in it.
+check_B13_hosts_all() {
+  local role value bad=""
+  for role in $ROLES; do
+    value="$(probed "$role" Hosts)"
+    case "$value" in
+      "mounted=no other=none") ;;
+      mounted=yes*) bad="$bad $role: Podman has mounted its own /etc/hosts (${value#* });" ;;
+      mounted=no\ other=*) bad="$bad $role: /etc/hosts holds addresses that are not loopback:${value#*other=};" ;;
+      *) bad="$bad $role: /etc/hosts could not be read from inside ($value);" ;;
+    esac
+  done
+  if [ -z "$bad" ]; then
+    pass B13-hosts-all "in each of [$ROLES]: read /etc/hosts from inside. It is the image's own file, not one Podman wrote, and holds loopback addresses only"
+  else
+    fail B13-hosts-all "a container's /etc/hosts can tell where the host is:$bad" \
+      "every container is created with --no-hosts (topology.sh, _topo_hardening); a service image must not ship addresses in its own /etc/hosts"
+  fi
+}
+
 check_B15_token_absent() {
   local secret pieces canary_file canary_env found where="" searched="" missing=""
   secret="$(keyring_get "$AGENT" "$AUTH" || true)"
@@ -1168,6 +1193,7 @@ verify_session() {
   run_inside B12-no-route
   check_B12_network_attach
   check_B13_network_no_gateway
+  check_B13_hosts_all
   run_inside B13-gateway-ports B13-etc-hosts B14-no-resolver B14-dns-by-hand
   check_B15_token_absent
   run_inside B15-key-files B15-push B16-add-address B16-packet-socket

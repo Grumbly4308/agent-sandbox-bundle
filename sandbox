@@ -38,9 +38,6 @@ fi
 # Your settings and your own allowlist entries.
 SANDBOX_CONFIG_DIR="${SANDBOX_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-sandbox}"
 export SANDBOX_ROOT SANDBOX_VERSION SANDBOX_STATE_DIR SANDBOX_CONFIG_DIR
-# Keep your host's address out of every container's /etc/hosts; see the file
-# for why.  [physical B13]
-export CONTAINERS_CONF_OVERRIDE="$SANDBOX_ROOT/policy/containers.conf"
 
 LABEL="agent-sandbox.session"
 SESSION_PATTERN='^asb-[a-z0-9]([a-z0-9-]*[a-z0-9])?-[0-9a-f]{6}$'
@@ -786,8 +783,9 @@ load_service() {
   esac
 }
 
-# The address a service's connection string points at: its name.
-service_url() {   # <name>
+# A service's connection string. It points at the service's address on the
+# session network: no container here is found by name.
+service_url() {   # <address>
   printf '%s' "${SVC_URL_TEMPLATE//\{host\}/$1}"
 }
 
@@ -993,7 +991,7 @@ wait_for() {
 # is filled for `podman exec`.
 EXEC_ENV=()
 exec_environment() {
-  local name email service
+  local name email service count=0
   EXEC_ENV=(--env "SANDBOX_AUTH=$AUTH")
   # Commits made inside carry your name, as they would on your own machine.
   name="$(git config user.name || true)"
@@ -1007,8 +1005,9 @@ exec_environment() {
   for service in $SERVICES; do
     load_service "$service"
     if [ -n "$SVC_URL_VAR" ]; then
-      EXEC_ENV+=(--env "$SVC_URL_VAR=$(service_url "${service%%:*}")")
+      EXEC_ENV+=(--env "$SVC_URL_VAR=$(service_url "$(service_address "$count")")")
     fi
+    count=$((count + 1))
   done
 }
 
@@ -1098,7 +1097,8 @@ cmd_run() {
   # --pids would appear to do nothing.
   if [ "$nproc" -lt "$pids" ]; then nproc="$pids"; fi
   budget="$(parse_count --budget "$budget")"
-  check_env_file "$SANDBOX_ROOT/agents/$AGENT/env"
+  # Optional: an agent whose settings all depend on the session has none.
+  [ ! -f "$SANDBOX_ROOT/agents/$AGENT/env" ] || check_env_file "$SANDBOX_ROOT/agents/$AGENT/env"
   command -v git >/dev/null 2>&1 || die "git is not installed"
   for service in $SERVICES; do load_service "$service"; done
 
@@ -1150,19 +1150,16 @@ cmd_run() {
   export SANDBOX_FSIZE_BYTES="$WORKSPACE_BYTES"
   SANDBOX_MEM_LIMIT="$(agent_memory_limit "$mem_bytes" "$tmp_bytes" "$home_bytes")"
   export SANDBOX_MEM_LIMIT
-  # Names the agent reaches directly, not through the proxy, and their
-  # addresses for /etc/hosts.
-  SANDBOX_EXTRA_HOSTS="" SANDBOX_NO_PROXY_EXTRA=""
+  # The addresses the agent reaches directly, not through the proxy.
+  SANDBOX_NO_PROXY_EXTRA=""
   if [ "$GIT_RELAY" = 1 ]; then
-    SANDBOX_EXTRA_HOSTS="gitrelay:$SANDBOX_RELAY_IP"
-    SANDBOX_NO_PROXY_EXTRA=",gitrelay,$SANDBOX_RELAY_IP"
+    SANDBOX_NO_PROXY_EXTRA=",$SANDBOX_RELAY_IP"
   fi
   for service in $SERVICES; do
-    SANDBOX_EXTRA_HOSTS="${SANDBOX_EXTRA_HOSTS:+$SANDBOX_EXTRA_HOSTS }${service%%:*}:$(service_address "$count")"
-    SANDBOX_NO_PROXY_EXTRA="$SANDBOX_NO_PROXY_EXTRA,${service%%:*},$(service_address "$count")"
+    SANDBOX_NO_PROXY_EXTRA="$SANDBOX_NO_PROXY_EXTRA,$(service_address "$count")"
     count=$((count + 1))
   done
-  export SANDBOX_EXTRA_HOSTS SANDBOX_NO_PROXY_EXTRA
+  export SANDBOX_NO_PROXY_EXTRA
   export SANDBOX_ALLOW_HTTP=0
 
   # shellcheck source=topology.sh
@@ -1202,7 +1199,7 @@ cmd_run() {
     case "$relay_host" in *gitlab*) relay_user=oauth2 ;; esac
     # What the agent's clone gets as "origin". The relay ignores the path and
     # sends everything to the one repository above.
-    relay_remote="http://gitrelay:8081/repo.git"
+    relay_remote="http://$SANDBOX_RELAY_IP:8081/repo.git"
     say "The git relay lets the agent push branch $BRANCH to $ORIGIN_URL by itself."
     say "What it pushes does NOT go through export: no diff review, no secret scan."
     # Typed here, or piped in on stdin; it is not stored anywhere on this host.
@@ -1321,7 +1318,7 @@ cmd_run() {
   # again.
   image_ids="$(podman image inspect --format '{{.Id}}' "$(image_tag "agent-$AGENT:$TOOLCHAIN")" "$(image_tag proxy)" "$(image_tag credsidecar)" | tr '\n' ' ')"
   image_ids="$image_ids|podman=$(podman version --format '{{.Client.Version}}' 2>/dev/null || true)|kernel=$(uname -r)"
-  image_ids="$image_ids|files=$(cat "$SANDBOX_ROOT/topology.sh" "$SANDBOX_ROOT/seccomp/agent-seccomp.json" "$SANDBOX_ROOT/policy/containers.conf" | cksum | tr ' ' ':')"
+  image_ids="$image_ids|files=$(cat "$SANDBOX_ROOT/topology.sh" "$SANDBOX_ROOT/seccomp/agent-seccomp.json" | cksum | tr ' ' ':')"
   image_ids="$image_ids|relay=$GIT_RELAY|driver=$WORKSPACE_DRIVER|services=$SERVICES|runtime=${SANDBOX_RUNTIME_CLASS:-}|selinux=${SANDBOX_SELINUX_OPT:-}"
   if [ "$strict" -eq 1 ] || ! grep -qxF "$image_ids" "$SANDBOX_CONFIG_DIR/verified" 2>/dev/null; then
     info "checking the barriers (verify --quick)"

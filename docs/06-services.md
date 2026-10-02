@@ -14,8 +14,11 @@ environment:
 
 | Service | Variable | Value |
 |---|---|---|
-| `postgres:16` | `DATABASE_URL` | `postgres://postgres:sandbox@postgres:5432/postgres` |
-| `redis:7` | `REDIS_URL` | `redis://redis:6379/0` |
+| `postgres:16` | `DATABASE_URL` | `postgres://postgres:sandbox@<address>:5432/postgres` |
+| `redis:7` | `REDIS_URL` | `redis://<address>:6379/0` |
+
+`<address>` is the service's address on the session's network, for example
+`10.201.0.20`. Nothing inside a session is found by name.
 
 ## What to know
 

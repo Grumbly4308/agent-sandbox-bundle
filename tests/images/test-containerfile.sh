@@ -137,6 +137,22 @@ done
 check "sbom: written to /usr/share/sandbox/sbom.json" grep -q '> /usr/share/sandbox/sbom.json' "$cf"
 check "resolv.conf: an empty one is copied in last" grep -qx 'COPY --from=empty /out/resolv.conf /etc/resolv.conf' "$cf"
 check "resolv.conf: marked unproven" grep -q 'UNPROVEN' "$cf"
+# The hosts file the agent sees is the image's (containers start with
+# --no-hosts): loopback only, and copied after the last RUN, because a RUN
+# step sees the builder's temporary file, not the image's.
+check "hosts: the image's own file is copied in" grep -qx 'COPY images/agent/hosts /etc/hosts' "$cf"
+if [ "$(grep -n '^COPY images/agent/hosts ' "$cf" | cut -d: -f1)" -gt "$(grep -n '^RUN ' "$cf" | tail -n 1 | cut -d: -f1)" ]; then
+  pass "hosts: copied after the last RUN"
+else
+  fail "hosts: a RUN step follows the copy"
+fi
+if awk '$1 !~ /^(#|$)/ && $1 !~ /^127\./ && $1 != "::1" { bad = 1 } END { exit bad }' "$root/images/agent/hosts"; then
+  pass "hosts: every address is loopback"
+else
+  fail "hosts: an address that is not loopback"
+fi
+check "hosts: names localhost" grep -qE '^127\.0\.0\.1[[:space:]].*\blocalhost\b' "$root/images/agent/hosts"
+check "hosts: names the container's own name (--hostname in topology.sh)" grep -qE '^127\.0\.0\.1[[:space:]].*\bsandbox\b' "$root/images/agent/hosts"
 check_not "no 'latest' anywhere" grep -qiw 'latest' "$cf"
 if printf '%s\n' "$code" | grep -qE 'CLAUDE\.md|AGENTS\.md|settings\.json|opencode\.json'; then
   fail "the image is given rules for the agent (CLAUDE.md, AGENTS.md, settings.json)"

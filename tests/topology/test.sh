@@ -69,7 +69,7 @@ for c in $containers; do
   for flag in --read-only --read-only-tmpfs=false --cap-drop=ALL \
     --security-opt=no-new-privileges --ipc=private --pid=private \
     --cgroupns=private --restart=no --pull=never --http-proxy=false \
-    --log-driver=k8s-file; do
+    --no-hosts --log-driver=k8s-file; do
     has "$flag" || fail "$c: missing $flag"
   done
   has_pair --ulimit core=0:0 || fail "$c: core dumps not switched off"
@@ -85,7 +85,7 @@ for c in $containers; do
 
   # Things no container may have (B06, B09).
   for bad in --privileged --cap-add --device --network=host --pid=host \
-    --ipc=host --userns=host; do
+    --ipc=host --userns=host --add-host; do
     has "$bad" && fail "$c: has $bad"
   done
   for item in "${TOPO[@]}"; do
@@ -117,6 +117,17 @@ has_pair --user 61000:61000 || fail "agent: not uid 61000"
 value_of --security-opt | grep -q '^seccomp=.*/seccomp/agent-seccomp.json$' ||
   fail "agent: custom seccomp profile not applied"
 has --dns=none || fail "agent: resolver configuration not suppressed"
+# Nothing is found by name (B13, B14): Podman writes no /etc/hosts, so every
+# address the agent is given must be a number.
+has_pair --hostname sandbox || fail "agent: its own name is not the one the image's /etc/hosts holds"
+has_pair --env HTTPS_PROXY=http://10.201.7.2:3128 || fail "agent: the proxy is not given by address"
+has_pair --env SANDBOX_SIDECAR_URL=http://10.201.7.3:8080 || fail "agent: the sidecar is not given by address"
+has_pair --env NO_PROXY=localhost,127.0.0.1,10.201.7.3 || fail "agent: NO_PROXY is not the sidecar's address"
+for item in "${TOPO[@]}"; do
+  case "$item" in
+    *//proxy* | *//sidecar* | *//gitrelay* | *,sidecar* | *,gitrelay*) fail "agent: a container is named, not addressed: $item" ;;
+  esac
+done
 [ "$(value_of --network)" = "asb-test-0a1b2c-sandbox:ip=10.201.7.10" ] ||
   fail "agent: must be on the sandbox network only, got: $(value_of --network | tr '\n' ' ')"
 has --volume && fail "agent: has a bind mount (--volume)"

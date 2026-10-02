@@ -62,7 +62,7 @@ FAKE_PODMAN_REMOTE=true    refused "run refuses a remote Podman" "remote client"
 CONTAINER_HOST=ssh://elsewhere/run/podman.sock refused "run refuses CONTAINER_HOST" "pointed at another machine" run
 CONTAINER_CONNECTION=prod refused "run refuses CONTAINER_CONNECTION" "pointed at another machine" run
 FAKE_PODMAN_ROOTLESS=false refused "destroy refuses a root-run Podman too" "rootful" "$ROOT/sandbox" destroy --all
-FAKE_PODMAN_VERSION=5.3.1  refused "run refuses Podman older than 5.4" "too old" run
+FAKE_PODMAN_VERSION=4.3.1  refused "run refuses Podman older than 4.4" "too old" run
 FAKE_PODMAN_BACKEND=cni    refused "run refuses the CNI network backend" "netavark" run
 
 # --- a kernel that cannot enforce the limits  [physical B10] ---------------------
@@ -128,7 +128,7 @@ refused "a missing seccomp profile" "agent-seccomp.json is missing" run
 mv "$T/seccomp.aside" "$ROOT/seccomp/agent-seccomp.json"
 printf 'ANTHROPIC_API_KEY\n' >> "$ROOT/agents/claude/env"
 refused "an env file that would copy a host variable in" "is not NAME=value" run
-printf 'ANTHROPIC_BASE_URL=http://sidecar:8080\n' > "$ROOT/agents/claude/env"
+printf 'DISABLE_AUTOUPDATER=1\n' > "$ROOT/agents/claude/env"
 
 # --- credentials  [physical B15] ---------------------------------------------------
 unset SANDBOX_TEST_ANTHROPIC_KEY

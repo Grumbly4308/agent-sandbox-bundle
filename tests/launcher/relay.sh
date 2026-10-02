@@ -36,11 +36,10 @@ case "$relay" in *"--env${tab}RELAY_UPSTREAM=https://github.com/example/project.
 case "$relay" in *"--network${tab}$s-sandbox:ip=10.201.0.4"*) pass "it gets the relay's fixed address" ;; *) fail "relay address: $relay" ;; esac
 case "$relay" in *"--user${tab}61002:61002"*"--cap-drop=ALL"*|*"--cap-drop=ALL"*"--user${tab}61002:61002"*) pass "it runs as its own user with no capabilities" ;; *) fail "relay hardening: $relay" ;; esac
 check  "the proxy is told the relay's address" grep -qE "^create${tab}--name${tab}$s-proxy${tab}.*SANDBOX_RELAY_IP=10.201.0.4" "$log"
-check  "the agent finds the relay by /etc/hosts" grep -qE "^create${tab}--name${tab}$s-agent${tab}.*--add-host${tab}gitrelay:10.201.0.4" "$log"
-check  "the agent reaches the relay directly, not through the proxy" grep -qE "^create${tab}--name${tab}$s-agent${tab}.*NO_PROXY=[^${tab}]*,gitrelay,10.201.0.4" "$log"
+check  "the agent reaches the relay directly, not through the proxy" grep -qE "^create${tab}--name${tab}$s-agent${tab}.*NO_PROXY=[^${tab}]*,10.201.0.4" "$log"
 check  "the proxy's relay list holds the one git host" grep -qx "github.com" "$SANDBOX_STATE_DIR/$s/proxy/relay.domains"
 check  "state records that the relay is on" grep -qx "GIT_RELAY=1" "$SANDBOX_STATE_DIR/$s/state"
-check  "the agent's clone is given the relay as its remote" grep -qE "^exec${tab}.*$s-agent${tab}sandbox-import${tab}agent/test${tab}http://gitrelay:8081/repo.git$" "$log"
+check  "the agent's clone is given the relay as its remote" grep -qE "^exec${tab}.*$s-agent${tab}sandbox-import${tab}agent/test${tab}http://10.201.0.4:8081/repo.git$" "$log"
 before "the relay is waited for before its token goes in" "^exec${tab}$s-gitrelay${tab}gitrelay-healthcheck" "relay-load"
 
 loaded="$(find "$FAKE_PODMAN_STATE/stdin" -name "*.$s-gitrelay.relay-load")"

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# agents/<name>/env: NAME=value lines and nothing else (a bare NAME would
-# copy that variable in from the operator's own environment), no secrets,
-# and every address in them is the sidecar.
+# agents/<name>/env, for the agents that have one: NAME=value lines and
+# nothing else (a bare NAME would copy that variable in from the operator's
+# own environment), no secrets, and no address: addresses differ from session
+# to session and are set by topology.sh and the launch scripts.
 # shellcheck source-path=SCRIPTDIR source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-for agent in claude codex opencode; do
+for agent in claude opencode; do
   file="$root/agents/$agent/env"
   if [ ! -f "$file" ]; then
     fail "$agent: env is missing"
@@ -30,11 +31,12 @@ for agent in claude codex opencode; do
     pass "$agent: env sets nothing named like a secret"
   fi
 
-  # Every URL is plain http to the sidecar on the session network.
-  if grep -oE '[a-z]+://[^/]+' "$file" | grep -qv '^http://sidecar:8080$'; then
-    fail "$agent: env names a host other than http://sidecar:8080"
+  # No address at all: a name would not resolve (no container is found by
+  # name), and an address is only known once the session exists.
+  if grep -qE '[a-z]+://' "$file"; then
+    fail "$agent: env holds an address"
   else
-    pass "$agent: every address in env is the sidecar"
+    pass "$agent: env holds no address"
   fi
 
   # No name twice.
@@ -48,22 +50,29 @@ for agent in claude codex opencode; do
   check_not "$agent: env leaves the proxy variables alone" grep -qiE '^(https?_proxy|no_proxy)=' "$file"
 done
 
-check "claude: base URL is the sidecar" grep -qx 'ANTHROPIC_BASE_URL=http://sidecar:8080' "$root/agents/claude/env"
+# shellcheck disable=SC2016  # the text searched for, not a variable of this script
+check "claude: launch takes the base URL from the session's sidecar address" \
+  grep -q '^export ANTHROPIC_BASE_URL="${SANDBOX_SIDECAR_URL:?' "$root/agents/claude/launch"
 for name in CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL DISABLE_AUTOUPDATER; do
   check "claude: $name=1" grep -qx "$name=1" "$root/agents/claude/env"
 done
 check_not "claude: the first-party override is not set anywhere executable" \
   grep -q '_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL' "$root/agents/claude/env" "$root/agents/claude/launch"
-check "codex: refresh backstop points at the sidecar" \
-  grep -qx 'CODEX_REFRESH_TOKEN_URL_OVERRIDE=http://sidecar:8080/oauth/token' "$root/agents/codex/env"
+check_not "codex: has no env file (every setting of its is written by launch)" test -e "$root/agents/codex/env"
+for agent in claude codex opencode; do
+  check_not "$agent: launch names no container by name" grep -qE '//(sidecar|proxy|gitrelay)\b' "$root/agents/$agent/launch"
+done
 check "opencode: models fetch off" grep -qx 'OPENCODE_DISABLE_MODELS_FETCH=1' "$root/agents/opencode/env"
 check "opencode: auto-update off" grep -qx 'OPENCODE_DISABLE_AUTOUPDATE=1' "$root/agents/opencode/env"
 
 # Every variable an env file sets is explained in that agent's compat.md.
 for agent in claude codex opencode; do
-  while IFS='=' read -r name _; do
-    check "$agent: compat.md explains $name" grep -q "$name" "$root/agents/$agent/compat.md"
-  done <"$root/agents/$agent/env"
+  if [ -f "$root/agents/$agent/env" ]; then
+    while IFS='=' read -r name _; do
+      check "$agent: compat.md explains $name" grep -q "$name" "$root/agents/$agent/compat.md"
+    done <"$root/agents/$agent/env"
+  fi
+  check "$agent: compat.md explains SANDBOX_SIDECAR_URL" grep -q 'SANDBOX_SIDECAR_URL' "$root/agents/$agent/compat.md"
   check "$agent: compat.md says nothing in it is a control" grep -q 'Nothing on this page is a control' "$root/agents/$agent/compat.md"
   check "$agent: compat.md has a 'Proven necessary' column" grep -q '| Proven necessary |' "$root/agents/$agent/compat.md"
   check "$agent: auth.md exists and covers revoking" grep -q '^## Revoking' "$root/agents/$agent/auth.md"

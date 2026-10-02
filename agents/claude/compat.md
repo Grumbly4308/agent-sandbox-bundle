@@ -16,9 +16,13 @@ and the CLI did not work without it. "No" means the CLI works without it and
 the setting is a convenience. The spike used a mock; that the vendor accepts
 the forwarded requests is not yet proven.
 
+`$SANDBOX_SIDECAR_URL` is the credential sidecar's address in this session,
+for example `http://10.201.0.3:8080`. `topology.sh` sets it on the container.
+It is an address, not a name: no container here is found by name.
+
 | Setting | Where it is applied | Why | Proven necessary |
 |---|---|---|---|
-| `ANTHROPIC_BASE_URL=http://sidecar:8080` | `env` | Sends every model request (`/v1/messages`, token counting, sub-agents, compaction, web search) to the sidecar instead of the vendor. The agent has no route to the vendor at all. | yes |
+| `ANTHROPIC_BASE_URL=$SANDBOX_SIDECAR_URL` | `launch` | Sends every model request (`/v1/messages`, token counting, sub-agents, compaction, web search) to the sidecar instead of the vendor. The agent has no route to the vendor at all. | yes |
 | `CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-sandbox-dummy-not-a-credential` (oauth) | `launch` | The CLI will not start without a credential. This is a placeholder; the sidecar discards it and uses the real token. With this variable the CLI needs no credentials file and never tries to refresh. | yes |
 | `ANTHROPIC_API_KEY=sk-ant-api03-sandbox-dummy-not-a-credential` (apikey) | `launch` | Same, for API-key mode. | yes |
 | `customApiKeyResponses.approved` = last 20 characters of the dummy key (apikey) | `launch` writes `~/.claude.json` | The interactive interface asks whether to use an API key found in the environment and sends nothing until it is approved. | yes, for the interactive interface |
@@ -32,7 +36,7 @@ the forwarded requests is not yet proven.
 | `--dangerously-skip-permissions` | `launch`, only with `run --auto` | Your choice, not a compatibility setting: no permission prompts. Prompts are for a person who is watching. | not applicable |
 
 Two things the plug-in depends on but does not set itself: `NO_PROXY` must
-contain `sidecar` (set in `topology.sh`; without it model requests go to the
+contain the sidecar's address (set in `topology.sh`; without it model requests go to the
 proxy and fail), and the sidecar must never answer 401 (the CLI ends the
 turn; the sidecar answers 403 or 503 instead).
 
