@@ -109,7 +109,7 @@ check_podman() {
   local facts rootless remote version backend uri
   if ! command -v podman >/dev/null 2>&1; then
     bad "podman is not installed" \
-        "install Podman 4.4 or newer from your distribution (apt install podman, dnf install podman)"
+        "install Podman 5.4 or newer from your distribution (apt install podman, dnf install podman)"
     return 0
   fi
   # These variables send every podman command to another machine's Podman.
@@ -150,10 +150,13 @@ check_podman() {
   PODMAN_USABLE=1
 
   [ "$MODE" != runtime ] || return 0
-  if version_at_least "$version" 4 4; then
-    ok "Podman is 4.4 or newer"
+  # 5.4 is the oldest Podman believed to honour the setting that keeps the
+  # host's address out of /etc/hosts (policy/containers.conf) [physical B13].
+  if version_at_least "$version" 5 4; then
+    ok "Podman is 5.4 or newer"
   else
-    bad "Podman $version is too old (4.4 or newer is needed)" "upgrade Podman from your distribution"
+    bad "Podman $version is too old (5.4 or newer is needed)" \
+        "upgrade Podman from your distribution (Debian 13, Ubuntu 26.04 and current Fedora have it), or run the sandbox in a VM (extras/vm-wrapper/)"
   fi
   # netavark is the network backend that gives an internal network with its
   # name service off no gateway address at all [physical B13].

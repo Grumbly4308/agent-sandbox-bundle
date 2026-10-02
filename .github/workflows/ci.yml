@@ -24,14 +24,17 @@ jobs:
     # Runs the whole cycle against rootless Podman. Needs an API key from a
     # dedicated workspace with a spend cap, stored as the repository secret
     # SANDBOX_TEST_ANTHROPIC_KEY, and pinned images (scripts/pin-images.sh)
-    # committed beforehand.
+    # committed beforehand. Ubuntu 26.04, because 24.04's Podman (4.9) is
+    # older than the 5.4 doctor asks for.
     if: github.event_name == 'workflow_dispatch'
     needs: static
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - name: Podman and the host tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends podman uidmap passt jq
+        # gitleaks is the export's secret scan: without it the cycle's export
+        # step reports "not run" and counts as a failure.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends podman uidmap passt jq gitleaks
       - name: Images build and pass the quick checks
         run: tests/phase-b/images.sh
       - name: doctor, run, verify, export, destroy

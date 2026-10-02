@@ -3,7 +3,7 @@
 Two example recipes for a virtual machine that exists for one job and is
 then deleted: `agent-sandbox.yaml` for [Lima](https://lima-vm.io) (macOS and
 Linux) and `cloud-init.yaml` for [Multipass](https://multipass.run) (macOS,
-Linux, Windows). Both give you Ubuntu 24.04 with rootless Podman and an
+Linux, Windows). Both give you Ubuntu 26.04 with rootless Podman and an
 unprivileged user called `sandbox`.
 
 **Untested.** Neither file has been started by the authors: there was no
@@ -47,7 +47,7 @@ limactl delete --force agent-sandbox                       # delete, with everyt
 Multipass:
 
 ```sh
-multipass launch 24.04 --name agent-sandbox --cpus 4 --memory 12G --disk 30G --cloud-init cloud-init.yaml
+multipass launch 26.04 --name agent-sandbox --cpus 4 --memory 12G --disk 30G --cloud-init cloud-init.yaml
 multipass exec agent-sandbox -- sudo -iu sandbox
 multipass delete --purge agent-sandbox
 ```

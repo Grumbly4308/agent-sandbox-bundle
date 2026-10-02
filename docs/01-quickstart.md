@@ -35,10 +35,11 @@ Then log in as that user (`ssh sandboxer@host`), not with `su`.
 
 Podman is the only container runtime this uses, and it runs as your ordinary
 user: there is no background service running as root and no special group to
-join.
+join. Version 5.4 or newer is needed; Ubuntu 24.04 ships 4.9, which is too old
+(see [07 — Troubleshooting](07-troubleshooting.md)).
 
 ```bash
-# Debian / Ubuntu 24.04 or newer (as an admin user)
+# Debian 13 / Ubuntu 26.04 or newer (as an admin user)
 sudo apt install -y podman uidmap passt git
 
 # Fedora
@@ -182,7 +183,7 @@ scripts/pin-images.sh                 # first time only
 | `./sandbox verify` | Attempt every bypass in the barrier register |
 | `./sandbox allow <host> --reason "<why>"` | Let the agent reach one more host. See [02](02-egress.md) |
 | `./sandbox deny <host>` | Take it off again |
-| `./sandbox logs [agent\|proxy\|sidecar\|service]` | What each container printed |
+| `./sandbox logs [agent\|proxy\|sidecar\|relay\|service]` | What each container printed |
 | `./sandbox export` | Bring the branch out and review it |
 | `./sandbox push` / `./sandbox pr` | Send the reviewed branch to the repository |
 | `./sandbox destroy [--all]` | Remove the session, or every session |

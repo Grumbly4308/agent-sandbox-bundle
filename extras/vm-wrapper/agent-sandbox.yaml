@@ -11,11 +11,11 @@
 #
 #   limactl start --name=agent-sandbox ./agent-sandbox.yaml
 
-# Ubuntu 24.04, whose Podman (4.9) is new enough for the sandbox (4.4).
+# Ubuntu 26.04: the sandbox needs Podman 5.4 or newer, and 24.04 ships 4.9.
 images:
-  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+  - location: "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img"
     arch: "x86_64"
-  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+  - location: "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-arm64.img"
     arch: "aarch64"
 
 # One session takes up to 10 GB of memory with the default settings (see

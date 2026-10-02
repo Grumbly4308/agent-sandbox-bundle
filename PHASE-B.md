@@ -13,7 +13,8 @@ When a step fails, fix the cause and record it here. Do not weaken the check.
 A Linux host (or a Mac with `podman machine`) and an ordinary account without
 `sudo`:
 
-- rootless Podman 4.4 or newer, `git`, `jq`, `curl`
+- rootless Podman 5.4 or newer (Debian 13, Ubuntu 26.04, current Fedora; Ubuntu
+  24.04 ships 4.9 and is refused), `git`, `jq`, `curl`
 - `gitleaks` (the export's secret scan; without it `push` refuses)
 - `secret-tool` on Linux (the keyring), unless you will type credentials in
 - an API key from a **dedicated workspace with a spend cap**, for the test run
@@ -38,8 +39,9 @@ git diff --exit-code seccomp/agent-seccomp.json
 # 4. The host checks.
 ./sandbox doctor
 
-# 5. Every image builds, each CLI starts, and the quick checks pass on each
-#    (Codex, OpenCode, and the python and full toolchains; no real credential).
+# 5. Every image builds, the barrier checks `run --strict` makes pass on each,
+#    and each CLI starts (Codex, OpenCode, and the python and full toolchains;
+#    no real credential).
 tests/phase-b/images.sh
 
 # 6. The full cycle with Claude Code in API-key mode: doctor, run, verify,
@@ -59,7 +61,8 @@ codex login
 ./sandbox login --agent codex
 ./sandbox run /path/to/a/repo --agent codex --strict
 
-# 9. The disk-backed workspace, if you want it (doctor prints how to make a store).
+# 9. The disk-backed workspace, if you want it (set STORE in your settings;
+#    doctor then prints how to make the store).
 ./sandbox run /path/to/a/repo --workspace-driver local --workspace-size 2g --strict
 scripts/verify.sh --store-test
 ```
@@ -130,10 +133,18 @@ fails.
 - An internal network with `--disable-dns` has no gateway address (filed
   upstream as a bug; may change), and static `ip=` addresses work on it.
 - `--dns=none` leaves the image's empty `/etc/resolv.conf` in place.
-- `policy/containers.conf` (`host_containers_internal_ip = "none"`) keeps the
-  host's address out of `/etc/hosts`. If not, `B13-etc-hosts` fails. The
-  variable that points Podman at that file may need Podman 4.5, while `doctor`
-  accepts 4.4: raise doctor's minimum if 4.4 ignores it.
+- `policy/containers.conf` (`host_containers_internal_ip = "none"` and
+  `base_hosts_file = "none"`) keeps the host's address and the host's own
+  `/etc/hosts` lines out of the containers' `/etc/hosts`, and Podman still
+  writes the `localhost` lines. If not, `B13-etc-hosts` fails. **Which Podman
+  first honours `"none"` for the first setting was not established here**: it
+  is 5.3 or 5.4, and `doctor` asks for 5.4 to be safe. If 5.4 does not honour
+  it, raise doctor's minimum; do not relax the check. Supporting older Podman
+  (Ubuntu 24.04's 4.9) would mean not letting Podman manage `/etc/hosts` at
+  all (`--no-hosts`, and addresses in place of the names `proxy`, `sidecar`
+  and `gitrelay`): a design change, not made.
+- `--image-volume=ignore` stops a service image's declared data directory
+  becoming an uncapped volume on disk, and Redis starts with `/data` read-only.
 - `--timeout` kills each container at the deadline with the launcher gone.
 - `--http-proxy=false` and the proxy with both networks' name service off still
   resolves outside names through the host's resolvers.
@@ -198,7 +209,7 @@ fails.
 - GitHub or GitLab accepting the relay's push bodies and its Basic
   authentication header, through a real Squid.
 - The agent's git reaching `http://gitrelay:8081/` through `/etc/hosts` and
-  `NO_PROXY`.
+  `NO_PROXY`, so that a plain `git push` to the `origin` the import sets works.
 
 ### Agents
 
@@ -211,7 +222,9 @@ fails.
 
 Nothing in `extras/` has been loaded or started: the auditd rules, the Falco
 rules, the Tetragon policy, the Lima template and the Multipass file. Their
-field names and package names are from memory.
+field names and package names are from memory, as are the Ubuntu 26.04 image
+addresses in the Lima template and the `ubuntu-26.04` runner name in
+`.github/workflows/ci.yml`.
 
 ## The sidecar spike (requirement 19)
 

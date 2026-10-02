@@ -124,6 +124,8 @@ day. The SBOM records what you got.
    dummy credential.
 5. In `allowlist.txt`, list the model API host under `[sidecar]`.
 6. Write `compat.md` and `auth.md`.
-7. `./sandbox run <repo> --agent <name> --strict`.
+7. `./sandbox upgrade`. The sidecar's image holds a copy of every agent's
+   `sidecar.json`, and is only rebuilt when asked.
+8. `./sandbox run <repo> --agent <name> --strict`.
 
 Next: [06 — Services](06-services.md).

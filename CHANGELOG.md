@@ -28,7 +28,7 @@ Barrier numbers refer to the register in
 | **H5** | No swap cap, no ulimits, the legacy `cpus:` key. | Memory-plus-swap equals the memory limit; ulimits on open files, processes, file size and core dumps; limits passed straight to Podman (B10, B11). The memory limit includes the memory-backed mounts. |
 | **H6** | The workspace was a shared host directory. | A named volume per session, memory-backed and capped by default; a dedicated fixed-size disk store for large repositories (B08, B33). |
 | **M1** | The proxy was not read-only, port 80 was open, there were no body caps, and it restarted itself. | Read-only root, memory mounts for its scratch space, port 80 closed, size caps for plaintext, `--restart=no`, CPU, memory and process limits (`topology.sh`, `images/proxy/`). |
-| **M2** | Images and the CLI were not pinned. | Base images by digest in `images/PINS` (a build refuses a placeholder); CLI versions and package hashes in each `agents/<name>/install.sh`; an SBOM in every image. |
+| **M2** | Images and the CLI were not pinned. | Base images by digest in `images/PINS` (a build refuses a placeholder); CLI versions and package hashes in each `agents/<name>/install.sh`; a list of every package and its version in the agent image, where the toolchains and the CLI are. |
 | **M3** | The privilege preflight only warned. | `run` refuses as root, against a rootful or remote Podman, and without enforceable limits. No override (B29). |
 | **M4** | The `cannot sudo` test passed vacuously; no tests for DNS, swap, symlinks, the gateway or user namespaces. | `verify` attempts each bypass and treats "could not test" as a failure (`scripts/verify.sh`). Symlinks are handled at export, which never checks files out. |
 | **M5** | The memory-backed home was mode 0777. | The home directory is created 0700 inside the mount (B08). |
@@ -74,3 +74,11 @@ Decided during design review:
 - The git relay cannot refuse a force-push.
 - The sidecar is a small Node program, not Caddy or nginx: it has to read
   request bodies to refuse some of them.
+
+Found while checking the parts against each other, not yet reviewed by the
+product owner:
+
+- Podman 5.4 or newer is required. Older ones write the host's address into
+  every container's `/etc/hosts` and have no setting to stop it. This rules
+  out Ubuntu 24.04 (Podman 4.9) as a host; `PHASE-B.md` says what supporting
+  it would take.

@@ -19,6 +19,7 @@ Only the proxy's and the sidecar's logs are evidence of what happened.
 ```bash
 ./sandbox logs proxy
 ./sandbox logs sidecar
+./sandbox logs relay          # with --git-relay
 ./sandbox logs agent
 ./sandbox logs service        # sibling services
 ```
