@@ -22,10 +22,11 @@ Two rules:
 - A Linux machine or VM you can throw away. Ubuntu 24.04 is the reference;
   Debian 13 and current Fedora should work the same. (A Mac with
   `podman machine` is an optional extra, step 19.)
-- 8 GB of memory and 30 GB of free disk. With the default settings one
-  session may take up to about 10.5 GB (its files are held in memory), and
-  `doctor` refuses to start one the host cannot hold; the test scripts and
-  the test card use smaller sizes, about 4.6 GB a session.
+- 8 GB of memory and 50 GB of free disk: 20 GB for the disk store, where
+  sessions keep their workspaces, and the rest for the system and the images.
+  With the default settings one session may take up to about 6.6 GB of memory
+  (10.6 GB if its workspace is held in memory), and `doctor` refuses to start
+  one the host cannot hold; the test scripts use smaller sizes.
 - An **API key from a dedicated Anthropic workspace with a spend cap**, for
   the automated cycle and Part 2.
 - For Part 3: a dedicated Claude subscription account, a dedicated ChatGPT
@@ -47,6 +48,14 @@ sudo apt install -y podman uidmap slirp4netns passt catatonit dbus-user-session 
 # The account the sandbox runs from: no sudo, and its containers may outlive a login.
 sudo adduser --disabled-password --gecos "" sandboxer
 sudo loginctl enable-linger sandboxer
+
+# The disk store: a filesystem of fixed size where sessions keep their workspaces.
+sudo fallocate -l 20G /var/lib/agent-sandbox-store.img
+sudo mkfs.ext4 -q -m 0 /var/lib/agent-sandbox-store.img
+sudo mkdir -p /var/lib/agent-sandbox-store
+echo '/var/lib/agent-sandbox-store.img /var/lib/agent-sandbox-store ext4 loop,nosuid,nodev,nofail 0 0' | sudo tee -a /etc/fstab
+sudo mount /var/lib/agent-sandbox-store
+sudo chown sandboxer: /var/lib/agent-sandbox-store
 ```
 
 Then log in **as `sandboxer`** over SSH or on a console, not with `su` (Podman
@@ -145,8 +154,9 @@ is in the output above it; a barrier failure prints `FAIL <check>` with a
 tests/phase-b/cycle.sh
 ```
 
-Twice over (first `tests/fixtures/mini-node` as a local repository, then
-`https://github.com/jonschlinkert/is-number` cloned on the host), it runs:
+Twice over (first `tests/fixtures/mini-node` as a local repository with its
+workspace on the disk store, then `https://github.com/jonschlinkert/is-number`
+cloned on the host with its workspace held in memory), it runs:
 `doctor`, `run --strict --auto` with a small task, the **full** `verify`,
 `export`, `destroy`, and a check that nothing of the session is left. Then it
 runs the deadline test, which makes a three-minute session of its own, lets
@@ -303,19 +313,18 @@ exit
 stated `SKIP` (the relay cannot refuse a force push; protect the branch on
 the git host).
 
-### 15. The disk-backed workspace
+### 15. The disk store's limits
 
 ```bash
-mkdir -p ~/.config/agent-sandbox
-echo "STORE=/var/lib/agent-sandbox-store" >> ~/.config/agent-sandbox/settings
-./sandbox doctor            # prints the commands to make the store; an admin runs them
-./sandbox doctor            # green now
-./sandbox run ~/mini-node --auth apikey --workspace-driver local --workspace-size 2g --strict
-./sandbox destroy
 scripts/verify.sh --store-test
 ```
 
-**Good:** `B33-share-watch` and `B33-store-full` pass.
+Makes two short sessions of its own on the store: one writes past its share,
+the other fills the store.
+
+**Good:** `B33-share-watch` and `B33-store-full` pass: the first session is
+stopped by the watch, and the second gets "no space left" while the rest of
+the host's disk is untouched.
 
 ### 16. Upgrade
 
@@ -477,7 +486,13 @@ fails.
   resolves outside names through the host's resolvers.
 - `--cpus` and `--device-write-bps` under rootless (controller delegation).
 - Every `podman inspect --format` field name the launcher and `verify` read.
-- `podman unshare chown` / `du` / `rm` on the disk store.
+- A named volume that is a bind of a directory on the disk store
+  (`--opt type=none --opt o=bind,nosuid,nodev`), created by a rootless user,
+  and `podman unshare chown` / `du` / `rm` on that directory.
+- The store is mounted again after a reboot by its `/etc/fstab` line (`loop`,
+  `nofail`), and `destroy --all` then removes what earlier sessions left.
+- On a host with SELinux, whether containers may write to the store as it is,
+  or its files need the container label first.
 - That 4.4 really is the oldest Podman all of the above works on. Ubuntu
   24.04's 4.9 is the oldest one this plan exercises.
 - macOS: everything, through `podman machine`. In particular, storing a

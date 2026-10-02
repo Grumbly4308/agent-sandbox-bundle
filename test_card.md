@@ -26,7 +26,7 @@ is what it is for.
 | | |
 |---|---|
 | ☐ | A Linux machine or VM you can throw away. **Ubuntu 24.04** is the reference. Debian 13 and current Fedora should behave the same. |
-| ☐ | **8 GB of memory, 30 GB of free disk.** This card runs sessions with small sizes, about 4.6 GB each (step C5). With the default settings a session may take about 10.5 GB, because its files are held in memory, and `doctor` refuses a session the host cannot hold. |
+| ☐ | **8 GB of memory, 50 GB of free disk.** 20 GB of the disk becomes the store where sessions keep their workspaces; the rest is for the system and the images. This card runs sessions with small memory sizes, about 3.6 GB each (step C5); with the defaults a session may take about 6.6 GB, and `doctor` refuses a session the host cannot hold. |
 | ☐ | Admin (`sudo`) access for the setup in section B only. |
 | ☐ | An **Anthropic API key from a dedicated workspace with a spend cap**. Used for sections D and E. |
 | ☐ | A scratch repository on GitHub or GitLab that you own (steps E6 and E8). |
@@ -74,7 +74,32 @@ sudo install -d -m 700 -o sandboxer -g sandboxer /home/sandboxer/.ssh
 sudo install -m 600 -o sandboxer -g sandboxer ~/.ssh/authorized_keys /home/sandboxer/.ssh/authorized_keys
 ```
 
-Now log in **as `sandboxer`** with `ssh sandboxer@<host>`. Do not use `su` or
+☐ done
+
+### B3. The disk store (still as the admin user)
+
+Sessions keep their workspaces on a filesystem of fixed size made for the
+purpose. A session that fills it gets "no space left"; the rest of the
+machine's disk is not touched. 20 GB here.
+
+```bash
+sudo fallocate -l 20G /var/lib/agent-sandbox-store.img
+sudo mkfs.ext4 -q -m 0 /var/lib/agent-sandbox-store.img
+sudo mkdir -p /var/lib/agent-sandbox-store
+echo '/var/lib/agent-sandbox-store.img /var/lib/agent-sandbox-store ext4 loop,nosuid,nodev,nofail 0 0' | sudo tee -a /etc/fstab
+sudo mount /var/lib/agent-sandbox-store
+sudo chown sandboxer: /var/lib/agent-sandbox-store
+df -h /var/lib/agent-sandbox-store        # about 20G, on a /dev/loop device
+```
+
+If you used a recipe from `extras/vm-wrapper/` to make the VM, this is already
+done.
+
+☐ pass ☐ fail — `df` shows a filesystem of its own, about 20 GB.
+
+### B4. Log in as that account
+
+Log in **as `sandboxer`** with `ssh sandboxer@<host>`. Do not use `su` or
 `sudo -u`: Podman needs a real login session. Everything from here on is done
 as `sandboxer`.
 
@@ -88,7 +113,7 @@ podman info --format '{{.Host.Security.Rootless}}'   # must print: true
 
 ☐ pass ☐ fail — logged in as `sandboxer`; no sudo; Podman reports rootless.
 
-### B3. Get the code
+### B5. Get the code
 
 Where the repository is now:
 
@@ -108,7 +133,7 @@ All commands below are run from `~/agent-sandbox`.
 
 ☐ pass ☐ fail — the top commit is the one you expect.
 
-### B4. Git identity and a place for logs
+### B6. Git identity and a place for logs
 
 ```bash
 # Commits the agent makes carry your name. Without one, its commits fail.
@@ -198,29 +223,39 @@ writes the file.
 cat ~/.config/agent-sandbox/settings
 ```
 
-For this card, make sessions small enough for an 8 GB machine:
+The file must name the store from step B3, which `./sandbox` found by itself:
 
 ```bash
-printf '%s\n' MEM=2g WORKSPACE_SIZE=1g TMP_SIZE=512m HOME_SIZE=512m >> ~/.config/agent-sandbox/settings
+grep '^STORE=' ~/.config/agent-sandbox/settings        # STORE=/var/lib/agent-sandbox-store
 ```
 
-A session's files are held in memory, so its ceiling is the sum of these:
+If that line is empty, the store was not there when the file was written:
+go back to B3, then `echo STORE=/var/lib/agent-sandbox-store >> ~/.config/agent-sandbox/settings`.
+
+For this card, make sessions small enough to leave room on an 8 GB machine:
+
+```bash
+printf '%s\n' MEM=2g TMP_SIZE=512m HOME_SIZE=512m >> ~/.config/agent-sandbox/settings
+```
+
+The workspace is on disk. `/tmp` and the home directory are held in memory,
+so a session's memory ceiling is the sum of these:
 
 | Setting | Default | For this card | What it is |
 |---|---|---|---|
 | `MEM` | `4g` | `2g` | memory for the agent's processes |
-| `WORKSPACE_SIZE` | `4g` | `1g` | the repository, its dependencies and package caches |
 | `TMP_SIZE` | `1g` | `512m` | `/tmp` |
 | `HOME_SIZE` | `1g` | `512m` | the agent's home directory |
 | | | | plus about 0.6 GB for shared memory, the proxy, the sidecar and the keeper |
-| **A session may take up to** | **about 10.5 GB** | **about 4.6 GB** | |
+| **A session may take up to** | **about 6.6 GB** | **about 3.6 GB** | of memory |
+| `WORKSPACE_SIZE` | `4g` | `4g` | this session's share of the disk store: the repository, its dependencies and package caches |
 
 Others you may want later: `PIDS` and `NPROC` (default 512; raise both when a
 build cannot start more processes), `TTL` (default 4 hours) and `BUDGET`
 (default 500 model requests).
 
-☐ pass ☐ fail — the file exists, lists these settings, and ends with the
-four lines you added.
+☐ pass ☐ fail — the file exists, names the store, and ends with the three
+lines you added.
 
 ### C6. Check the host
 
@@ -228,14 +263,20 @@ four lines you added.
 ./sandbox doctor
 ```
 
-**Good:** a list of `ok` lines ending with `This host is ready.` Every `FAIL`
-has a `fix:` line under it. The ones to expect on a fresh machine:
+**Good:** a list of `ok` lines, among them `disk store
+/var/lib/agent-sandbox-store is a separate filesystem that you own`, ending
+with `This host is ready.` Every `FAIL` has a `fix:` line under it. The ones
+to expect on a fresh machine:
 
 | `FAIL` line | What to do |
 |---|---|
 | `cgroup v2, but your user may not set limits for: cpu` | Run the printed command as an admin (it writes one small systemd file), then log out and back in as `sandboxer`. |
 | `your subordinate UID range does not reach 61003` | Run the printed `usermod` command as an admin. |
 | `the session may use up to ... of memory and this host has ... available` | Step C5 was skipped, or other programs on the host are using the memory. |
+| `the disk store ... is an ordinary directory, not a filesystem of its own` | The store is not mounted (step B3, or after a reboot: `sudo mount /var/lib/agent-sandbox-store`). |
+
+A `warn` line saying `no disk store is set up` means the settings file does
+not name the store: see step C5.
 | `images/PINS still has UNPINNED base images` | Step C3 was skipped. |
 | `Podman ... is too old` | Podman 4.4 or newer is needed. |
 
@@ -285,8 +326,9 @@ output above it. A barrier failure prints `FAIL <check>` with a `fix:` line.
 tests/phase-b/cycle.sh
 ```
 
-Twice (first the small fixture as a local repository, then
-`https://github.com/jonschlinkert/is-number` cloned on the host) it runs:
+Twice (first the small fixture as a local repository, with its workspace on
+the disk store; then `https://github.com/jonschlinkert/is-number` cloned on
+the host, with its workspace held in memory) it runs:
 `doctor`, `run` with a small task for the agent, the **full** `verify`,
 `export`, `destroy`, and a check that nothing of the session is left. Then it
 runs the deadline test: a three-minute session of its own whose time limit is
@@ -323,8 +365,9 @@ git -C ~/mini-node init -q && git -C ~/mini-node add -A && git -C ~/mini-node co
 ./sandbox run ~/mini-node --auth apikey --strict
 ```
 
-**Good**, in order: how much memory the session may use; `creating session
-asb-mini-node-xxxxxx`; the barrier checks, all `PASS`; `Session ... runs until
+**Good**, in order: how much memory the session may use, and `Its workspace
+is on disk: up to 4g of the store at /var/lib/agent-sandbox-store.`;
+`creating session asb-mini-node-xxxxxx`; the barrier checks, all `PASS`; `Session ... runs until
 ...`; then Claude Code, with no login prompt and no "use this API key?"
 question. Ask it to add a small function and commit. It answers, edits and
 commits.
@@ -353,6 +396,7 @@ Type each line inside:
 | ☐ | `curl -sS -o /dev/null https://example.com` | fails; curl says the proxy answered 403 |
 | ☐ | `npm view is-number version` | a version number (the npm registry is on the default list) |
 | ☐ | `touch /probe` | `Read-only file system` |
+| ☐ | `df -h /workspace /tmp` | `/workspace`: about 20G, the store. `/tmp`: 512M, held in memory |
 | ☐ | `ls /var/run/docker.sock /run/podman` | no such file, twice |
 | ☐ | `ls ~ /workspace` | an almost empty home; the repository under `/workspace/repo`; nothing of yours |
 
@@ -405,8 +449,8 @@ podman ps -a; podman volume ls; podman network ls
   and leaves `~/agent-sandbox-out/<session>/repo.git` holding the agent's
   commit (`git --git-dir ~/agent-sandbox-out/<session>/repo.git log --oneline --all`).
 - ☐ After `destroy`, the three Podman listings show nothing whose name
-  starts `asb-`, and `ls "$XDG_RUNTIME_DIR/agent-sandbox"` shows no `asb-`
-  directory.
+  starts `asb-`, and neither `ls "$XDG_RUNTIME_DIR/agent-sandbox"` nor
+  `ls /var/lib/agent-sandbox-store` shows an `asb-` directory.
 
 ☐ pass ☐ fail
 
@@ -483,21 +527,27 @@ Protect the branch on the git host if that matters.
 
 ☐ pass ☐ fail
 
-### E9. The disk-backed workspace
-
-For repositories too large to hold in memory.
+### E9. The store's limits, and a workspace in memory
 
 ```bash
-echo "STORE=/var/lib/agent-sandbox-store" >> ~/.config/agent-sandbox/settings
-./sandbox doctor            # FAIL: the store does not exist; the fix: line is the commands to make it
-#   an admin runs those commands
-./sandbox doctor            # ok now
-./sandbox run ~/mini-node --auth apikey --workspace-driver local --workspace-size 2g --strict
-./sandbox destroy
 scripts/verify.sh --store-test
 ```
 
-**Good:** `B33-share-watch` and `B33-store-full` are `PASS`.
+It makes two short sessions of its own on the store: one writes past its
+share, the other fills the store.
+
+**Good:** `B33-share-watch` and `B33-store-full` are `PASS`: the first session
+is stopped by the watch, the second gets "no space left", and
+`df -h /` shows the machine's own disk no fuller than before.
+
+Then the other kind of workspace, for hosts with no store:
+
+```bash
+./sandbox run ~/mini-node --auth apikey --workspace-driver memory --workspace-size 1g --strict
+```
+
+In the second terminal: `./sandbox shell`, then `df -h /workspace` shows a
+`tmpfs` of 1.0G. Then `./sandbox verify` and `./sandbox destroy`.
 
 ☐ pass ☐ fail
 
@@ -628,7 +678,9 @@ enough to fix from.
 |---|---|---|
 | B1 packages | | |
 | B2 account | | |
-| B3 code | | |
+| B3 disk store | | |
+| B4 log in as that account | | |
+| B5 code | | |
 | C2 static tests | | |
 | C3 pin images | | |
 | C4 system-call filter identical | | |
@@ -644,7 +696,7 @@ enough to fix from.
 | E6 push and pull request | | |
 | E7 services | | |
 | E8 git relay | | |
-| E9 disk store | | |
+| E9 store limits; workspace in memory | | |
 | E10 upgrade | | |
 | F0 keyring | | |
 | F1 Claude subscription | | |
@@ -664,6 +716,7 @@ enough to fix from.
 | An image fails to build | The build output. "Images" under "Unproven" in PHASE-B.md lists the likely causes. |
 | The CLI starts but every model request fails | `./sandbox logs sidecar`: the status and path of each request. |
 | An allowed host is refused | `./sandbox logs proxy`. |
+| The session stopped by itself; the next command says `its workspace grew past --workspace-size` | It used more than its share of the store. The work is still there: `./sandbox export`. Start again with a larger `--workspace-size`. |
 | A session is left over and in the way | `./sandbox destroy --all` |
 | Anything else that refuses | [docs/07-troubleshooting.md](docs/07-troubleshooting.md) |
 

@@ -26,7 +26,7 @@ Barrier numbers refer to the register in
 | **H3** | DNS queries leaked to upstream resolvers; untested. | The agent's network has no name service and the agent has no resolver configuration (B14). The proxy looks up a name only after it has matched the allowlist, and refuses bare IP addresses (B20). `verify` attempts lookups. |
 | **H4** | The host was reachable through the network's gateway address; untested. | Rootless Podman keeps the network apart from the host's own, and an internal network with its name service off gets no gateway address (B13). `verify` probes the address a gateway would have. |
 | **H5** | No swap cap, no ulimits, the legacy `cpus:` key. | Memory-plus-swap equals the memory limit; ulimits on open files, processes, file size and core dumps; limits passed straight to Podman (B10, B11). The memory limit includes the memory-backed mounts. |
-| **H6** | The workspace was a shared host directory. | A named volume per session, memory-backed and capped by default; a dedicated fixed-size disk store for large repositories (B08, B33). |
+| **H6** | The workspace was a shared host directory. | A volume per session on a dedicated disk store of fixed size, with the session's share watched; held in memory and capped when the host has no store (B08, B33). |
 | **M1** | The proxy was not read-only, port 80 was open, there were no body caps, and it restarted itself. | Read-only root, memory mounts for its scratch space, port 80 closed, size caps for plaintext, `--restart=no`, CPU, memory and process limits (`topology.sh`, `images/proxy/`). |
 | **M2** | Images and the CLI were not pinned. | Base images by digest in `images/PINS` (a build refuses a placeholder); CLI versions and package hashes in each `agents/<name>/install.sh`; a list of every package and its version in the agent image, where the toolchains and the CLI are. |
 | **M3** | The privilege preflight only warned. | `run` refuses as root, against a rootful or remote Podman, and without enforceable limits. No override (B29). |
@@ -70,7 +70,10 @@ Decided during design review:
 - `/dev/shm` is a fourth writable place (64 MB).
 - The dependency diff covers anything that runs later, not only lockfiles and
   manifests.
-- The disk-backed workspace uses a dedicated store whose size is the hard cap.
+- The workspace is on disk by default, on a dedicated store whose size is the
+  hard cap; each session's share of it is watched, not walled. Held in
+  memory, a workspace had to fit in what the host could spare, and real
+  repositories often did not. Memory is the fallback when there is no store.
 - The git relay cannot refuse a force-push.
 - The sidecar is a small Node program, not Caddy or nginx: it has to read
   request bodies to refuse some of them.

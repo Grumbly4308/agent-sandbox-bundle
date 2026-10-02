@@ -24,14 +24,20 @@ fixes it.
 | `Podman ... is too old` | 4.4 or newer is needed. Ubuntu 22.04 ships 3.4, Debian 12 ships 4.3. | Use a newer distribution (Ubuntu 24.04, Debian 13, current Fedora), or run the sandbox in a VM (`extras/vm-wrapper/`). |
 | `your subordinate uid range does not reach 61003` | Podman maps container users onto a range of ids your account owns; it is too small. | `sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $USER`, then `podman system migrate`. |
 | `images/PINS still has UNPINNED base images` | Base images are pinned by exact version, and the placeholders have not been filled in. | `scripts/pin-images.sh` |
-| `the session may use up to N of memory and this host has M` | The session's ceiling (your `--mem` plus the memory-backed workspace, `/tmp` and home) is more than the host has free. | Lower `--mem` or `--workspace-size`, or destroy an old session. |
+| `the session may use up to N of memory and this host has M` | The session's ceiling (your `--mem` plus `/tmp` and home, plus the workspace if it is held in memory) is more than the host has free. | Make the disk store if you have none (`./sandbox doctor` prints how), lower `--mem`, or destroy an old session. |
 | A barrier check fails at start | `verify` found a barrier that does not hold. The session is stopped. | Read the `fix:` line under the failed check. Do not work around it. |
 
 ## Inside a session
 
-**"No space left on device" in the workspace.** The workspace is capped
-(4 GB by default) and held in memory. Raise `--workspace-size`, or for a large
-repository use the disk store (below).
+**"No space left on device" in the workspace.** On the disk store this means
+the store itself is full: destroy sessions you no longer need, or make a
+bigger store. Held in memory, the workspace is capped at `--workspace-size`
+(4 GB by default): raise it, or make the disk store (below).
+
+**The session stopped by itself: "its workspace grew past --workspace-size".**
+On the disk store each session has a share, 4 GB by default. The work is still
+there: `./sandbox export`. Start the next session with a larger
+`--workspace-size`, or raise `WORKSPACE_SIZE` in your settings.
 
 **Things stop starting; "Resource temporarily unavailable".** The process
 limit. Raise `--pids`. If you run several sessions at once they also share the
@@ -84,20 +90,25 @@ from the commit the session started at, so export had nothing sound to compare
 with and printed everything. Read it. If it is what you want, push by hand from
 the exported repository.
 
-## The disk-backed workspace
+## The disk store
 
-For repositories too large for memory:
+Workspaces are kept on the **disk store** when the host has one: a filesystem
+of fixed size that an admin creates once. `./sandbox doctor` prints the
+commands when there is none, and [01 — Quickstart](01-quickstart.md) has them
+too. A store at `/var/lib/agent-sandbox-store` is found by itself; one
+anywhere else is named with `STORE=` in your settings file.
 
-```bash
-./sandbox run <repo> --workspace-driver local --workspace-size 20g
-```
+- The store's size is the hard limit, shared by all sessions.
+- `--workspace-size` is one session's share. It is watched from the host every
+  30 seconds, and the session is stopped when it is passed.
+- The files stay on the store, across a reboot too, until `destroy`.
+- After a reboot the store must be mounted again; the line in `/etc/fstab`
+  does that. If it is not, `run` refuses: "an ordinary directory, not a
+  filesystem of its own".
 
-It needs a **store**: a filesystem of fixed size that you create once, as root.
-Without `STORE` in your settings file the option is refused. Set `STORE` to
-the path the store will have, and `doctor` prints the commands to make it. The store's size is the hard limit, shared by
-all sessions that use it; `--workspace-size` is watched from the host and ends
-the session when it is passed. Unlike the default, the data is on your disk
-until `destroy`.
+Without a store, or with `--workspace-driver memory`, the workspace is held in
+memory: nothing touches the disk and it is gone at a reboot, but it has to fit
+in the memory the host can spare.
 
 `--io-limit` (bytes per second written) works only with the store, and only if
 your user may set I/O limits; `doctor` checks.
@@ -105,9 +116,11 @@ your user may set I/O limits; `doctor` checks.
 ## macOS
 
 Podman on a Mac runs its containers inside a small Linux VM (`podman machine`).
-That is a second kernel between the agent and your Mac, which is good. The
-memory checks apply to the VM: give it enough with `podman machine set
---memory`.
+That is a second kernel between the agent and your Mac, which is good. There is
+no disk store on a Mac yet, so workspaces are held in memory, and the memory
+checks apply to the VM: one default session needs about 11 GB, so give the VM
+that with `podman machine set --memory 12288`, or lower `MEM` and
+`WORKSPACE_SIZE` in your settings.
 
 ## Cleaning up after a crash or a reboot
 
@@ -116,4 +129,5 @@ memory checks apply to the VM: give it enough with `podman machine set
 ```
 
 removes everything carrying a session's label, and the session directories.
-After a reboot the memory-backed workspaces are already gone.
+After a reboot memory-backed workspaces are already gone; those on the disk
+store are still there until this command removes them.

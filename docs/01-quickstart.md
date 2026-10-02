@@ -45,8 +45,28 @@ sudo apt install -y podman uidmap slirp4netns passt catatonit dbus-user-session 
 sudo dnf install -y podman git
 
 # macOS
-brew install podman git && podman machine init && podman machine start
+# macOS. Workspaces are held in memory on a Mac, so Podman's VM needs room for a session.
+brew install podman git jq && podman machine init --memory 12288 && podman machine start
 ```
+
+Then make the **disk store**, once. It is a filesystem of fixed size where
+sessions keep their workspaces, so that a session which fills it gets "no
+space left" and your own disk is not touched. 20 GB here; choose your own.
+
+```bash
+# Linux, as an admin user. Replace sandboxer with the account from step 1.
+sudo fallocate -l 20G /var/lib/agent-sandbox-store.img
+sudo mkfs.ext4 -q -m 0 /var/lib/agent-sandbox-store.img
+sudo mkdir -p /var/lib/agent-sandbox-store
+echo '/var/lib/agent-sandbox-store.img /var/lib/agent-sandbox-store ext4 loop,nosuid,nodev,nofail 0 0' | sudo tee -a /etc/fstab
+sudo mount /var/lib/agent-sandbox-store
+sudo chown sandboxer: /var/lib/agent-sandbox-store
+```
+
+`./sandbox` finds a store at that path by itself. Without one (and on macOS,
+where there is no support for it yet) workspaces are held in memory: that
+works, but everything in the workspace then has to fit in the memory the host
+can spare. The VM recipes in `extras/vm-wrapper/` make the store for you.
 
 Optional but worth having on the host:
 
@@ -119,6 +139,7 @@ Useful options:
 | `--ttl 2h` | The time limit. Default four hours. |
 | `--budget 200` | How many model requests the session may make. |
 | `--mem 4g --cpus 2 --pids 512` | Resource ceilings. |
+| `--workspace-size 10g` | This session's share of the disk store. Default 4 GB. |
 
 When the agent exits, the session is still there. Nothing is lost until you
 destroy it.
@@ -155,9 +176,9 @@ not be removed, or if the agent rewrote history below where it started.
 Containers, networks, the workspace and the session's files are removed.
 Nothing of the session is left except the image cache.
 
-A session you forget keeps holding the memory its files occupy, even after its
-time limit has cut it off from the network. Every `./sandbox` command reminds
-you which sessions are still there.
+A session you forget keeps its workspace (on the disk store, or in memory if
+you have no store) even after its time limit has cut it off from the network.
+Every `./sandbox` command reminds you which sessions are still there.
 
 ## The whole thing, once more
 

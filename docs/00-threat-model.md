@@ -122,12 +122,13 @@ container runtime, or the vendor's API.
 - The agent is attached to **one** network, and that network has no route to
   the internet. The proxy is the only container with a second network.
 - The agent holds a **dummy** model token. The real one lives in the sidecar.
-- By default there is **no path from the agent to your disk**. Its workspace is
-  a volume created for the session and held in memory, not a folder of yours.
+- There is **no path from the agent to your files**. Its workspace is a volume
+  created for the session, not a folder of yours. It lives on the **disk
+  store**: a separate filesystem of fixed size, made once for the purpose, so
+  that a session which fills it gets "no space left" and your own disk is not
+  touched. On a host with no store the workspace is held in memory instead.
   Code enters and leaves as a `git bundle` (one file holding commits) piped
-  through the launcher. (If you choose the disk-backed workspace for a large
-  repository, it lives on a separate, fixed-size filesystem made for the
-  purpose.)
+  through the launcher.
 - A small **keeper** container, not shown, holds the workspace open so that it
   outlives the agent container. It has no network and nothing to do.
 - The model vendor's API is reachable **only by the sidecar**, so the agent
@@ -181,9 +182,9 @@ Unless a line says otherwise, these describe the agent container.
 | B05 | SELinux confinement (`container_t`), named explicitly on hosts that run SELinux (Fedora, RHEL). On Ubuntu and Debian, rootless Podman applies no AppArmor profile, so this barrier is absent there; that is stated, not hidden. | Reads the label the kernel reports for the process and compares it with what the launcher asked for. |
 | B06 | Private process, shared-memory and cgroup namespaces. Not `privileged`. Not on the host's network. No runtime socket and no `docker`, `podman` or `nerdctl` program inside. | Looks for the sockets and the programs; checks that process 1 is the container's own and that `/proc/self/cgroup` shows the root of its own tree; from the host, checks the runtime reports private modes. |
 | B07 | Read-only root filesystem, in every container. | Writes to `/`, `/usr` and `/etc`. |
-| B08 | The writable places are size-capped and `nosuid,nodev`: `/tmp`, the home directory (inside a memory mount at `/home`) and `/dev/shm` (shared memory, which Postgres and Python's test tools need), all held in memory, and the workspace volume. The workspace is held in memory by default. With `--workspace-driver local` it is a directory on a dedicated disk store, where the kernel's cap is the size of that store, shared by all sessions that use it (see B33). | Tries to create a file in every mount; fails if one succeeds outside this list; fills each memory-backed one and expects "no space left", not a killed process. |
-| B09 | No file or folder of yours is mounted into the agent container, and no host directory is mounted writable into any container except the disk-backed workspace, if you chose it. Podman adds two small read-only files it generates itself (`/etc/hostname`, a marker file). The proxy reads its allowlists from a read-only directory the launcher wrote. | Lists every mount in the agent; fails on any bind mount other than those two files and, with the disk store, the workspace. |
-| B10 | cgroup limits on process count, memory and CPU, with a swap allowance of zero so nothing is pushed to host swap. The memory limit covers processes **and** the memory-backed files above, because files held in memory are memory. So one session can take `--mem` plus the caps on those places from your host: 10 GB with the defaults. `run` prints the total. | Reads the four cgroup files and compares the values with what was asked for; forks up to the process limit and expects a refusal. |
+| B08 | The writable places are size-capped and `nosuid,nodev`: `/tmp`, the home directory (inside a memory mount at `/home`) and `/dev/shm` (shared memory, which Postgres and Python's test tools need), all held in memory, and the workspace volume. The workspace is a directory on the dedicated disk store when the host has one: the kernel's cap there is the size of that store, shared by all sessions that use it, and each session's own share is watched (see B33). With no store, or with `--workspace-driver memory`, the workspace is held in memory and the kernel caps it for that session alone. | Tries to create a file in every mount; fails if one succeeds outside this list; fills each memory-backed one and expects "no space left", not a killed process. |
+| B09 | No file or folder of yours is mounted into the agent container, and no host directory is mounted writable into any container except the session's own directory on the disk store, as its workspace. Podman adds two small read-only files it generates itself (`/etc/hostname`, a marker file). The proxy reads its allowlists from a read-only directory the launcher wrote. | Lists every mount in the agent; fails on any bind mount other than those two files and, with the disk store, the workspace. |
+| B10 | cgroup limits on process count, memory and CPU, with a swap allowance of zero so nothing is pushed to host swap. The memory limit covers processes **and** the memory-backed files above, because files held in memory are memory. So one session can take `--mem` plus the caps on those places from your host: about 6.6 GB with the defaults when the workspace is on the disk store, about 10.6 GB when it is held in memory. `run` prints the total. | Reads the four cgroup files and compares the values with what was asked for; forks up to the process limit and expects a refusal. |
 | B11 | ulimits: open files, processes, largest file. Core dumps off, in every container. | Reads the limits; writes a file past the size limit. |
 | B12 | The agent's only network is `internal`: it has no default route. | Connects straight to a public address, bypassing the proxy. |
 | B13 | The host cannot be reached through the agent's network. Under rootless Podman that network is kept apart from the host's own, so the host's services are not listening on it. Today Podman also gives an internal network with its name service off no gateway address at all; that is checked, not assumed. Podman writes no `/etc/hosts` in any container (its own would name the host and give one of its addresses); each container sees the file in its image, and the agent image's names only `localhost`. | From the host, checks the network reports no gateway; from the agent, probes the address a gateway would have on 22, 53, 80, 443, 2375, 2376, 3000, 5432 and 8080 and fails if anything answers; reads `/etc/hosts` in every container and fails if Podman wrote it or if it holds any address that is not loopback. |
@@ -208,7 +209,7 @@ Unless a line says otherwise, these describe the agent container.
 | B30 | **Git relay (optional, off by default).** Holds one narrow git token and accepts pushes to one remote and the session branch only: no other branch, no tags, no deletes. It cannot tell a rewrite of history from an ordinary push, so protect the branch against force-pushes on the git host. What it pushes does **not** go through export. | Pushes to another branch and pushes a tag; expects refusals. Deleting the branch and force-pushing are not attempted against your real remote; the relay's own tests cover the delete. |
 | B31 | **`destroy` removes the session**: containers, both networks, volume, session directory, logs. | After `destroy`, lists what is left under the session's name. |
 | B32 | **The launcher filters what it prints.** Output from `logs`, `export` and `verify` is stripped of control characters before it reaches your terminal. | Puts an escape sequence in a commit message and a request line; checks the printed output. |
-| B33 | **Disk store watch (only with `--workspace-driver local`).** A host process measures this session's share of the store and stops the session when it passes `--workspace-size`. It lags by its polling interval; the hard wall is the store's own size. | Writes past the session's share and expects the session stopped; fills the store and expects "no space left". |
+| B33 | **Disk store watch (whenever the workspace is on the disk store).** A host process measures this session's share of the store every 30 seconds and stops the session when it passes `--workspace-size`. It lags by that interval, so one session can crowd out your others until it is stopped; the hard wall, which protects the rest of your disk, is the store's own size (B08). The measuring, and the deleting at `destroy`, are done on the host over files the agent wrote, inside Podman's user namespace, where they cannot reach files of yours. | Writes past the session's share and expects the session stopped; fills the store and expects "no space left". |
 
 ### Vapor — nothing here is a control
 
@@ -313,11 +314,18 @@ run inside the agent container run as the agent's user. `run` executes them
 before the agent starts, when nothing hostile has run yet. On a live session
 their output is only as trustworthy as the container.
 
-**Work you have not exported.** By default the workspace lives in memory. It
-survives the time limit, and it survives the agent container ending, and stays
-until you run `destroy`. It does not survive a reboot or the host running out
-of memory. Until you destroy a session it keeps holding the memory its files
-occupy. Export before you walk away, and destroy when you are done.
+**Work you have not exported.** The workspace survives the time limit, and it
+survives the agent container ending, and stays until you run `destroy`. On the
+disk store it also survives a reboot: the files stay in the store, where your
+account can read them, until `destroy` removes them. Held in memory, it does
+not survive a reboot or the host running out of memory, and until you destroy
+the session it keeps holding the memory its files occupy. Export before you
+walk away, and destroy when you are done.
+
+**One session crowding out your others.** On the disk store the cap for a
+single session is a watch, not a wall (B33). A session can fill the store
+within the watch's 30 seconds, and your other sessions then get "no space
+left" until it is stopped. The rest of your disk is not affected.
 
 **Build time.** Images are built with ordinary network access. Base images are
 pinned by digest, CLI versions are pinned, and an SBOM (a list of what is in
@@ -378,7 +386,8 @@ is the same exposure as fetching from any remote you do not control.
 
 1. **No credentials inside.** What is not there cannot be stolen.
 2. **No route out**, and a short allowlist.
-3. **No host directory mounted writable.**
+3. **No folder of yours mounted.** The workspace is on a filesystem set apart
+   for the sandbox, or in memory.
 4. **A host that an escape cannot own.**
 5. **Export on the host**: read the dependency diff first, then the code diff.
 6. **Kernel hardening.**
@@ -392,6 +401,10 @@ is the same exposure as fetching from any remote you do not control.
 - **cgroup**: the kernel's ceiling on how much memory, CPU and how many
   processes a group of processes may use.
 - **Core dump**: a copy of a crashed program's memory.
+- **Disk store**: a filesystem of fixed size (a file with a filesystem in it,
+  mounted like a disk) that an admin makes once and hands to your account.
+  Sessions keep their workspaces on it; its size is the most they can put on
+  your disk between them.
 - **Gateway**: the address on a container network that normally belongs to the
   host.
 - **gitleaks**: a tool that searches commits for passwords and keys.
