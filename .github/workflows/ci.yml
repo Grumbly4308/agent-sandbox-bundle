@@ -24,11 +24,10 @@ jobs:
     # Runs the whole cycle against rootless Podman. Needs an API key from a
     # dedicated workspace with a spend cap, stored as the repository secret
     # SANDBOX_TEST_ANTHROPIC_KEY, and pinned images (scripts/pin-images.sh)
-    # committed beforehand. Ubuntu 26.04, because 24.04's Podman (4.9) is
-    # older than the 5.4 doctor asks for.
+    # committed beforehand.
     if: github.event_name == 'workflow_dispatch'
     needs: static
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Podman and the host tools

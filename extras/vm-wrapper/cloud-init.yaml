@@ -5,7 +5,7 @@
 # EXAMPLE, NEVER STARTED by the authors (no Multipass on the machine this was
 # written on). Read README.md in this directory first.
 #
-#   multipass launch 26.04 --name agent-sandbox --cpus 4 --memory 12G --disk 30G \
+#   multipass launch 24.04 --name agent-sandbox --cpus 4 --memory 12G --disk 30G \
 #       --cloud-init cloud-init.yaml
 #
 # Multipass mounts no folder of yours unless you run `multipass mount`, does

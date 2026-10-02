@@ -35,11 +35,10 @@ Then log in as that user (`ssh sandboxer@host`), not with `su`.
 
 Podman is the only container runtime this uses, and it runs as your ordinary
 user: there is no background service running as root and no special group to
-join. Version 5.4 or newer is needed; Ubuntu 24.04 ships 4.9, which is too old
-(see [07 — Troubleshooting](07-troubleshooting.md)).
+join. Version 4.4 or newer is needed.
 
 ```bash
-# Debian 13 / Ubuntu 26.04 or newer (as an admin user)
+# Debian 13 / Ubuntu 24.04 or newer (as an admin user)
 sudo apt install -y podman uidmap passt git
 
 # Fedora
