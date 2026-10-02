@@ -1,0 +1,72 @@
+#!/usr/bin/env node
+// relay-load — hands the git relay its token.  [logical B30]
+//
+// ./sandbox runs this inside the relay container with the token on standard
+// input (`podman exec -i <session>-gitrelay relay-load`), so the token is
+// never in an environment variable, on a command line or in a file on your
+// host's disk. Input: ONE JSON object,
+//     {"token":"...","username":"x-access-token"}
+// (`username` is optional; x-access-token is what GitHub expects beside a
+// token, GitLab uses oauth2). It is written to credential.json in /run/relay,
+// a memory-backed mount in this container only, readable by the relay's user
+// alone. The relay reads the file on every request, so running this again
+// replaces the token without a restart.
+//
+// Nothing read here is ever printed, not even in an error message.
+'use strict';
+
+const fs = require('node:fs');
+const path = require('node:path');
+
+const runDir = process.env.RELAY_RUN_DIR || '/run/relay';   // RELAY_RUN_DIR: tests only
+const INPUT_MAX = 65536;
+
+function refuse(why) {
+  process.stderr.write(`relay-load: ${why}\n`);
+  process.exit(1);
+}
+
+const chunks = [];
+let size = 0;
+process.stdin.on('data', (chunk) => {
+  size += chunk.length;
+  if (size > INPUT_MAX) refuse('input is too large to be a token');
+  chunks.push(chunk);
+});
+process.stdin.on('error', () => refuse('could not read standard input'));
+process.stdin.on('end', () => {
+  let input;
+  try {
+    input = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    refuse('standard input is not one JSON object');
+  }
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) refuse('standard input is not one JSON object');
+  // Printable ASCII without spaces: what git hosts issue, and what fits in
+  // an HTTP header without any question of encoding.
+  if (typeof input.token !== 'string' || !/^[\x21-\x7e]{1,4096}$/.test(input.token)) {
+    refuse('"token" must be 1 to 4096 printable characters with no spaces');
+  }
+  const username = input.username === undefined ? 'x-access-token' : input.username;
+  if (typeof username !== 'string' || !/^[\x21-\x39\x3b-\x7e]{1,256}$/.test(username)) {
+    refuse('"username" must be 1 to 256 printable characters with no spaces or colons');
+  }
+
+  // Written under another name and then renamed, so the relay sees the old
+  // token or the new one, never half of a file.
+  const target = path.join(runDir, 'credential.json');
+  const scratch = path.join(runDir, `credential.json.${process.pid}`);
+  try {
+    fs.writeFileSync(scratch, JSON.stringify({ token: input.token, username }), { mode: 0o600, flag: 'wx' });
+    fs.chmodSync(scratch, 0o600);   // the mode above is subject to the umask; this is not
+    fs.renameSync(scratch, target);
+  } catch (error) {
+    try {
+      fs.unlinkSync(scratch);
+    } catch {
+      // nothing was written
+    }
+    refuse(`could not store the token in ${runDir} (${error.code || 'error'})`);
+  }
+  process.stdout.write('relay-load: token stored\n');
+});

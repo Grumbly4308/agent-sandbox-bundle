@@ -1,0 +1,47 @@
+# The git relay.  [logical B30]  Optional: only built and started for
+# `./sandbox run --git-relay`. Build context: this directory.
+#
+# What it is: a small filter between the agent and ONE git repository. It
+# holds one narrow git token so the agent never does, lets the agent fetch,
+# and lets it push to the session branch only: no other branch, no tag, no
+# delete.
+#
+# What it is not, stated here so nobody has to find out later:
+#   * Pushes through the relay do NOT go through `./sandbox export`: no
+#     attribution strip, no dependency diff, no secret scan.
+#   * It CANNOT refuse a force push. Telling a rewrite from a fast-forward
+#     needs the commits themselves, and the relay passes them through unread.
+#     Operator: protect the branch on the git host ("do not allow force
+#     pushes"), and give the token access to this one repository only.
+#
+# The base image is pinned by digest in images/PINS; ./sandbox passes it in
+# and refuses to build while it is still UNPINNED.
+ARG NODE_BASE
+FROM ${NODE_BASE}
+
+# Nothing is installed. The relay is one file of Node standard library and
+# needs no package, no git and no shell tool. The package managers the base
+# image ships are removed instead: nothing here ever installs anything.
+RUN rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx \
+           /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-*
+
+# relay.mjs              the relay itself
+# relay-load             reads the token from standard input and stores it in /run/relay
+# gitrelay-healthcheck   exits 0 when the listener answers; ./sandbox waits on it
+# All owned by root and not writable by the relay's user.
+COPY --chmod=0644 relay.mjs /usr/share/sandbox/gitrelay/relay.mjs
+COPY --chmod=0755 relay-load gitrelay-healthcheck /usr/local/bin/
+
+# Its own user, by number: 61002 is not the agent's user (61000) nor the
+# sidecar's (61001), and has no entry in /etc/passwd, no home directory and
+# no shell to log in to. topology.sh passes the same numbers with --user.
+# At run time the root filesystem is read-only [physical B07] and the only
+# writable place is /run/relay, 1 MB of memory that holds the token.
+USER 61002:61002
+WORKDIR /
+
+# Plain HTTP, reachable only on the session's internal network.
+EXPOSE 8081
+
+# Node is the first process and handles SIGTERM itself.
+CMD ["node", "/usr/share/sandbox/gitrelay/relay.mjs"]
