@@ -18,6 +18,12 @@ for text in "not root" "rootless, on this machine" "Podman is 4.4 or newer" "net
   case "$out" in *"$text"*) pass "doctor reports: $text" ;; *) fail "doctor does not report '$text'" ;; esac
 done
 case "$out" in *FAIL*) fail "a good host got a FAIL line: $out" ;; *) pass "a good host gets no FAIL line" ;; esac
+# No store is not a refusal: workspaces are then held in memory, and doctor
+# says how to make one and where to name it.
+case "$out" in
+  *"warn"*"no disk store is set up"*"mkfs.ext4"*"/etc/fstab"*"echo STORE=/var/lib/agent-sandbox-store >> "*"/settings"*) pass "without a store, doctor says how to make one" ;;
+  *) fail "doctor does not explain the store: $out" ;;
+esac
 if command -v gitleaks >/dev/null 2>&1; then
   pass "gitleaks is installed here"
 else
@@ -51,7 +57,7 @@ FAKE_PODMAN_IDMAP="0:1 1:1000 " red "id range too short" "does not reach 61003" 
 red "not enough memory" "this host has" "lower --mem" doctor --memory 99999999999999
 red "store that does not exist" "does not exist" "mkfs.ext4" doctor --store "$T/nowhere"
 mkdir "$T/plain"
-red "store that is an ordinary directory" "not a filesystem of its own" "mount -o loop" doctor --store "$T/plain"
+red "store that is an ordinary directory" "not a filesystem of its own" "/etc/fstab" doctor --store "$T/plain"
 FAKE_PODMAN_VERSION=4.4.0 check "Podman 4.4.0 is new enough" doctor
 FAKE_PODMAN_VERSION=4.9.3 check "Ubuntu 24.04's Podman (4.9.3) is new enough" doctor
 FAKE_PODMAN_VERSION=10.0.1 check "Podman 10 is new enough" doctor

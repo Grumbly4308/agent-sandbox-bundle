@@ -14,7 +14,7 @@
 #
 # The last two print only the failures. ./sandbox passes these as needed:
 #   --memory BYTES       what the session being started may take from the host
-#   --store DIR          the disk store for `--workspace-driver local`
+#   --store DIR          the disk store, when workspaces are kept on it
 #   --store-device DEV   that store's block device, for `--io-limit`
 #   --io                 the session uses `--io-limit`
 #
@@ -304,13 +304,42 @@ check_confinement() {
 }
 
 # ---------------------------------------------------------------------------
-# The disk store for `--workspace-driver local`.  [physical B08, logical B33]
+# The disk store, where workspaces are kept.  [physical B08, logical B33]
 # It must be a filesystem of its own, so that its size is the hard wall a
 # session cannot write past, and yours, so that rootless Podman can use it.
 # ---------------------------------------------------------------------------
+
+# The commands that make a store at <path>: a file of fixed size with a
+# filesystem in it, mounted at every boot, handed to you. They need an admin,
+# once. 20G is the most all sessions together can then put on disk.
+store_recipe() {   # <path>
+  printf '%s' "sudo fallocate -l 20G /var/lib/agent-sandbox-store.img && sudo mkfs.ext4 -q -m 0 /var/lib/agent-sandbox-store.img && sudo mkdir -p '$1' && echo '/var/lib/agent-sandbox-store.img $1 ext4 loop,nosuid,nodev,nofail 0 0' | sudo tee -a /etc/fstab && sudo mount '$1' && sudo chown $(id -u):$(id -g) '$1'"
+}
+
+# No store: not a refusal, but the workspace is then held in memory and has
+# to fit in what this host can spare.
+note_no_store() {
+  local path="${SANDBOX_STANDARD_STORE:-/var/lib/agent-sandbox-store}"
+  if [ "$(uname -s)" = Darwin ]; then
+    # On a Mac the containers run in Podman's own VM, and a store would have
+    # to be made inside it. Not worked out yet.
+    warn "on macOS each session's workspace is held in memory and counts against the memory of Podman's VM (podman machine)"
+    return 0
+  fi
+  warn "no disk store is set up: each session's workspace is held in memory and counts against this host's memory"
+  [ "$MODE" = full ] || return 0
+  printf '        to keep workspaces on disk, as an admin: %s\n' "$(store_recipe "$path")"
+  printf '        then: echo STORE=%s >> %s\n' "$path" "${SANDBOX_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-sandbox}/settings"
+}
+
 check_store() {
   local owner device parent_device make
-  make="sudo fallocate -l 20G /var/lib/agent-sandbox-store.img && sudo mkfs.ext4 -q /var/lib/agent-sandbox-store.img && sudo mkdir -p '$STORE' && sudo mount -o loop,nosuid,nodev /var/lib/agent-sandbox-store.img '$STORE' && sudo chown $(id -u):$(id -g) '$STORE'"
+  make="$(store_recipe "$STORE")"
+  if [ "$(uname -s)" = Darwin ]; then
+    bad "a disk store is set (STORE=$STORE), and on macOS there is no support for one yet" \
+        "remove the STORE line from your settings file; workspaces are then held in memory"
+    return 0
+  fi
   if [ -L "$STORE" ]; then
     # A link would be judged by the place it sits in, not the place it leads to.
     bad "the disk store $STORE is a symbolic link" "set STORE to the real path of the store's mount point"
@@ -422,7 +451,7 @@ main() {
     fi
     check_files_and_tools
     [ "$MODE" != full ] || check_core_pattern
-    [ -z "$STORE" ] || check_store
+    if [ -n "$STORE" ]; then check_store; else note_no_store; fi
     if [ -n "$NEED_MEMORY" ] && [ "$PODMAN_USABLE" -eq 1 ]; then check_memory; fi
     [ "$MODE" != full ] || check_sessions
   fi

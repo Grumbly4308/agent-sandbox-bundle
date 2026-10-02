@@ -74,6 +74,9 @@ topo_network_egress() {
 # and leaves as a git bundle piped by ./sandbox. The repository itself goes in
 # /workspace/repo, created 0700 by the agent's user at start.
 #
+# It is a directory on the disk store when the host has one, and held in
+# memory when it has not; ./sandbox decides which and says so at `run`.
+#
 # A memory-backed volume exists only while some running container has it
 # mounted. That container is the keeper (see topo_keeper), not the agent, so
 # the workspace outlives the agent container.
@@ -81,7 +84,9 @@ topo_volume_workspace() {
   TOPO=(--label "agent-sandbox.session=${SANDBOX_SESSION:?}")
   case "${SANDBOX_WORKSPACE_DRIVER:?}" in
     memory)
-      # The default. Held in memory, capped by the kernel, never on disk.
+      # For a host with no disk store. Held in memory, capped by the kernel
+      # for this session alone, never on disk. Everything in the workspace
+      # has to fit in the memory the host can spare.
       TOPO+=(
         --opt type=tmpfs
         --opt device=tmpfs
@@ -89,13 +94,13 @@ topo_volume_workspace() {
       )
       ;;
     local)
-      # For large repositories: a directory on the dedicated store, a
+      # The default when there is a store: a directory on it. The store is a
       # filesystem of fixed size that `doctor` helps you create once. This IS
       # a directory on your host's disk, made for the purpose. The kernel's
       # cap is the size of that filesystem, shared by every session that uses
       # it. ./sandbox watches this session's share from the host [logical
-      # B33] and refuses this driver when the store does not exist. Unlike
-      # the default, the data is on disk until `destroy`.
+      # B33] and refuses this driver when the store does not exist. The data
+      # is on disk, across a reboot too, until `destroy`.
       TOPO+=(
         --opt type=none
         --opt "device=${SANDBOX_STORE:?}/${SANDBOX_SESSION}"
@@ -183,9 +188,9 @@ _topo_deadline() {
 # ---------------------------------------------------------------------------
 topo_agent() {
   _topo_hardening agent
-  # Memory limit = the agent's allowance plus the caps on /tmp, home,
-  # /dev/shm and the memory-backed workspace (10 GB with the defaults): files
-  # in memory count as memory. Without the sum, a full workspace would get
+  # Memory limit = the agent's allowance plus the caps on /tmp, home and
+  # /dev/shm, plus the workspace's cap when that is held in memory: files in
+  # memory count as memory. Without the sum, a full workspace would get
   # the agent killed instead of getting "no space left". ./sandbox prints
   # the total and refuses if the host has less.
   _topo_limits "${SANDBOX_CPUS:?}" "${SANDBOX_MEM_LIMIT:?}" "${SANDBOX_PIDS:?}"
@@ -290,10 +295,12 @@ topo_agent() {
 # ---------------------------------------------------------------------------
 # keeper — holds the workspace open.  [logical B26]
 # A container with no network and nothing to do. Its one job is to keep the
-# memory-backed workspace mounted, so the work is still there for `export`
-# after the deadline has killed the agent container, or after the agent has
-# ended it. It is the only container with no deadline: it stays, holding the
-# memory the workspace's files occupy, until you run `destroy`.
+# workspace mounted, so the work is still there for `export` after the
+# deadline has killed the agent container, or after the agent has ended it.
+# (A workspace held in memory would vanish with its last container; one on
+# the disk store would not, and the keeper is kept there too so that both
+# kinds behave alike.) It is the only container with no deadline: it stays
+# until you run `destroy`.
 # ---------------------------------------------------------------------------
 topo_keeper() {
   _topo_hardening keeper

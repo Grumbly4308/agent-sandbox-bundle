@@ -113,6 +113,8 @@ refused "the local driver without a store" "needs a disk store" run --workspace-
 mkdir "$T/store"
 printf 'STORE=%s\n' "$T/store" >> "$T/config/settings"
 refused "the local driver with a store that is an ordinary directory" "not a filesystem of its own" run --workspace-driver local
+refused "the same store, used because it is set and nothing else was asked for" "not a filesystem of its own" run
+printf 'STORE=\n' >> "$T/config/settings"      # the last line wins: no store from here on
 refused "--io-limit with the memory-backed workspace" "memory-backed workspace has none" run --io-limit 10m
 refused "an unknown workspace driver" "--workspace-driver is memory or local" run --workspace-driver nfs
 

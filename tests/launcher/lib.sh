@@ -99,7 +99,7 @@ setup() {
   git config --global init.defaultBranch main
   # Small sizes, so the memory check passes on any machine that runs this.
   printf '%s\n' AGENT=claude AUTH=apikey TOOLCHAIN=node MEM=64m CPUS=1 PIDS=128 NPROC=128 \
-    TTL=1h BUDGET=50 TMP_SIZE=16m HOME_SIZE=16m WORKSPACE_SIZE=32m WORKSPACE_DRIVER=memory \
+    TTL=1h BUDGET=50 TMP_SIZE=16m HOME_SIZE=16m WORKSPACE_SIZE=32m WORKSPACE_DRIVER=auto \
     STORE= STORE_DEVICE= "OUT_DIR=$T/out" > "$T/config/settings"
 }
 

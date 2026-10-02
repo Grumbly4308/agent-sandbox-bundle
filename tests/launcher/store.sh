@@ -98,4 +98,27 @@ if [ -z "$left" ]; then pass "destroy leaves nothing in the state directory"; el
 sleep 1
 refuse "destroy stops the watchdog" kill -0 "$watchdog"
 
+# --- with a store set up, the workspace goes on it without being asked ---------------
+out="$("$ROOT/sandbox" run "$T/src" </dev/null 2>&1)" || fail "run with a store set up failed: $out"
+s="$(only_session)"
+check  "the default is the store when there is one" grep -qx "WORKSPACE_DRIVER=local" "$SANDBOX_STATE_DIR/$s/state"
+case "$out" in *"Its workspace is on disk: up to "*" of the store at $T/store."*) pass "run says the workspace is on disk" ;; *) fail "run does not say where the workspace is: $out" ;; esac
+"$ROOT/sandbox" destroy >/dev/null 2>&1 || fail "destroy failed"
+
+out="$("$ROOT/sandbox" run "$T/src" --workspace-driver memory </dev/null 2>&1)" || fail "run in memory failed: $out"
+s="$(only_session)"
+check  "--workspace-driver memory keeps it in memory all the same" grep -qx "WORKSPACE_DRIVER=memory" "$SANDBOX_STATE_DIR/$s/state"
+check  "and the store is left alone" test ! -e "$T/store/$s"
+"$ROOT/sandbox" destroy >/dev/null 2>&1 || fail "destroy failed"
+
+# --- a store already made at the usual place is written into fresh settings ----------
+mv "$T/config/settings" "$T/config/settings.aside"
+SANDBOX_STANDARD_STORE="$T/store" "$ROOT/sandbox" doctor >/dev/null 2>&1 || true
+check  "a store found at the usual place is named in settings written for the first time" grep -qx "STORE=$T/store" "$T/config/settings"
+rm "$T/config/settings"
+SANDBOX_STANDARD_STORE="$T/nowhere" "$ROOT/sandbox" doctor >/dev/null 2>&1 || true
+check  "with no store there, STORE is left empty" grep -qx "STORE=" "$T/config/settings"
+check  "and the driver is left to follow the store" grep -qx "WORKSPACE_DRIVER=auto" "$T/config/settings"
+mv "$T/config/settings.aside" "$T/config/settings"
+
 finish

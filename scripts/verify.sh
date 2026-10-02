@@ -1232,7 +1232,7 @@ verify_session() {
   if [ "$WORKSPACE_DRIVER" = local ]; then
     skip B33-store separate "writing past this session's share of the disk store would stop it; it runs in: scripts/verify.sh --store-test"
   else
-    skip B33-store memory-workspace "this session's workspace is held in memory; the disk store watch only exists with --workspace-driver local"
+    skip B33-store memory-workspace "this session's workspace is held in memory; the disk store watch only exists when the workspace is on the store"
   fi
   finish
 }
@@ -1539,7 +1539,7 @@ store_test() {
   local store free_kb size out status=0 waited=0
   store="$(kv "$(config_dir)/settings" STORE)"
   if [ -z "$store" ]; then
-    skip B33-share-watch no-store "no disk store is configured (STORE is empty in $(config_dir)/settings), so --workspace-driver local cannot be used and this barrier does not exist here"
+    skip B33-share-watch no-store "no disk store is configured (STORE is empty in $(config_dir)/settings), so workspaces are held in memory and this barrier does not exist here"
     skip B33-store-full no-store "no disk store is configured"
     finish
   fi

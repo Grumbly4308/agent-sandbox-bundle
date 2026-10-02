@@ -193,12 +193,24 @@ TTL|4h|How long a session runs before Podman stops it.
 BUDGET|500|How many model requests a session may make.
 TMP_SIZE|1g|Size of /tmp, held in memory.
 HOME_SIZE|1g|Size of the home directory, held in memory.
-WORKSPACE_SIZE|4g|Size of the workspace.
-WORKSPACE_DRIVER|memory|memory (the default) or local (on the disk store below).
-STORE||For the local driver: a filesystem of fixed size that you own. doctor explains.
+WORKSPACE_SIZE|4g|Size of the workspace: one session's share of the disk store, or its cap when held in memory.
+WORKSPACE_DRIVER|auto|auto (on the disk store when STORE is set, in memory when it is not), local or memory.
+STORE||The disk store: a filesystem of fixed size that you own. doctor explains how to make one.
 STORE_DEVICE||That filesystem's block device; only needed for --io-limit.
 OUT_DIR|$HOME/agent-sandbox-out|Where export puts the repository it has reviewed.
 EOF
+}
+
+# The usual place for the disk store; doctor's instructions make it there and
+# so do the VM recipes in extras/vm-wrapper/. (The variable exists for the
+# tests.)
+STANDARD_STORE="${SANDBOX_STANDARD_STORE:-/var/lib/agent-sandbox-store}"
+
+# True when a store has already been made at the usual place: a directory of
+# yours that is a filesystem of its own.
+standard_store_ready() {
+  [ "$(uname -s)" != Darwin ] && [ -d "$STANDARD_STORE" ] && [ ! -L "$STANDARD_STORE" ] && [ -O "$STANDARD_STORE" ] \
+    && [ "$(stat -c %d "$STANDARD_STORE" 2>/dev/null)" != "$(stat -c %d "$STANDARD_STORE/.." 2>/dev/null)" ]
 }
 
 ensure_settings() {
@@ -210,6 +222,9 @@ ensure_settings() {
     printf '# NAME=value lines. A flag on the command line wins over a line here.\n'
     printf '# This file is read as text; nothing in it is ever executed.\n'
     while IFS='|' read -r name default what; do
+      # A store that is already there is written in, so it is used without
+      # your having to name it.
+      if [ "$name" = STORE ] && standard_store_ready; then default="$STANDARD_STORE"; fi
       printf '\n# %s\n%s=%s\n' "$what" "$name" "$default"
     done <<EOF
 $(settings_table)
@@ -816,6 +831,15 @@ agent_exists() {
   [ -d "$SANDBOX_ROOT/agents/$1" ]
 }
 
+# Where the workspace is kept. On disk when there is a store to put it on:
+# held in memory it has to fit in what the host can spare, and real
+# repositories with their dependencies often do not.
+resolve_workspace_driver() {
+  if [ "$WORKSPACE_DRIVER" = auto ]; then
+    if [ -n "$STORE" ]; then WORKSPACE_DRIVER=local; else WORKSPACE_DRIVER=memory; fi
+  fi
+}
+
 # agent_memory_limit <processes> <tmp> <home>, in bytes.  [physical B10]
 # The agent's memory limit covers its processes and every memory-backed place
 # it can write to (64m is /dev/shm; the workspace unless it is on disk),
@@ -851,7 +875,8 @@ helpers_memory() {
 default_session_memory() {
   local agent mem tmp home helpers
   SESSION=asb-doctor-000000 SUBNET=10.201.0.0/24 GIT_RELAY=0 SERVICES=""
-  WORKSPACE_DRIVER="$(setting WORKSPACE_DRIVER)"
+  WORKSPACE_DRIVER="$(setting WORKSPACE_DRIVER)"; STORE="$(setting STORE)"
+  resolve_workspace_driver
   # One assignment per value: a size that does not parse must stop this, not
   # leave an empty number for the sum.
   WORKSPACE_BYTES="$(parse_size WORKSPACE_SIZE "$(setting WORKSPACE_SIZE)")" || return 1
@@ -1082,7 +1107,8 @@ cmd_run() {
   case "$AUTH" in oauth|apikey) ;; *) die "--auth is oauth or apikey, not '$AUTH'" ;; esac
   require_auth_mode "$AGENT" "$AUTH"
   case "$TOOLCHAIN" in node|python|full) ;; *) die "--toolchain is node, python or full, not '$TOOLCHAIN'" ;; esac
-  case "$WORKSPACE_DRIVER" in memory|local) ;; *) die "--workspace-driver is memory or local, not '$WORKSPACE_DRIVER'" ;; esac
+  case "$WORKSPACE_DRIVER" in auto|memory|local) ;; *) die "--workspace-driver is memory or local, not '$WORKSPACE_DRIVER'" ;; esac
+  resolve_workspace_driver
   if ! [[ "$cpus" =~ ^[0-9]+(\.[0-9]+)?$ ]] || ! [[ "$cpus" =~ [1-9] ]]; then
     die "--cpus: '$cpus' is not a number above zero"
   fi
@@ -1107,7 +1133,7 @@ cmd_run() {
     # [physical B08] The disk-backed workspace is a directory on a filesystem
     # made for the purpose. Without one there is nothing to cap it, so it is
     # refused; doctor (below) checks the store is real and yours.
-    [ -n "$STORE" ] || die "--workspace-driver local needs a disk store. Set STORE in $SANDBOX_CONFIG_DIR/settings to where it will be, then run ./sandbox doctor: it prints the commands to make one."
+    [ -n "$STORE" ] || die "--workspace-driver local needs a disk store, and none is set up. ./sandbox doctor prints the commands to make one."
     case "$STORE" in /*) ;; *) die "STORE must be a full path starting with /, not '$STORE'" ;; esac
     doctor_args+=(--store "$STORE")
     if [ -n "$io_limit" ]; then
@@ -1174,6 +1200,11 @@ cmd_run() {
   say "This session may use up to $(human_bytes "$total") of this host's memory:"
   say "  agent $(human_bytes "$SANDBOX_MEM_LIMIT") = $mem for processes + $tmp_size /tmp + $home_size home + 64m shared memory$([ "$WORKSPACE_DRIVER" = memory ] && printf ' + %s workspace' "$workspace_size")"
   say "  proxy, sidecar, keeper and services $(human_bytes "$helpers")"
+  if [ "$WORKSPACE_DRIVER" = local ]; then
+    say "Its workspace is on disk: up to $workspace_size of the store at $STORE."
+  else
+    say "Its workspace is held in memory$([ -n "$(setting STORE)" ] || printf ' (no disk store is set up; ./sandbox doctor says how to make one)')."
+  fi
 
   # --- The credentials, before anything is created --------------------------
   credential="$(credential_json "$AGENT" "$AUTH")"
