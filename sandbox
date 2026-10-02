@@ -1029,6 +1029,9 @@ cmd_run() {
   ttl_seconds="$(parse_duration --ttl "$ttl")"
   pids="$(parse_count --pids "$pids")"
   nproc="$(parse_count NPROC "$nproc")"
+  # The per-user limit must never be the tighter of the two, or raising
+  # --pids would appear to do nothing.
+  if [ "$nproc" -lt "$pids" ]; then nproc="$pids"; fi
   budget="$(parse_count --budget "$budget")"
   check_env_file "$SANDBOX_ROOT/agents/$AGENT/env"
   command -v git >/dev/null 2>&1 || die "git is not installed"
