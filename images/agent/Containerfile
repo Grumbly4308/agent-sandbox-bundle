@@ -1,0 +1,236 @@
+# The agent's world. Everything the agent can ever run is installed here, at
+# build time, because the root filesystem is mounted read-only at run time
+# [physical B07]. Build context: the repository root.
+#
+#   podman build -f images/agent/Containerfile \
+#     --build-arg NODE_BASE=<from images/PINS> --build-arg AGENT=claude \
+#     --build-arg TOOLCHAIN=node --build-arg VERSION=2.0.0 \
+#     -t localhost/agent-sandbox/agent-claude:node-2.0.0 .
+#
+# ./sandbox runs that for you. One image per agent and toolchain.
+#
+# What this file does NOT do: it sets no rules for the agent. No CLAUDE.md,
+# no AGENTS.md, no hooks, no permission lists. What protects you is in
+# topology.sh (how the container is started) and outside the container.
+#
+# Not yet built on a real Podman: this file was written without a container
+# runtime at hand.
+
+# The base image: Debian 12 with Node 22, pinned by digest in images/PINS.
+# Node comes from the official image because Debian's own Node is too old for
+# the CLIs. UNPINNED is not a valid image name, so with the default the FROM
+# line itself fails; the check right after it catches the other mistake, a
+# tag with no digest. Closes reference finding M2 (unpinned images).
+ARG NODE_BASE=UNPINNED
+
+# A helper stage whose only product is an empty file (see the last COPY).
+FROM ${NODE_BASE} AS empty
+RUN mkdir /out && : > /out/resolv.conf
+
+FROM ${NODE_BASE}
+
+# Which agent plug-in (a directory under agents/), which set of tools, and
+# the sandbox version (the VERSION file). NODE_BASE is named again so the
+# steps below can read it. The version is accepted under either name:
+# ./sandbox passes SANDBOX_VERSION.
+ARG NODE_BASE
+ARG AGENT
+ARG TOOLCHAIN=node
+ARG VERSION
+ARG SANDBOX_VERSION
+
+# Refuse to build from a base image that is not pinned by digest.
+RUN case "${NODE_BASE}" in *@sha256:*) ;; *) echo "agent image: NODE_BASE must be pinned by digest (registry/repo:tag@sha256:...), got '${NODE_BASE}'. Run scripts/pin-images.sh." >&2; exit 1 ;; esac
+
+# Refuse a build with a missing or unknown argument, and remember which
+# programs the base image ships with the setuid or setgid bit (they run as
+# their owner, often root). The last step of this file checks nothing was
+# added to that list.
+RUN set -eu; \
+    [ -n "${AGENT:-}" ] || { echo "agent image: --build-arg AGENT=<name> is required" >&2; exit 1; }; \
+    [ -n "${VERSION:-${SANDBOX_VERSION:-}}" ] || { echo "agent image: --build-arg VERSION=<version> is required" >&2; exit 1; }; \
+    case "${TOOLCHAIN}" in node|python|full) ;; *) echo "agent image: TOOLCHAIN must be node, python or full" >&2; exit 1 ;; esac; \
+    find / -xdev -type f -perm /6000 | sort > /tmp/setuid.base
+
+# LANG: UTF-8, so the CLIs' full-screen interfaces draw correctly.
+# NPM_CONFIG_UPDATE_NOTIFIER: npm cannot update itself on a read-only
+#   filesystem; without this it nags and makes a request to do so.
+# PIP_DISABLE_PIP_VERSION_CHECK: the same, for pip (python and full only).
+ENV LANG=C.UTF-8 \
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# The base image also ships Yarn and Corepack. Neither is on the toolchain
+# list, so both go: every program in here is something the agent can use.
+# A project that needs Yarn or pnpm can install it into the workspace.
+RUN rm -rf /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg \
+           /usr/local/bin/corepack /usr/local/lib/node_modules/corepack
+
+# Toolchain "node" (every image). Node and npm come from the base image.
+# Every extra program is something a hostile agent can use, so the list is
+# short and each entry says why it is here. Deliberately absent: a container
+# runtime, sudo, an ssh client, netcat. Versions are whatever Debian 12
+# serves on the build day; sbom.json records them.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      # ca-certificates: the certificate authorities HTTPS needs (npm, curl, git through the proxy)
+      ca-certificates \
+      # catatonit: the do-nothing first process that cleans up finished children (sandbox-idle)
+      catatonit \
+      # curl: fetching from allowlisted hosts; also what the verify checks probe the network with
+      curl \
+      # git: the repository; sandbox-import and sandbox-bundle are git commands
+      git \
+      # jq: JSON on the command line; the agent plug-ins' launch scripts use it to write settings
+      jq \
+      # less: the pager git and the CLIs expect
+      less \
+      # patch: applying diffs; git and npm packages call it
+      patch \
+      # procps: ps, top, pkill; the agent needs them to manage what it starts
+      procps \
+      # ripgrep: fast search; all three CLIs use `rg` when it is present
+      ripgrep \
+ && rm -rf /var/lib/apt/lists/*
+
+# Toolchain "python" (and "full"): adds Python. Debian's pip refuses to
+# install into the system (and the system is read-only anyway); projects use
+# a virtual environment under /workspace or /tmp.
+RUN case "${TOOLCHAIN}" in python|full) ;; *) exit 0 ;; esac \
+ && apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      # python3: the interpreter
+      python3 \
+      # python3-pip: installing packages into a virtual environment
+      python3-pip \
+      # python3-venv: creating that virtual environment
+      python3-venv \
+ && rm -rf /var/lib/apt/lists/*
+
+# Toolchain "full": adds a C/C++ compiler and a browser for projects whose
+# tests need one.
+#
+# Chromium must be run with ITS OWN sandbox switched off:
+#     chromium --headless --no-sandbox ...
+# Chromium's sandbox works by creating user namespaces or by a setuid helper.
+# The system-call filter refuses the first [physical B04]; the helper is not
+# installed (it is a Debian "recommended" package, and none are installed)
+# and no-new-privileges would stop it working [physical B03]. So inside this
+# container the browser's renderer processes are separated from the rest of
+# the agent's processes by nothing. The container is the boundary.
+RUN case "${TOOLCHAIN}" in full) ;; *) exit 0 ;; esac \
+ && apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      # build-essential: gcc, g++ and make, for packages that compile native code on install
+      build-essential \
+      # python3-dev: Python's headers, for Python packages that compile native code
+      python3-dev \
+      # chromium: a headless browser for end-to-end tests (see the note above)
+      chromium \
+ && rm -rf /var/lib/apt/lists/*
+
+# `ext::` remotes let git run any command as the transport: a URL in a
+# cloned submodule is enough. Switched off for the whole system. The agent
+# can switch it back on in its own configuration; this is tidiness, not a
+# barrier.
+RUN git config --system protocol.ext.allow never
+
+# The agent's user [physical B01]. The base image's `node` user (uid 1000)
+# is removed first: one user in the image, and it is not uid 1000, which is
+# the first real user on most hosts. 61000 matches --user in topology.sh.
+# --no-log-init: without it useradd writes large, empty login records for a
+# high user id. --no-create-home: /home is a memory mount at run time, and
+# sandbox-idle creates /home/agent inside it with mode 0700.
+RUN if getent passwd node >/dev/null; then userdel --remove node; fi \
+ && groupadd --gid 61000 agent \
+ && useradd --uid 61000 --gid 61000 --no-log-init --no-create-home \
+            --home-dir /home/agent --shell /bin/bash agent
+
+# The mount point of the workspace volume. Open to all like /tmp (1777) and
+# empty: the keeper container (uid 61003) mounts the volume first and the
+# agent (uid 61000) must still be able to create /workspace/repo in it,
+# whichever of the two the runtime takes the volume's permissions from.
+RUN install -d -m 1777 /workspace
+
+# The agent plug-in: launch, env, the compatibility notes. Copied before the
+# install so the image carries exactly the files it was built from.
+COPY agents/${AGENT}/ /usr/share/sandbox/agent/
+
+# The CLI itself, as root, into /usr/local: the agent's user cannot modify
+# it. Version and tarball hashes are pinned in the plug-in's install.sh,
+# which stops the build on any mismatch. Its last line of output is the
+# installed version.
+RUN bash /usr/share/sandbox/agent/install.sh > /tmp/cli.version \
+ && chmod 0755 /usr/share/sandbox/agent/launch
+
+# sandbox-idle      first process of the agent container: prepares two directories, then waits
+# sandbox-import    reads a git bundle on standard input into /workspace/repo
+# sandbox-bundle    writes a git bundle of the session branch to standard output (export)
+# sandbox-launch    starts the plug-in's launch script in /workspace/repo
+COPY --chmod=0755 images/agent/sandbox-idle images/agent/sandbox-import \
+     images/agent/sandbox-bundle images/agent/sandbox-launch /usr/local/bin/
+
+# verify-inside.sh  the in-container halves of the `./sandbox verify` checks
+# make-sbom.sh      writes the list of what is installed (next step)
+COPY --chmod=0755 images/agent/verify-inside.sh images/agent/make-sbom.sh /usr/share/sandbox/
+
+# What is in this image, for people and for `./sandbox verify`:
+#   versions    one name=version line each: sandbox, the agent CLI, node, git, toolchain
+#   sbom.json   every Debian and npm package with its version, and the base image
+RUN set -eu; \
+    version="${VERSION:-${SANDBOX_VERSION:-}}"; \
+    { \
+      echo "sandbox=${version}"; \
+      echo "${AGENT}=$(tail -n 1 /tmp/cli.version)"; \
+      echo "node=$(node --version | sed 's/^v//')"; \
+      echo "git=$(git --version | sed 's/^git version //')"; \
+      echo "toolchain=${TOOLCHAIN}"; \
+    } > /usr/share/sandbox/versions; \
+    /usr/share/sandbox/make-sbom.sh "${NODE_BASE}" \
+      "localhost/agent-sandbox/agent-${AGENT}" "${TOOLCHAIN}-${version}" \
+      > /usr/share/sandbox/sbom.json; \
+    rm -f /tmp/cli.version
+
+# Fail the build rather than ship an image that breaks a promise:
+#   * none of these programs may exist [physical B06]. No package above
+#     installs them; this catches a future package that pulls one in.
+#   * no program may have gained the setuid or setgid bit [physical B03].
+#   * the programs the sandbox-* scripts call must exist.
+RUN set -eu; \
+    for required in catatonit git jq node npm rg curl; do \
+      command -v "$required" >/dev/null 2>&1 || { echo "agent image: '$required' is missing" >&2; exit 1; }; \
+    done; \
+    for forbidden in docker podman nerdctl buildah sudo ssh nc netcat ncat; do \
+      if command -v "$forbidden" >/dev/null 2>&1; then \
+        echo "agent image: '$forbidden' must not be in the image" >&2; exit 1; \
+      fi; \
+    done; \
+    find / -xdev -type f -perm /6000 | sort > /tmp/setuid.now; \
+    added="$(comm -13 /tmp/setuid.base /tmp/setuid.now)"; \
+    rm -f /tmp/setuid.base /tmp/setuid.now; \
+    if [ -n "$added" ]; then \
+      echo "agent image: the build added setuid/setgid programs:" >&2; \
+      echo "$added" >&2; exit 1; \
+    fi
+
+# An empty resolver configuration [physical B14]. The containers are started
+# with --dns=none, which tells Podman to write no /etc/resolv.conf of its
+# own, so the file in the image is the one the agent sees: no name server,
+# on a read-only filesystem, and every name lookup fails at once. The proxy
+# and the sidecar are found through /etc/hosts instead.
+# UNPROVEN: builders manage /etc/resolv.conf themselves while building, so
+# whether this file survives into the image as written has to be checked on
+# a real build (`./sandbox verify` reads it). It is copied from the helper
+# stage, and last, because writing it in a RUN step would only change the
+# builder's temporary copy.
+COPY --from=empty /out/resolv.conf /etc/resolv.conf
+
+# The base image starts everything through its own entrypoint script. Clear
+# it: ./sandbox passes the exact command (sandbox-idle, sandbox-bundle,
+# sleep infinity), and that command is the container's first process.
+ENTRYPOINT []
+CMD ["sandbox-idle"]
+
+# The agent's user, by number. topology.sh states it again with --user.
+USER 61000:61000
+WORKDIR /workspace

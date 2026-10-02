@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# agents/opencode/launch [--auto] [args...] — start OpenCode in the sandbox.
+#
+# Run by sandbox-launch, in /workspace/repo, as the agent's user. It points
+# OpenCode's Anthropic provider at the credential sidecar, gives it a DUMMY
+# API key, and becomes the CLI.
+#
+# Nothing in this file is a barrier. It runs as the agent; the agent can undo
+# every line, and a repository's own opencode.json can choose another
+# provider altogether. Only the egress proxy stops that traffic [logical
+# B20]. Each setting, why it is there and whether the spike proved it
+# necessary: compat.md.
+#
+# The key below is a placeholder that looks right to the CLI. The real one is
+# held by the credential sidecar, which throws this one away and puts its own
+# in [logical B22]. No real credential is ever in this container
+# [physical B15].
+set -euo pipefail
+
+auto=0
+if [ "${1:-}" = "--auto" ]; then
+  auto=1
+  shift
+fi
+
+case "${SANDBOX_AUTH:-}" in
+  apikey) ;;
+  oauth)
+    echo "launch(opencode): OpenCode runs with an API key only (--auth apikey). See agents/opencode/auth.md." >&2
+    exit 2
+    ;;
+  *)
+    echo "launch(opencode): SANDBOX_AUTH must be 'apikey' (got '${SANDBOX_AUTH:-}')" >&2
+    exit 2
+    ;;
+esac
+
+# In the environment, not in the configuration below: given as a configuration
+# value, OpenCode drops the request headers that switch on extended thinking
+# and streamed tool calls.
+export ANTHROPIC_API_KEY="sk-ant-api03-sandbox-dummy-not-a-credential"
+
+# OpenCode reads this variable as a configuration file that wins over the
+# repository's and the user's own.
+#   provider.anthropic.options.baseURL  the sidecar. The /v1 at the end is
+#                                       required; without it every request
+#                                       goes to the wrong path.
+#   model                               the default model, so it is not
+#                                       taken from the repository's
+#                                       configuration.
+#   share                               no session-sharing links (they are
+#                                       uploads to the vendor's host).
+export OPENCODE_CONFIG_CONTENT='{"model":"anthropic/claude-sonnet-4-6","share":"disabled","provider":{"anthropic":{"options":{"baseURL":"http://sidecar:8080/v1"}}}}'
+
+if [ "$auto" -eq 0 ]; then
+  exec opencode "$@"
+fi
+
+# --auto: OpenCode's own flag of the same name approves every permission
+# request that is not explicitly denied. Nobody is watching to answer them;
+# the container is the boundary either way. For `opencode run ...` the flag
+# goes right after `run`, the form the spike exercised.
+if [ "${1:-}" = "run" ]; then
+  shift
+  exec opencode run --auto "$@"
+fi
+exec opencode --auto "$@"

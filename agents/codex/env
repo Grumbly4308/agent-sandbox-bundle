@@ -1,0 +1,1 @@
+CODEX_REFRESH_TOKEN_URL_OVERRIDE=http://sidecar:8080/oauth/token

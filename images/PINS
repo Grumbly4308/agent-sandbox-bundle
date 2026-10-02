@@ -1,0 +1,25 @@
+# images/PINS — the base images every sandbox image is built from, pinned by
+# digest (the sha256 of the image's contents), so a rebuild next month starts
+# from the same bytes as today. Closes reference finding M2 (unpinned images).
+#
+# Format: one `NAME=registry/repo:tag@sha256:...` line per base image. The
+# file is parsed with `read`, never sourced. A `# tag:` comment above each
+# entry names the tag the digest is taken from.
+#
+# The digests cannot be looked up from the machine this was written on, so
+# each value ships as UNPINNED. `./sandbox` refuses to build while any entry
+# is UNPINNED, and so does each Containerfile. On a host with Podman, run
+#
+#     scripts/pin-images.sh
+#
+# once: it pulls each tag, reads the digest and rewrites these lines. Run it
+# again when you want to move to a newer base; `git diff` then shows exactly
+# what changed.
+
+# The agent, credential sidecar and git relay images: Debian 12 with Node 22.
+# tag: docker.io/library/node:22-bookworm-slim
+NODE_BASE=UNPINNED
+
+# The egress proxy image (Squid).
+# tag: docker.io/library/alpine:3.20
+ALPINE_BASE=UNPINNED

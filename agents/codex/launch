@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# agents/codex/launch [--auto] [args...] — start the Codex CLI in the sandbox.
+#
+# Run by sandbox-launch, in /workspace/repo, as the agent's user. It writes
+# the settings Codex needs to find the credential sidecar, gives it a DUMMY
+# login, and becomes the CLI.
+#
+# Nothing in this file is a barrier. It runs as the agent and writes into the
+# agent's own home; the agent can undo every line. Each setting, why it is
+# there and whether the spike proved it necessary: compat.md.
+#
+# The login below is a placeholder that looks right to the CLI. The real one
+# is held by the credential sidecar, which throws this one away and puts its
+# own in [logical B22]. No real credential is ever in this container
+# [physical B15].
+set -euo pipefail
+
+auto=0
+if [ "${1:-}" = "--auto" ]; then
+  auto=1
+  shift
+fi
+
+umask 077
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+mkdir -p "$codex_home"
+
+# The part of config.toml both modes share. Top-level keys must come before
+# the first [table], so each mode writes its own top-level keys first and
+# appends this.
+#   sandbox_mode                 Codex's own sandbox needs to create
+#                                namespaces, which this container refuses
+#                                [physical B04]; in any other mode every
+#                                command it runs would fail.
+#   check_for_update_on_startup  the CLI cannot update itself on a read-only
+#                                filesystem; this saves the attempt.
+#   [analytics], [otel]          usage reporting. Its requests would only be
+#                                refused, by the sidecar or by the proxy.
+#   [features]                   the app and plug-in catalogues are fetched
+#                                from paths the sidecar does not forward.
+#   [projects."/workspace/repo"] skips the "do you trust this folder" prompt,
+#                                which would return every session.
+common_top='sandbox_mode = "danger-full-access"
+check_for_update_on_startup = false'
+common_tables='[analytics]
+enabled = false
+
+[otel]
+metrics_exporter = "none"
+
+[features]
+apps = false
+plugins = false
+remote_plugin = false
+
+[projects."/workspace/repo"]
+trust_level = "trusted"'
+
+# base64url <text>: the encoding the three parts of a JWT use.
+base64url() {
+  printf '%s' "$1" | base64 | tr -d '=\n' | tr '+/' '-_'
+}
+
+case "${SANDBOX_AUTH:-}" in
+  oauth)
+    # A ChatGPT subscription. Codex's built-in provider cannot be pointed at
+    # another address, so a provider of our own, named "sidecar", is defined
+    # and selected. requires_openai_auth makes Codex send its (dummy) ChatGPT
+    # login to it.
+    cat >"$codex_home/config.toml" <<EOF
+# Written by agents/codex/launch at every start. See compat.md.
+model_provider = "sidecar"
+chatgpt_base_url = "http://sidecar:8080/backend-api"
+$common_top
+
+[model_providers.sidecar]
+name = "sidecar"
+base_url = "http://sidecar:8080/backend-api/codex"
+wire_api = "responses"
+requires_openai_auth = true
+
+$common_tables
+EOF
+
+    # A DUMMY login in the shape Codex expects: two tokens that parse as JWTs
+    # (header.payload.signature) and do not look expired. The header and the
+    # payload are real JSON; the signature is not a signature at all. The
+    # payload says only "expires in the year 2100" and names a dummy account.
+    unset CODEX_API_KEY OPENAI_API_KEY
+    jwt_header='{"alg":"RS256","typ":"JWT"}'
+    jwt_payload='{"exp":4102444800,"https://api.openai.com/auth":{"chatgpt_account_id":"acct-sandbox-dummy"}}'
+    dummy_jwt="$(base64url "$jwt_header").$(base64url "$jwt_payload").sandbox-dummy-not-a-credential"
+    cat >"$codex_home/auth.json" <<EOF
+{
+  "auth_mode": "chatgpt",
+  "OPENAI_API_KEY": null,
+  "tokens": {
+    "id_token": "$dummy_jwt",
+    "access_token": "$dummy_jwt",
+    "refresh_token": "rt-sandbox-dummy-not-a-credential",
+    "account_id": "acct-sandbox-dummy"
+  },
+  "last_refresh": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+    ;;
+  apikey)
+    # An API key. The built-in provider is used, pointed at the sidecar.
+    cat >"$codex_home/config.toml" <<EOF
+# Written by agents/codex/launch at every start. See compat.md.
+openai_base_url = "http://sidecar:8080/v1"
+$common_top
+
+$common_tables
+EOF
+    rm -f "$codex_home/auth.json"
+    export CODEX_API_KEY="sk-sandbox-dummy-not-a-credential"
+    export OPENAI_API_KEY="sk-sandbox-dummy-not-a-credential"
+    ;;
+  *)
+    echo "launch(codex): SANDBOX_AUTH must be 'oauth' or 'apikey' (got '${SANDBOX_AUTH:-}')" >&2
+    exit 2
+    ;;
+esac
+
+args=()
+if [ "$auto" -eq 1 ]; then
+  # Run without approval prompts. Nobody is watching to answer them; the
+  # container is the boundary either way.
+  args+=(--dangerously-bypass-approvals-and-sandbox)
+fi
+
+exec codex ${args[@]+"${args[@]}"} "$@"

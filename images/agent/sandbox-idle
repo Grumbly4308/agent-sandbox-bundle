@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# sandbox-idle — the first process of the agent container.
+#
+# The agent container does nothing by itself. ./sandbox enters it with
+# `podman exec` to import the repository, to run the checks and to start the
+# CLI. This script prepares the two directories those need and then turns
+# into a process that only waits.
+#
+# Nothing here is a barrier. It runs as the agent's user, inside the agent
+# container; the agent can kill it, which ends the container and nothing
+# else (the keeper container holds the workspace).
+set -euo pipefail
+
+# Whatever is created below is for the agent's user alone from the first
+# instant.
+umask 077
+
+# SANDBOX_WORKSPACE_FOR_TESTS exists only so tests/images/ can run this
+# script outside a container. Nothing else sets it.
+repo="${SANDBOX_WORKSPACE_FOR_TESTS:-/workspace}/repo"
+
+# /home is a memory-backed mount that starts out empty, owned by root and
+# open to all like /tmp (mode 1777). The real home is created inside it,
+# readable by the agent's user only. (Reference finding M5: the old home was
+# world-writable.)
+home="${HOME:-/home/agent}"
+mkdir -p "$home"
+chmod 0700 "$home"
+
+# The repository's place on the workspace volume, same reasoning. If the
+# workspace is mounted read-only (it is in the keeper and export containers)
+# or the directory belongs to someone else, there is nothing to prepare:
+# carry on.
+if ! { mkdir -p "$repo" && chmod 0700 "$repo"; } 2>/dev/null; then
+  echo "sandbox-idle: $repo not prepared (read-only or not ours); continuing" >&2
+fi
+
+# catatonit in pause mode (-P): runs no program, and collects every finished
+# process that ends up without a parent, so dead children of the CLI do not
+# pile up for the life of the session. It has to be process 1 to be handed
+# those orphans, hence exec: it replaces this shell.
+exec catatonit -P

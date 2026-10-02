@@ -449,14 +449,16 @@ topo_service() {
     --dns=none                      # resolves nothing
     --tmpfs "/dev/shm:size=64m,mode=1777,nosuid,nodev,noexec"   # shared memory; Postgres needs it
   )
-  for item in "${SVC_TMPFS[@]}"; do
+  # The ${name[@]+...} form matters: a service may have no entries, and old
+  # bash treats expanding an empty array as an error.
+  for item in ${SVC_TMPFS[@]+"${SVC_TMPFS[@]}"}; do
     TOPO+=(--tmpfs "$item")
   done
-  for item in "${SVC_ENV[@]}"; do
+  for item in ${SVC_ENV[@]+"${SVC_ENV[@]}"}; do
     TOPO+=(--env "$item")
   done
   TOPO+=("${SVC_IMAGE:?}")
-  if [ "${#SVC_COMMAND[@]}" -gt 0 ]; then
-    TOPO+=("${SVC_COMMAND[@]}")
-  fi
+  for item in ${SVC_COMMAND[@]+"${SVC_COMMAND[@]}"}; do
+    TOPO+=("$item")
+  done
 }
