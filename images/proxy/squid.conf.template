@@ -1,0 +1,190 @@
+# The egress proxy's rules.  [logical B20, B21]
+#
+# The proxy container's entrypoint fills in this session's addresses and
+# limits and writes the result to /var/run/squid/squid.conf when the
+# container starts. To see the rules a running session is using:
+#     podman exec <session>-proxy cat /var/run/squid/squid.conf
+#
+# The agent's network has no route out [physical B12], so this proxy is the
+# only way to reach anything. It decides by NAME. For HTTPS the agent asks
+# "CONNECT registry.npmjs.org:443" and Squid compares that name with a list.
+# It does not open the encrypted traffic: there is no certificate authority
+# in the agent container and no plaintext copy of the traffic anywhere. So
+# it controls WHO the agent talks to, never what is said.
+#
+# Squid starts as its own unprivileged user (uid 31) and stays that way. It
+# is never root, so there is no privilege to drop, and the standard output it
+# logs to already belongs to it.
+
+http_port 3128
+
+# A fixed name. Without it Squid tries to work out the container's public
+# name with a DNS lookup at start, and gives up if it cannot.
+visible_hostname sandbox-proxy
+
+# Do not read /etc/hosts. Podman writes names for your host's own address
+# there; the proxy has no business knowing them.
+hosts_file none
+
+# ---------------------------------------------------------------------------
+# Who is asking
+# ---------------------------------------------------------------------------
+# [logical B21] Exact addresses, never the whole network: a sibling service
+# such as a database sits on the same network and gets nothing.
+#
+# These are compared with the address the connection really came from. Squid
+# has a setting (follow_x_forwarded_for) that would make it believe an
+# address the client writes in a request header instead. It is off unless
+# asked for, and it must never be asked for here: with it, the agent could
+# claim to be the sidecar.
+acl from_agent src @AGENT_IP@/32
+acl from_sidecar src @SIDECAR_IP@/32
+@IF_RELAY@acl from_relay src @RELAY_IP@/32
+
+acl known_source src @AGENT_IP@/32
+acl known_source src @SIDECAR_IP@/32
+@IF_RELAY@acl known_source src @RELAY_IP@/32
+
+# ---------------------------------------------------------------------------
+# What is being asked for
+# ---------------------------------------------------------------------------
+# A destination written as an address instead of a name: 203.0.113.7, or
+# [2001:db8::1] (the only place a colon can appear in a destination). `-n`
+# on this and on every list of names below means "compare the text, never
+# ask DNS": without it Squid would look an address up to find its name.
+acl to_ip_literal dstdom_regex -n ^[0-9.]+$ :
+
+# CONNECT is the request that opens a tunnel for HTTPS.
+acl method_connect method CONNECT
+acl port_443 port 443
+@IF_HTTP@acl port_80 port 80
+
+# The lists of names, written by ./sandbox for this session and mounted
+# read-only. A line starting with a dot covers that domain and everything
+# beneath it.
+acl agent_domains dstdomain -n "@SESSION_DIR@/agent.domains"
+acl sidecar_domains dstdomain -n "@SESSION_DIR@/sidecar.domains"
+@IF_RELAY@acl relay_domains dstdomain -n "@SESSION_DIR@/relay.domains"
+
+# Addresses no public name should point at: this machine, private networks,
+# link-local (which is where cloud providers put their metadata service),
+# multicast, and this session's own networks. This is the one check that
+# makes Squid resolve a name, so in every rule below it is written AFTER a
+# list of names: Squid reads a rule left to right and stops at the first
+# part that does not match, so a name that is on no list is never looked up.
+acl to_private dst 0.0.0.0/8          # "this network"
+acl to_private dst 10.0.0.0/8         # private
+acl to_private dst 100.64.0.0/10      # shared between an internet provider and its customers
+acl to_private dst 127.0.0.0/8        # loopback: the proxy container itself
+acl to_private dst 169.254.0.0/16     # link-local, cloud metadata services
+acl to_private dst 172.16.0.0/12      # private
+acl to_private dst 192.168.0.0/16     # private
+acl to_private dst 224.0.0.0/3        # multicast and reserved
+acl to_private dst ::1/128            # loopback
+acl to_private dst fc00::/7           # private
+acl to_private dst fe80::/10          # link-local
+acl to_private dst @SESSION_NET@      # this session's sandbox network
+@IF_EGRESS@acl to_private dst @EGRESS_NET@      # this session's egress network
+
+# A path that could climb out of itself: two dots together (/docs/../upload)
+# or a dot written as %2e. Used by the URL-prefix rules in extra.conf: Squid
+# compares the path as the agent wrote it, and the server at the other end
+# may tidy it up first.
+acl path_dotdot urlpath_regex -i \.\. %2e
+
+# ---------------------------------------------------------------------------
+# The rules. Squid takes the FIRST line that matches, so the order is the
+# policy. Everything not allowed by name ends at the last line.
+# ---------------------------------------------------------------------------
+
+# 1. No destinations given as bare addresses, IPv4 or IPv6.
+http_access deny to_ip_literal
+
+# 2. [logical B21] Nobody but the agent, the sidecar and the git relay.
+http_access deny !known_source
+
+# Squid's own status pages are not for anyone in the sandbox.
+http_access deny manager
+
+# 3. Tunnels go to port 443 only. The exceptions are the host:port pairs
+#    you allowed yourself: extra.conf, written by ./sandbox, holds one pair of
+#    rules for each, and for each plaintext URL prefix you allowed. It may be
+#    empty. It is read here so that its rules come before the two refusals
+#    below.
+include @SESSION_DIR@/extra.conf
+http_access deny method_connect !port_443
+
+# 4. Plaintext HTTP. Off unless the session was started with it on, and then
+#    to port 80 only.
+@IF_NO_HTTP@http_access deny !method_connect
+@IF_HTTP@http_access deny !method_connect !port_80
+
+# 5. The lists. Each address gets its own, and only its own. In each pair
+#    the first line refuses a name that IS on the list but resolves to an
+#    address in to_private; the second allows the rest.
+http_access deny from_agent agent_domains to_private
+http_access allow from_agent agent_domains
+# [logical B21] The model vendor's hosts: the sidecar's address only.
+http_access deny from_sidecar sidecar_domains to_private
+http_access allow from_sidecar sidecar_domains
+@IF_RELAY@http_access deny from_relay relay_domains to_private
+@IF_RELAY@http_access allow from_relay relay_domains
+
+# 6. Everything else.
+http_access deny all
+
+# ---------------------------------------------------------------------------
+# Limits
+# ---------------------------------------------------------------------------
+# Size caps. They only bite on plaintext HTTP: inside an HTTPS tunnel the
+# proxy sees encrypted bytes passing and cannot tell a request from a reply.
+request_body_max_size @REQUEST_MAX_MB@ MB
+reply_body_max_size @REPLY_MAX_MB@ MB
+
+# Fail fast rather than hang a build for two minutes on a host that does
+# not answer.
+connect_timeout 15 seconds
+
+# A bounded number of connections, whatever the container's own limit on
+# open files happens to be.
+max_filedescriptors 4096
+
+# When told to stop, stop: do not wait for open tunnels to finish.
+shutdown_lifetime 1 seconds
+
+# ---------------------------------------------------------------------------
+# No caching. This is a gate, not a cache.
+# ---------------------------------------------------------------------------
+cache deny all
+cache_mem 0 MB
+
+# ---------------------------------------------------------------------------
+# Do not tell the far end about the sandbox
+# ---------------------------------------------------------------------------
+forwarded_for delete
+via off
+httpd_suppress_version_string on
+
+# ---------------------------------------------------------------------------
+# Logging  [logical B25]
+# ---------------------------------------------------------------------------
+# One line per request, allowed or refused, to standard output. Podman
+# collects it outside the container, where the agent cannot edit it; read it
+# with `./sandbox logs proxy`. TCP_DENIED/403 is the proxy refusing.
+#
+# Fields: time, who asked, the verdict, bytes sent up and down, how long it
+# took, the address reached, then the method and the destination. The last
+# two come from the agent, so they are cut to a fixed length (16 and 512
+# characters) and Squid writes any control character in them as %xx.
+logformat sandbox [%tg] src=%>a %Ss/%03>Hs up=%>st down=%<st ms=%tr dst=%<a %.16rm %.512ru
+access_log stdio:/dev/stdout logformat=sandbox
+# Squid's own messages (start-up, errors) go to standard error.
+cache_log /dev/stderr
+logfile_rotate 0
+
+# ---------------------------------------------------------------------------
+# The only places Squid writes: two memory-backed mounts. The rest of the
+# container's filesystem is read-only [physical B07].
+# ---------------------------------------------------------------------------
+pid_filename @RUN_DIR@/squid.pid
+coredump_dir /var/cache/squid

@@ -1,0 +1,50 @@
+# The egress proxy.  [logical B20, B21]  Build context: this directory.
+#
+# What it is: Alpine's own packaged Squid with a default-deny configuration.
+# It is the only container with a route to the internet, and it lets through
+# only the host names on this session's lists. No third-party image: nothing
+# to trust beyond Alpine's package signing.
+#
+# The base image is pinned by digest in images/PINS; ./sandbox passes it in
+# and refuses to build while it is still UNPINNED.
+ARG ALPINE_BASE
+FROM ${ALPINE_BASE}
+
+# squid.conf.template   the rules, with this session's addresses left blank
+# proxy-entrypoint      fills them in from the environment and starts Squid
+COPY --chmod=0444 squid.conf.template /etc/squid/squid.conf.template
+COPY --chmod=0555 entrypoint.sh /usr/local/bin/proxy-entrypoint
+
+# One package is installed:
+#   squid   the proxy. Its package creates the user `squid`, and with it come
+#           only the libraries Squid itself is linked against.
+# Nothing else: the entrypoint needs a shell, sed, grep, id and mv, and the
+# busybox already in the base image has all of them. No bash, no curl.
+#
+# Then, in the same step:
+#   * The build stops if Alpine ever gives the squid user a number other
+#     than 31: topology.sh starts this container as 31:31.
+#   * The two directories Squid writes to are created. At run time each is
+#     covered by a small memory-backed mount; everything else is read-only.
+#   * The configuration file the package ships is replaced by a link to the
+#     one the entrypoint writes, so there is exactly one configuration in
+#     this image and `squid -k reconfigure` finds it with or without -f.
+RUN apk add --no-cache squid \
+ && [ "$(id -u squid)" = 31 ] && [ "$(id -g squid)" = 31 ] \
+ && mkdir -p /var/cache/squid /var/run/squid \
+ && rm -f /etc/squid/squid.conf /etc/squid/squid.conf.default \
+ && ln -s /var/run/squid/squid.conf /etc/squid/squid.conf
+
+# Run AS squid from the first instruction. Squid opens its log targets
+# (standard output and standard error) under whatever user it ends up as, and
+# those belong to the user the container started with. Started as root, it
+# would switch to `squid` and then fail with
+#     FATAL: Cannot open '/dev/stdout' for writing.
+# Started as `squid` there is no switch, and it runs with no capabilities
+# [physical B02] on a read-only root [physical B07].
+USER 31:31
+
+# Plain HTTP proxy port, reachable only on the session's internal network.
+EXPOSE 3128
+
+ENTRYPOINT ["/usr/local/bin/proxy-entrypoint"]

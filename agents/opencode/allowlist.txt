@@ -1,0 +1,23 @@
+# OpenCode: the hosts this agent's session adds to the egress proxy's
+# lists.  [logical B20, B21]
+#
+# Two sections. `[agent]` hosts are reachable from the agent container.
+# `[sidecar]` hosts are reachable from the credential sidecar's address and
+# from nowhere else: the agent cannot reach the model vendor directly, so it
+# cannot send your code there under an account of the attacker's.
+# One host per line, then `#` and the reason.
+
+[agent]
+# Nothing, on purpose. OpenCode's provider is pinned to the sidecar, which is
+# on the session's own network and not behind the proxy.
+#
+# opencode.ai, opncd.ai and models.opencode.ai are deliberately absent.
+# OpenCode has a built-in provider that needs no key and sends model traffic
+# to opencode.ai, and a repository's own opencode.json can select it. With
+# those hosts reachable, a file in the repository could send the whole
+# conversation there. The proxy refusing them is the only thing that stops
+# it (OpenCode 1.18.34, spike of 2026-10-01).
+
+[sidecar]
+api.anthropic.com   # the model API for Anthropic models (API key)
+api.openai.com      # the model API for OpenAI models (API key)

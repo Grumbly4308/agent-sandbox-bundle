@@ -1,0 +1,17 @@
+# Preset: GitHub's download-only hosts.  [logical B20]
+# Add with:  ./sandbox allow --preset github-downloads
+#
+# For build scripts and package managers that fetch source archives or
+# single files from GitHub. None of these three hosts accepts a push, a
+# release upload or an API write. github.com, api.github.com and
+# uploads.github.com do, and they are NOT part of this preset.
+#
+# What still does not work with this preset: `git clone` from github.com, the
+# `gh` tool, and downloads that begin with a redirect from github.com (the
+# usual link to a release file does).
+#
+# One host per line, then `#` and the reason, as in policy/allowlist.base.txt.
+
+codeload.github.com             # source archives (tarballs and zip files) of repositories, read only
+objects.githubusercontent.com   # release files and other stored objects, read only
+raw.githubusercontent.com       # single files from repositories, read only
