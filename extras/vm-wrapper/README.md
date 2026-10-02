@@ -32,7 +32,12 @@ What it lands in is a machine set up to be worthless:
 
 It does not add anything against the threats the sandbox already handles
 (the allowlist, the credential sidecar, export), and it costs memory: the VM
-is given 12 GB so that one default session (up to 10 GB) fits.
+is given 8 GB so that one default session (up to about 6.6 GB) fits.
+
+Both recipes also make the **disk store** at first boot: a 20 GB filesystem
+of its own inside the VM, where sessions keep their workspaces. A session
+that fills it gets "no space left"; the VM's own disk, Podman and the logs
+are not touched.
 
 ## The three commands
 
@@ -47,7 +52,7 @@ limactl delete --force agent-sandbox                       # delete, with everyt
 Multipass:
 
 ```sh
-multipass launch 24.04 --name agent-sandbox --cpus 4 --memory 12G --disk 30G --cloud-init cloud-init.yaml
+multipass launch 24.04 --name agent-sandbox --cpus 4 --memory 8G --disk 50G --cloud-init cloud-init.yaml
 multipass exec agent-sandbox -- sudo -iu sandbox
 multipass delete --purge agent-sandbox
 ```

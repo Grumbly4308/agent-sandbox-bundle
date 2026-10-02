@@ -5,7 +5,7 @@
 # EXAMPLE, NEVER STARTED by the authors (no Multipass on the machine this was
 # written on). Read README.md in this directory first.
 #
-#   multipass launch 24.04 --name agent-sandbox --cpus 4 --memory 12G --disk 30G \
+#   multipass launch 24.04 --name agent-sandbox --cpus 4 --memory 8G --disk 50G \
 #       --cloud-init cloud-init.yaml
 #
 # Multipass mounts no folder of yours unless you run `multipass mount`, does
@@ -54,6 +54,18 @@ runcmd:
   # without it, export refuses to mark the scan as passed.
   - apt-get install -y gitleaks || echo "gitleaks is not packaged here; install it by hand"
   - systemctl daemon-reload
+  # The disk store [physical B08]: one file of fixed size with a filesystem
+  # in it, where sessions keep their workspaces. 20 GB is the most all
+  # sessions together can put on this VM's disk; the system and the images
+  # are on the rest and cannot be crowded out. Mounted at every boot.
+  # ./sandbox finds it there and writes it into the sandbox user's settings
+  # the first time it runs.
+  - fallocate -l 20G /var/lib/agent-sandbox-store.img
+  - mkfs.ext4 -q -m 0 /var/lib/agent-sandbox-store.img
+  - mkdir -p /var/lib/agent-sandbox-store
+  - echo '/var/lib/agent-sandbox-store.img /var/lib/agent-sandbox-store ext4 loop,nosuid,nodev,nofail 0 0' >> /etc/fstab
+  - mount /var/lib/agent-sandbox-store
+  - chown sandbox:sandbox /var/lib/agent-sandbox-store
   # Keep the user's service manager running without a login, and point shells
   # at it; without these, rootless Podman cannot apply the limits.
   - loginctl enable-linger sandbox

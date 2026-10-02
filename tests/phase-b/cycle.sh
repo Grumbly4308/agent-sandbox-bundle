@@ -20,14 +20,37 @@ cd "$root"
 : "${SANDBOX_TEST_ANTHROPIC_KEY:?set it to an API key from a dedicated workspace with a spend cap}"
 url_repo="${SANDBOX_TEST_REPO_URL:-https://github.com/jonschlinkert/is-number}"
 
+# This script ends with `destroy --all`, which removes every session on this
+# Podman, yours included. So it does not start while one exists.
+if [ -n "$(podman ps -a --filter label=agent-sandbox.session --format '{{.Names}}' 2>/dev/null)" ]; then
+  echo "There are sandbox sessions on this host. Export what you need, run ./sandbox destroy --all, then start again." >&2
+  exit 1
+fi
+
+# Your own settings file, read below for the disk store before this script
+# switches to a settings file of its own.
+own_settings="${SANDBOX_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-sandbox}/settings"
 work="$(mktemp -d)"
-# Sessions made by this script are kept apart from your own.
+# This script's sessions are recorded apart from your own settings and state.
 export SANDBOX_STATE_DIR="$work/state"
 export SANDBOX_CONFIG_DIR="$work/config"
-# Small sizes: the test repositories are tiny, and with these a session may
-# take about 4.6 GB of the host's memory instead of the default 10.5 GB.
+# Small sizes: the test repositories are tiny, and with these a session takes
+# far less of the host's memory than with the defaults.
 mkdir -p "$SANDBOX_CONFIG_DIR"
 printf '%s\n' MEM=2g WORKSPACE_SIZE=1g TMP_SIZE=512m HOME_SIZE=512m > "$SANDBOX_CONFIG_DIR/settings"
+# The disk store, if this host has one: the one your own settings name, or
+# the one at the usual place. With it the workspace is on disk, which is the
+# default; without it, it is held in memory.
+store="$(sed -n 's/^STORE=//p' "$own_settings" 2>/dev/null | tail -n 1)"
+if [ -z "$store" ] && mountpoint -q /var/lib/agent-sandbox-store 2>/dev/null; then
+  store=/var/lib/agent-sandbox-store
+fi
+if [ -n "$store" ]; then
+  printf 'STORE=%s\n' "$store" >> "$SANDBOX_CONFIG_DIR/settings"
+  printf 'Workspaces: on the disk store at %s.\n' "$store"
+else
+  printf 'Workspaces: held in memory (this host has no disk store; ./sandbox doctor says how to make one).\n'
+fi
 
 step() { printf '\n==== %s\n' "$*"; }
 problems=0
@@ -41,12 +64,13 @@ trap cleanup EXIT
 
 # One cycle: run the agent on a repository with a small task, verify, export,
 # destroy, and check that nothing with the session's label is left.
-cycle() {   # <what> <repository> <prompt>
+cycle() {   # <what> <repository> <prompt> [run options...]
   local what="$1" repo="$2" prompt="$3" session status=0 left
+  shift 3
 
   step "$what: run"
   ./sandbox run "$repo" --agent claude --auth apikey --strict --auto \
-    --ttl 30m --budget 40 -- -p "$prompt" || problem "$what: run exited $?"
+    --ttl 30m --budget 40 "$@" -- -p "$prompt" || problem "$what: run exited $?"
 
   session="$(find "$SANDBOX_STATE_DIR" -mindepth 1 -maxdepth 1 -type d -name 'asb-*' -exec basename {} \; | head -n 1)"
   if [ -z "$session" ]; then
@@ -90,9 +114,12 @@ git -C "$work/mini-node" -c user.name=fixture -c user.email=fixture@example.inva
 cycle "path mode" "$work/mini-node" \
   "Add a function isBlank(s) to slugify.js that returns true for empty or whitespace-only strings, add a test for it, run the tests with 'node --test', and commit."
 
-# URL mode: a small public repository, cloned on the host.
-cycle "URL mode" "$url_repo" \
-  "Read the README, run the tests if the project has any, and commit a one-line addition to the README describing what you ran."
+# URL mode: a small public repository, cloned on the host. Its workspace is
+# held in memory whatever the host has, so that both kinds get the full
+# verify.
+cycle "URL mode, workspace in memory" "$url_repo" \
+  "Read the README, run the tests if the project has any, and commit a one-line addition to the README describing what you ran." \
+  --workspace-driver memory
 
 # The long-running checks have commands of their own.
 step "verify: the deadline, export and destroy checks (creates its own short session)"

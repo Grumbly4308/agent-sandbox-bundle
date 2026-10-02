@@ -18,11 +18,13 @@ images:
   - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
     arch: "aarch64"
 
-# One session takes up to 10 GB of memory with the default settings (see
-# B10 in docs/00-threat-model.md); the VM needs that plus room for itself.
+# One session takes up to about 6.6 GB of memory with the default settings
+# (see B10 in docs/00-threat-model.md); the VM needs that plus room for
+# itself. The disk holds the system, the images and a 20 GB store for the
+# sessions' workspaces (made below).
 cpus: 4
-memory: "12GiB"
-disk: "30GiB"
+memory: "8GiB"
+disk: "50GiB"
 
 # No folder of yours is visible in the VM. Lima's default would mount your
 # home directory; an empty list mounts nothing. Code goes in and out with
@@ -84,6 +86,21 @@ provision:
       printf '[Service]\nDelegate=cpu cpuset io memory pids\n' \
         > /etc/systemd/system/user@.service.d/delegate.conf
       systemctl daemon-reload
+
+      # The disk store [physical B08]: one file of fixed size with a
+      # filesystem in it, where sessions keep their workspaces. 20 GB is the
+      # most all sessions together can put on this VM's disk; the system and
+      # the images are on the rest and cannot be crowded out. Mounted at
+      # every boot. ./sandbox finds it there and writes it into the sandbox
+      # user's settings the first time it runs.
+      if [ ! -e /var/lib/agent-sandbox-store.img ]; then
+        fallocate -l 20G /var/lib/agent-sandbox-store.img
+        mkfs.ext4 -q -m 0 /var/lib/agent-sandbox-store.img
+        mkdir -p /var/lib/agent-sandbox-store
+        echo '/var/lib/agent-sandbox-store.img /var/lib/agent-sandbox-store ext4 loop,nosuid,nodev,nofail 0 0' >> /etc/fstab
+        mount /var/lib/agent-sandbox-store
+        chown sandbox:sandbox /var/lib/agent-sandbox-store
+      fi
 
       # Keep the user's service manager running without a login, and point
       # shells at it; without these, rootless Podman cannot apply the limits.

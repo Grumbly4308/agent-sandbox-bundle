@@ -13,13 +13,36 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$root"
 
+# This script ends with `destroy --all`, which removes every session on this
+# Podman, yours included. So it does not start while one exists.
+if [ -n "$(podman ps -a --filter label=agent-sandbox.session --format '{{.Names}}' 2>/dev/null)" ]; then
+  echo "There are sandbox sessions on this host. Export what you need, run ./sandbox destroy --all, then start again." >&2
+  exit 1
+fi
+
+# Your own settings file, read below for the disk store before this script
+# switches to a settings file of its own.
+own_settings="${SANDBOX_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-sandbox}/settings"
 work="$(mktemp -d)"
 export SANDBOX_STATE_DIR="$work/state"
 export SANDBOX_CONFIG_DIR="$work/config"
-# Small sizes: the test repositories are tiny, and with these a session may
-# take about 4.6 GB of the host's memory instead of the default 10.5 GB.
+# Small sizes: the test repositories are tiny, and with these a session takes
+# far less of the host's memory than with the defaults.
 mkdir -p "$SANDBOX_CONFIG_DIR"
 printf '%s\n' MEM=2g WORKSPACE_SIZE=1g TMP_SIZE=512m HOME_SIZE=512m > "$SANDBOX_CONFIG_DIR/settings"
+# The disk store, if this host has one: the one your own settings name, or
+# the one at the usual place. With it the workspace is on disk, which is the
+# default; without it, it is held in memory.
+store="$(sed -n 's/^STORE=//p' "$own_settings" 2>/dev/null | tail -n 1)"
+if [ -z "$store" ] && mountpoint -q /var/lib/agent-sandbox-store 2>/dev/null; then
+  store=/var/lib/agent-sandbox-store
+fi
+if [ -n "$store" ]; then
+  printf 'STORE=%s\n' "$store" >> "$SANDBOX_CONFIG_DIR/settings"
+  printf 'Workspaces: on the disk store at %s.\n' "$store"
+else
+  printf 'Workspaces: held in memory (this host has no disk store; ./sandbox doctor says how to make one).\n'
+fi
 trap './sandbox destroy --all >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
 
 cp -R tests/fixtures/mini-node "$work/mini-node"
