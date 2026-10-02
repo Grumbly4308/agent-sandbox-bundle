@@ -1,22 +1,25 @@
 #!/usr/bin/env bash
-# sandbox-import <branch> — put the repository into the workspace.
+# sandbox-import <branch> [relay-url] — put the repository into the workspace.
 #
 # ./sandbox clones the repository on the host, packs the branch into a git
 # bundle (one file holding commits) and pipes it into this script:
 #
-#   podman exec -i <agent> sandbox-import <branch>  < bundle
+#   podman exec -i <agent> sandbox-import <branch> [relay-url]  < bundle
 #
 # So the repository arrives without any host folder being mounted and without
 # the sandbox ever seeing a credential or the repository's host name
 # [physical B09, B15]. This script only unpacks; it enforces nothing.
 #
 # Standard input:  the bundle.
-# Result:          /workspace/repo is a clone, with <branch> checked out.
+# Result:          /workspace/repo is a clone, with <branch> checked out. It
+#                  has no remote, unless the session has a git relay
+#                  (--git-relay): then "origin" is the relay's address.
 set -euo pipefail
 
-usage() { echo "usage: sandbox-import <branch>   (git bundle on standard input)" >&2; exit 2; }
-[ "$#" -eq 1 ] || usage
+usage() { echo "usage: sandbox-import <branch> [relay-url]   (git bundle on standard input)" >&2; exit 2; }
+[ "$#" -eq 1 ] || [ "$#" -eq 2 ] || usage
 branch="$1"
+relay="${2:-}"
 
 # SANDBOX_WORKSPACE_FOR_TESTS exists only so tests/images/ can run this
 # script outside a container. Nothing else sets it.
@@ -78,6 +81,11 @@ git clone --quiet --no-checkout "$tmp/repo.bundle" "$repo"
 git -C "$repo" checkout --quiet -B "$branch" "$start"
 # The clone's "origin" is the temporary file above; drop the pointer to it.
 git -C "$repo" remote remove origin
+# With a git relay, "origin" is the relay, so a plain `git push` works. The
+# relay decides what gets through; this line is a convenience, not a control.
+if [ -n "$relay" ]; then
+  git -C "$repo" remote add origin "$relay"
+fi
 
 # Commit identity: only what ./sandbox passed in (your host's git name and
 # email). Nothing is made up when it is absent.

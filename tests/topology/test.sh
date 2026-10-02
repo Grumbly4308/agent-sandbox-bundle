@@ -146,6 +146,10 @@ for c in keeper export; do
   value_of --mount | grep -q ',ro$' || fail "$c: workspace must be mounted read-only"
 done
 
+# A service image's own VOLUME lines must not become volumes on disk (B08, B09).
+topo_service postgres 10.201.7.20
+has --image-volume=ignore || fail "service: image-declared volumes are not ignored"
+
 # Networks and volume.
 topo_network_sandbox
 has --internal || fail "sandbox network: not internal"

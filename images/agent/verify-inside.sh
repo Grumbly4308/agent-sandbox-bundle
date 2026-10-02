@@ -1053,7 +1053,7 @@ c_B13_etc_hosts() {
     pass B13-etc-hosts "read all $count entries of /etc/hosts: only loopback and addresses of this session's own network ($prefix.x), and no name for the host"
   else
     fail B13-etc-hosts "/etc/hosts tells the agent where the host is:$bad" \
-      "stop Podman writing that entry: set host_containers_internal_ip to \"none\" under [containers] in containers.conf (Podman 5.3 or newer), and base_hosts_file = \"none\" to keep your own /etc/hosts lines out"
+      "stop Podman writing that entry: set host_containers_internal_ip to \"none\" under [containers] in containers.conf (Podman 5.4 or newer), and base_hosts_file = \"none\" to keep your own /etc/hosts lines out"
   fi
 }
 
@@ -1263,7 +1263,7 @@ relay_push() {   # <check> <ref> <what>
   # The control: the relay must answer a harmless listing, or a failed push
   # would prove nothing.
   if ! GIT_TERMINAL_PROMPT=0 timeout 30 git -c http.proxy= ls-remote "$url" >/dev/null 2>&1; then
-    skip "$name" no-probe "the relay at $url did not answer a plain listing, so a refused push would prove nothing" "./sandbox logs: is the relay running and was its token accepted?"; return
+    skip "$name" no-probe "the relay at $url did not answer a plain listing, so a refused push would prove nothing" "./sandbox logs relay: is the relay running and was its token accepted?"; return
   fi
   out="$(GIT_TERMINAL_PROMPT=0 timeout 60 git -C /workspace/repo -c http.proxy= push "$url" "HEAD:$ref" 2>&1)" || rc=$?
   if [ "$rc" -eq 0 ]; then

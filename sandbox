@@ -82,7 +82,7 @@ usage: ./sandbox <command>
   export [--out dir]          bring the session branch out and review it
   push                        push the exported branch to the repository
   pr                          push, then open a pull or merge request
-  logs [agent|proxy|sidecar|service]
+  logs [agent|proxy|sidecar|relay|service]
   destroy [--all]             remove the session: containers, networks, workspace
   upgrade                     rebuild every image from scratch
 
@@ -424,12 +424,23 @@ keyring_put() {   # <agent> <auth>; the secret on stdin; replaces what is there
 }
 
 # A token is letters, digits and a little punctuation. Anything else is not a
-# token, and refusing it means no quoting is needed to put one in JSON.
+# token, and refusing it means no quoting is needed to put one in JSON. The
+# same rule as the sidecar's loader (images/credsidecar/sidecar-load), so a
+# credential it would refuse is refused here, with a message that says so.
 looks_like_token() {
   case "$1" in
-    ''|*[!A-Za-z0-9._~+/=:-]*) return 1 ;;
+    ''|*[!A-Za-z0-9._~+/=-]*) return 1 ;;
   esac
-  return 0
+  [ "${#1}" -ge 8 ] && [ "${#1}" -le 16384 ]
+}
+
+# The branch names export accepts (scripts/export.sh, check_branch). Checked
+# at run, so a session is not spent on a branch that cannot come out.
+valid_branch() {
+  case "$1" in
+    ''|*[!A-Za-z0-9._/-]*|-*|/*|*/|.*|*.|*..*|*//*|*/.*|*/-*|*.lock|*.lock/*) return 1 ;;
+  esac
+  [ "${#1}" -le 200 ] && git check-ref-format --branch "$1" >/dev/null 2>&1
 }
 
 # Prints the JSON object the sidecar's loader reads: {"token":"..."}.
@@ -545,7 +556,8 @@ codex_sidecar_json() {
       || warn "the renewed Codex login could not be stored. This session carries on; before the next one run ./sandbox login --agent codex --auth oauth"
   fi
   codex_unlock
-  printf '%s' "$login" | jq -c '{token: .tokens.access_token, account_id: (.tokens.account_id // "")}'
+  # A login without an account id sends none: the loader refuses an empty one.
+  printf '%s' "$login" | jq -c '{token: .tokens.access_token} + (if (.tokens.account_id // "") == "" then {} else {account_id: .tokens.account_id} end)'
 }
 
 # ---------------------------------------------------------------------------
@@ -1014,7 +1026,7 @@ cmd_run() {
   local source="" auto=0 strict=0 io_limit="" store_device service names count=0
   local mem cpus pids nproc ttl budget tmp_size home_size workspace_size
   local mem_bytes tmp_bytes home_bytes ttl_seconds total helpers used credential
-  local relay_host="" relay_token="" relay_user=x-access-token image_ids
+  local relay_host="" relay_token="" relay_user=x-access-token relay_remote="" image_ids
   local doctor_args=() tty=(-i) launch_args=() cli_args=() status=0
 
   AGENT="$(setting AGENT)"; AUTH="$(setting AUTH)"; TOOLCHAIN="$(setting TOOLCHAIN)"
@@ -1095,7 +1107,7 @@ cmd_run() {
     # [physical B08] The disk-backed workspace is a directory on a filesystem
     # made for the purpose. Without one there is nothing to cap it, so it is
     # refused; doctor (below) checks the store is real and yours.
-    [ -n "$STORE" ] || die "--workspace-driver local needs a disk store. Set STORE in $SANDBOX_CONFIG_DIR/settings; ./sandbox doctor explains how to make one."
+    [ -n "$STORE" ] || die "--workspace-driver local needs a disk store. Set STORE in $SANDBOX_CONFIG_DIR/settings to where it will be, then run ./sandbox doctor: it prints the commands to make one."
     case "$STORE" in /*) ;; *) die "STORE must be a full path starting with /, not '$STORE'" ;; esac
     doctor_args+=(--store "$STORE")
     if [ -n "$io_limit" ]; then
@@ -1116,7 +1128,7 @@ cmd_run() {
   SESSION="$(new_session_name "$source")"
   SESSION_DIR="$SANDBOX_STATE_DIR/$SESSION"
   [ -n "$BRANCH" ] || BRANCH="agent/$SESSION"
-  git check-ref-format --branch "$BRANCH" >/dev/null 2>&1 || die "--branch: '$BRANCH' is not a branch name"
+  valid_branch "$BRANCH" || die "--branch: '$BRANCH' is not a branch name this can export (letters, digits, and . _ / - only)"
   used="$(used_cidrs)"
   SUBNET="$(pick_subnet 201 "$used")"
   EGRESS_SUBNET="$(pick_subnet 202 "$used")"
@@ -1188,6 +1200,9 @@ cmd_run() {
     SANDBOX_RELAY_UPSTREAM="$(printf '%s' "$ORIGIN_URL" | sed -E 's|^https://[^/@]*@|https://|')"
     export SANDBOX_RELAY_UPSTREAM
     case "$relay_host" in *gitlab*) relay_user=oauth2 ;; esac
+    # What the agent's clone gets as "origin". The relay ignores the path and
+    # sends everything to the one repository above.
+    relay_remote="http://gitrelay:8081/repo.git"
     say "The git relay lets the agent push branch $BRANCH to $ORIGIN_URL by itself."
     say "What it pushes does NOT go through export: no diff review, no secret scan."
     # Typed here, or piped in on stdin; it is not stored anywhere on this host.
@@ -1293,7 +1308,7 @@ cmd_run() {
   info "importing branch $BRANCH (starting at ${BASE_COMMIT:0:12})"
   exec_environment
   git --git-dir="$RUN_IMPORT_DIR/repo.git" bundle create --quiet - HEAD "refs/heads/$BRANCH" \
-    | podman exec -i "${EXEC_ENV[@]}" "$SESSION-agent" sandbox-import "$BRANCH" 2>&1 | filter_control \
+    | podman exec -i "${EXEC_ENV[@]}" "$SESSION-agent" sandbox-import "$BRANCH" ${relay_remote:+"$relay_remote"} 2>&1 | filter_control \
     || die "the repository could not be imported into the session"
   rm -rf "$RUN_IMPORT_DIR"
   RUN_IMPORT_DIR=""
@@ -1375,9 +1390,11 @@ cmd_logs() {
   case "${1:-proxy}" in
     agent|proxy) names="$SESSION-${1:-proxy}" ;;
     sidecar)     names="$SESSION-credsidecar" ;;
+    relay)       [ "$GIT_RELAY" = 1 ] || die "session $SESSION has no git relay"
+                 names="$SESSION-gitrelay" ;;
     service)     names="$(podman ps -a --filter "label=$LABEL=$SESSION" --format '{{.Names}}' | grep -e '-svc-' || true)"
                  [ -n "$names" ] || die "session $SESSION has no sibling service" ;;
-    *) die "usage: ./sandbox logs [agent|proxy|sidecar|service]" ;;
+    *) die "usage: ./sandbox logs [agent|proxy|sidecar|relay|service]" ;;
   esac
   # [logical B28] Logs are what Podman collected from each container's
   # output. The proxy's and the sidecar's are the record of what happened;
@@ -1702,7 +1719,7 @@ destroy_session() {
   # A listing that fails must not pass for "nothing there".
   ids="$(podman ps -aq --filter "$filter")" || left=1
   for id in $ids; do
-    podman rm -f -t 0 "$id" >/dev/null || left=1
+    podman rm -f -v -t 0 "$id" >/dev/null || left=1
   done
   ids="$(podman network ls -q --filter "$filter")" || left=1
   for id in $ids; do

@@ -452,6 +452,10 @@ topo_service() {
     --network "${SANDBOX_SESSION}-sandbox:ip=${address}"
     --dns=none                      # resolves nothing
     --tmpfs "/dev/shm:size=64m,mode=1777,nosuid,nodev,noexec"   # shared memory; Postgres needs it
+    # [physical B08, B09] An image may declare a data directory, and Podman
+    # would quietly give it a volume on your disk with no size cap. Ignored:
+    # a service's writable paths are the SVC_TMPFS lines and nothing else.
+    --image-volume=ignore
   )
   # The ${name[@]+...} form matters: a service may have no entries, and old
   # bash treats expanding an empty array as an error.

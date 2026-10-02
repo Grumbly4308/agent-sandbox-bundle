@@ -73,6 +73,16 @@ if [ -z "$(git -C "$repo" remote)" ]; then
 else
   fail "import: a remote is left behind"
 fi
+
+# With a relay address, and only then, the clone has a remote: the relay.
+mkdir -p "$scratch/ws-relay"
+if SANDBOX_WORKSPACE_FOR_TESTS="$scratch/ws-relay" "$import" "$branch" http://gitrelay:8081/repo.git <"$scratch/in.bundle" >/dev/null 2>&1 &&
+  [ "$(git -C "$scratch/ws-relay/repo" remote get-url origin 2>/dev/null)" = http://gitrelay:8081/repo.git ] &&
+  [ "$(git -C "$scratch/ws-relay/repo" remote | wc -l)" -eq 1 ]; then
+  pass "import: with a relay address, origin is the relay and nothing else"
+else
+  fail "import: the relay address did not become the one remote"
+fi
 if [ "$(mode_of "$repo")" = 700 ]; then
   pass "import: repo directory is 0700"
 else

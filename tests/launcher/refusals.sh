@@ -62,7 +62,7 @@ FAKE_PODMAN_REMOTE=true    refused "run refuses a remote Podman" "remote client"
 CONTAINER_HOST=ssh://elsewhere/run/podman.sock refused "run refuses CONTAINER_HOST" "pointed at another machine" run
 CONTAINER_CONNECTION=prod refused "run refuses CONTAINER_CONNECTION" "pointed at another machine" run
 FAKE_PODMAN_ROOTLESS=false refused "destroy refuses a root-run Podman too" "rootful" "$ROOT/sandbox" destroy --all
-FAKE_PODMAN_VERSION=4.3.1  refused "run refuses Podman older than 4.4" "too old" run
+FAKE_PODMAN_VERSION=5.3.1  refused "run refuses Podman older than 5.4" "too old" run
 FAKE_PODMAN_BACKEND=cni    refused "run refuses the CNI network backend" "netavark" run
 
 # --- a kernel that cannot enforce the limits  [physical B10] ---------------------
@@ -101,6 +101,7 @@ check   "a mode it does offer is accepted" "$ROOT/sandbox" run "$T/src" --auth a
 "$ROOT/sandbox" destroy >/dev/null 2>&1
 rm "$ROOT/agents/claude/sidecar.json" "$T/config/verified"
 refused "an invalid branch name" "is not a branch name" run --branch 'a..b'
+refused "a branch name git takes but export would refuse" "is not a branch name" run --branch 'fix+x'
 refused "two repositories" "takes one repository" run "$T/src"
 refused "no repository" "usage: ./sandbox run" "$ROOT/sandbox" run
 refused "a directory that is not a repository" "is not a git repository" "$ROOT/sandbox" run "$T/home"
@@ -134,6 +135,8 @@ unset SANDBOX_TEST_ANTHROPIC_KEY
 refused "no stored credential and no terminal: points at login" "./sandbox login --agent claude --auth apikey" run
 ANTHROPIC_API_KEY=sk-ant-from-the-shell refused "ANTHROPIC_API_KEY in the environment is not used" "./sandbox login" run
 SANDBOX_TEST_ANTHROPIC_KEY='bad"token' refused "a credential that is not a token" "does not look like a token" run
+SANDBOX_TEST_ANTHROPIC_KEY='user:0123456789abcdef' refused "a credential the sidecar would refuse (a colon)" "does not look like a token" run
+SANDBOX_TEST_ANTHROPIC_KEY='short' refused "a credential the sidecar would refuse (too short)" "does not look like a token" run
 export SANDBOX_TEST_ANTHROPIC_KEY="sk-ant-test-0123456789"
 
 # --- failures half-way leave nothing behind  [logical B31, closes L1] --------------

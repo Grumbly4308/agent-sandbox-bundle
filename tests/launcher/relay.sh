@@ -40,6 +40,7 @@ check  "the agent finds the relay by /etc/hosts" grep -qE "^create${tab}--name${
 check  "the agent reaches the relay directly, not through the proxy" grep -qE "^create${tab}--name${tab}$s-agent${tab}.*NO_PROXY=[^${tab}]*,gitrelay,10.201.0.4" "$log"
 check  "the proxy's relay list holds the one git host" grep -qx "github.com" "$SANDBOX_STATE_DIR/$s/proxy/relay.domains"
 check  "state records that the relay is on" grep -qx "GIT_RELAY=1" "$SANDBOX_STATE_DIR/$s/state"
+check  "the agent's clone is given the relay as its remote" grep -qE "^exec${tab}.*$s-agent${tab}sandbox-import${tab}agent/test${tab}http://gitrelay:8081/repo.git$" "$log"
 before "the relay is waited for before its token goes in" "^exec${tab}$s-gitrelay${tab}gitrelay-healthcheck" "relay-load"
 
 loaded="$(find "$FAKE_PODMAN_STATE/stdin" -name "*.$s-gitrelay.relay-load")"
@@ -48,12 +49,16 @@ if grep -qF "$RELAY_TOKEN" "$log"; then fail "the git token is on a podman comma
 if grep -rqF "$RELAY_TOKEN" "$SANDBOX_STATE_DIR" "$SANDBOX_CONFIG_DIR"; then fail "the git token is in a file"; else pass "the git token is in no file"; fi
 if grep -rqF "$RELAY_TOKEN" "$FAKE_PODMAN_STATE/stdin" --exclude="*.relay-load"; then fail "the git token went to another container"; else pass "the git token went to no other container"; fi
 case "$out" in *"$RELAY_TOKEN"*) fail "the git token was printed" ;; *) pass "the git token is not printed" ;; esac
+"$ROOT/sandbox" logs relay >/dev/null 2>&1
+check  "logs relay reads the relay's log" grep -qE "^logs${tab}$s-gitrelay$" "$log"
 
 # Without --git-relay there is no relay and no address for one.
 "$ROOT/sandbox" destroy >/dev/null 2>&1
 : > "$log"
 "$ROOT/sandbox" run "$T/src" </dev/null >/dev/null 2>&1 || fail "plain run failed"
 if grep -q "gitrelay" "$log"; then fail "a relay appeared without --git-relay"; else pass "no relay unless asked for"; fi
+check  "and the clone is given no remote" grep -qE "sandbox-import${tab}[^${tab}]+$" "$log"
+says  "logs relay without a relay says so" "has no git relay" "$ROOT/sandbox" logs relay
 check "the proxy then has no relay address" grep -qE "^create${tab}--name${tab}asb-src-[0-9a-f]{6}-proxy${tab}.*SANDBOX_RELAY_IP=${tab}" "$log"
 "$ROOT/sandbox" destroy >/dev/null 2>&1
 
