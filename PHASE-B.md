@@ -1,81 +1,409 @@
-# Phase B — what has not been run, and how to run it
+# Phase B — the test plan for a real host
 
 Version 2 was written on a machine with **no container runtime**. Everything
 that could be tested without one was (`make test`). Nothing that needs Podman
 has been run: no image has been built, no container started, and **no `verify`
-check has passed or failed**. This file is the list of what to run on a real
-host and what is still unproven.
+check has passed or failed**.
 
-When a step fails, fix the cause and record it here. Do not weaken the check.
+This file is the plan for finishing the job on a real host: what to set up,
+what to run in which order, what a good result looks like, and where to look
+when a step fails. After the plan come the full list of `verify` checks and
+the list of things still unproven, by component.
 
-## Before you start
+Two rules:
 
-A Linux host (or a Mac with `podman machine`) and an ordinary account without
-`sudo`:
+- When a step fails, fix the cause and write down what it was. **Do not weaken
+  the check.**
+- Stop at the first failed step in Part 1. Later steps build on earlier ones.
 
-- rootless Podman 5.4 or newer (Debian 13, Ubuntu 26.04, current Fedora; Ubuntu
-  24.04 ships 4.9 and is refused), `git`, `jq`, `curl`
-- `gitleaks` (the export's secret scan; without it `push` refuses)
-- `secret-tool` on Linux (the keyring), unless you will type credentials in
-- an API key from a **dedicated workspace with a spend cap**, for the test run
-- for subscription mode: a dedicated Claude account (and ChatGPT account, for
-  Codex) with overage billing off
+## What you need
 
-## The steps, in order
+- A Linux machine or VM you can throw away. Ubuntu 24.04 is the reference;
+  Debian 13 and current Fedora should work the same. (A Mac with
+  `podman machine` is an optional extra, step 19.)
+- About 8 GB of free memory and 15 GB of free disk.
+- An **API key from a dedicated Anthropic workspace with a spend cap**, for
+  the automated cycle and Part 2.
+- For Part 3: a dedicated Claude subscription account, a dedicated ChatGPT
+  account (for Codex), both with overage billing off, and a browser.
+- For steps 12 and 14: a scratch repository on GitHub or GitLab that you own,
+  and for step 14 a token that can push to that one repository and nothing
+  else.
+
+## Part 0 — set the host up (once)
+
+As an admin user:
 
 ```bash
-# 1. The static tests still pass on this host (bash, git and node versions differ).
-make test
+# Ubuntu 24.04. On Fedora: dnf install podman git jq make ShellCheck nodejs gitleaks
+sudo apt update
+sudo apt install -y podman uidmap passt git jq curl make shellcheck nodejs gitleaks libsecret-tools
 
-# 2. Pin the base images and the service images. Read the diff, then commit it.
+# The account the sandbox runs from: no sudo, and its containers may outlive a login.
+sudo adduser --disabled-password --gecos "" sandboxer
+sudo loginctl enable-linger sandboxer
+```
+
+Then log in **as `sandboxer`** over SSH or on a console, not with `su` (Podman
+needs a real login session). Put the repository there, on branch
+`build/phase-a`, and work from its top directory.
+
+```bash
+# Commits the agent makes carry your name; without one, its commits fail.
+git config --global user.name  "Your Name"
+git config --global user.email "you@example.com"
+
+# Record the host once.
+mkdir -p ~/phase-b-logs
+{ cat /etc/os-release; uname -r; podman version; podman info; } > ~/phase-b-logs/00-host.log 2>&1
+```
+
+Keep a log of everything. Every command below is meant to be run like this:
+
+```bash
+<command> 2>&1 | tee ~/phase-b-logs/<step>.log
+```
+
+In Parts 1 and 2 the test key is given as `SANDBOX_TEST_ANTHROPIC_KEY`. Set it
+once in the terminal you work in (`read -rs SANDBOX_TEST_ANTHROPIC_KEY; export
+SANDBOX_TEST_ANTHROPIC_KEY`, then paste), so it is in no log and no shell
+history. `ANTHROPIC_API_KEY` is never read.
+
+## Part 1 — the automated run
+
+Run these in order. Each has one clear pass condition.
+
+### 1. The static tests pass on this host
+
+```bash
+make test
+```
+
+**Good:** it prints `All static tests passed.` **If not:** the failing group
+is named. This is the first place a portability problem shows: the tests were
+written with Node 22, git 2.39 and bash 5.2, and Ubuntu 24.04 packages
+Node 18. If only the `sidecar` or `gitrelay` groups fail, install Node 22 and
+run it again before looking further. (Inside the containers Node comes from
+the pinned image, not from the host.)
+
+### 2. Pin the images
+
+```bash
 scripts/pin-images.sh
 git diff images/PINS services/
+git commit -am "Pin the base and service images"
+```
 
-# 3. Regenerate the seccomp profile and confirm it is byte-identical to the
-#    committed one (expected sha256 742274fe51492c308ee2b5f58bafab372699f07797a4643598e346ab41f991f2).
+**Good:** `images/PINS` and both `services/*/service.conf` now hold
+`...@sha256:...` in place of `UNPINNED`. Needs to reach `docker.io`.
+
+### 3. Regenerate the system-call filter
+
+```bash
 scripts/make-seccomp.sh
 git diff --exit-code seccomp/agent-seccomp.json
+sha256sum seccomp/agent-seccomp.json
+```
 
-# 4. The host checks.
+**Good:** no diff, and the checksum is
+`742274fe51492c308ee2b5f58bafab372699f07797a4643598e346ab41f991f2`.
+Needs to reach `raw.githubusercontent.com`.
+
+### 4. The host checks
+
+```bash
 ./sandbox doctor
+```
 
-# 5. Every image builds, the barrier checks `run --strict` makes pass on each,
-#    and each CLI starts (Codex, OpenCode, and the python and full toolchains;
-#    no real credential).
+**Good:** ends with `This host is ready.` The usual first red line is that
+your user may not set CPU limits; the fix is printed (one command as admin,
+then log in again). Every red line has a fix under it.
+
+### 5. Every image builds and every CLI starts
+
+```bash
 tests/phase-b/images.sh
+```
 
-# 6. The full cycle with Claude Code in API-key mode: doctor, run, verify,
-#    export, destroy; first on tests/fixtures/mini-node, then on
-#    https://github.com/jonschlinkert/is-number. Also runs the deadline test.
-SANDBOX_TEST_ANTHROPIC_KEY=sk-ant-... tests/phase-b/cycle.sh
+Builds the Codex and OpenCode images and the `python` and `full` toolchains,
+runs the barrier checks `run --strict` makes on each, and asks each CLI for
+its version. No real credential is used. The first build takes a while.
 
-# 7. Subscription mode, by hand (needs a browser and the dedicated account).
-claude setup-token                       # on a machine signed in to that account
-./sandbox login                          # paste the token
-./sandbox run /path/to/a/repo --strict
+**Good:** `Every image built, passed the barrier checks at run, and started
+its CLI.` **If not:** a `PROBLEM:` line names the combination. A build error
+is in the output above it; a barrier failure prints `FAIL <check>` with a
+`fix:` line.
+
+### 6. The full cycle with a real key
+
+```bash
+tests/phase-b/cycle.sh
+```
+
+Twice over (first `tests/fixtures/mini-node` as a local repository, then
+`https://github.com/jonschlinkert/is-number` cloned on the host), it runs:
+`doctor`, `run --strict --auto` with a small task, the **full** `verify`,
+`export`, `destroy`, and a check that nothing of the session is left. Then it
+runs the deadline test, which makes a three-minute session of its own, lets
+the time limit pass with the launcher gone, exports afterwards with hostile
+content planted in the repository, and destroys it.
+
+**Good:** no `PROBLEM:` lines and exit status 0. This one command covers most
+of the table of checks below. **If not:** each `PROBLEM:` names the step.
+`verify` prints one line per check: `PASS`, `FAIL` with a `fix:` line, or
+`SKIP` with a reason. A `SKIP` for anything but a stated, legitimate reason
+counts as a failure.
+
+This is also the first time a vendor sees a request the sidecar forwarded. If
+the agent's task fails with a 4xx from the model API, look at
+`./sandbox logs sidecar` before anything else.
+
+## Part 2 — by hand, on a live session
+
+Scripts cannot judge an interactive session. Make a small repository and
+start one:
+
+```bash
+cp -R tests/fixtures/mini-node ~/mini-node
+git -C ~/mini-node init -q && git -C ~/mini-node add -A && git -C ~/mini-node commit -qm fixture
+
+./sandbox run ~/mini-node --auth apikey --strict
+```
+
+### 7. The CLI is usable
+
+**Good:** you land in Claude Code with no login prompt and no "use this API
+key?" question. Ask it to add a small function and commit. It answers, edits
+and commits. Leave it running and open a second terminal for steps 8 to 10.
+
+### 8. What the agent can see and reach
+
+```bash
+./sandbox shell
+```
+
+Inside:
+
+| Type this | Good result |
+|---|---|
+| `id` | uid 61000 and gid 61000, nothing else |
+| `cat /etc/hosts` | two loopback lines; nothing naming your host |
+| `cat /etc/resolv.conf` | empty |
+| `getent hosts localhost` | answers |
+| `getent hosts example.com` | nothing |
+| `env \| grep -iE 'key\|token'` | only values containing `dummy` |
+| `curl -sS -o /dev/null https://example.com` | fails; curl says the proxy answered 403 |
+| `npm view is-number version` | a version number (the npm registry is on the default list) |
+| `touch /probe` | `Read-only file system` |
+| `ls /var/run/docker.sock /run/podman` | no such file, twice |
+
+### 9. The allowlist changes without a restart
+
+On the host, with the shell from step 8 still open:
+
+```bash
+./sandbox allow example.com --reason "phase B test"
+# inside: the curl line from step 8 now succeeds, with no output
+./sandbox deny example.com
+# inside: it fails with 403 again
+./sandbox allow --preset github-downloads --reason "phase B test"
+# inside: curl -sSI https://raw.githubusercontent.com/jonschlinkert/is-number/master/README.md
+#         -> an answer from GitHub (HTTP 200, or 404 if the file has moved), not a proxy 403
+# inside: curl -sSI https://github.com/
+#         -> the proxy's 403: the preset allows downloads, not github.com itself
+```
+
+### 10. The logs say what happened
+
+```bash
+./sandbox logs proxy | tail -n 20
+./sandbox logs sidecar | tail -n 5
+./sandbox logs sidecar | grep -c "$SANDBOX_TEST_ANTHROPIC_KEY"     # must print 0
+```
+
+**Good:** the proxy log has one line for each request from steps 8 and 9,
+allowed and denied, with the host name. The sidecar log has one JSON line per
+model request, with the budget left, and the key appears nowhere in it.
+
+### 11. Verify, export, destroy
+
+```bash
 ./sandbox verify
-./sandbox export && ./sandbox destroy
+./sandbox export
+./sandbox destroy
+podman ps -a; podman volume ls; podman network ls
+```
 
-# 8. Codex with a ChatGPT login, by hand.
-codex login
-./sandbox login --agent codex
-./sandbox run /path/to/a/repo --agent codex --strict
+**Good:** `verify` exits 0. `export` prints the commits, the diff and a
+`RUNS LATER` section, and leaves a repository under
+`~/agent-sandbox-out/<session>/repo.git` holding the agent's commit. After
+`destroy` the three Podman listings show nothing whose name starts `asb-`.
 
-# 9. The disk-backed workspace, if you want it (set STORE in your settings;
-#    doctor then prints how to make the store).
-./sandbox run /path/to/a/repo --workspace-driver local --workspace-size 2g --strict
+### 12. Push and pull request (needs a repository of yours)
+
+```bash
+./sandbox run https://github.com/<you>/<scratch>.git --auth apikey --auto -- -p "Add a line to the README and commit."
+./sandbox export
+./sandbox push
+./sandbox pr          # optional; needs gh or glab
+./sandbox destroy
+```
+
+**Good:** the branch `agent/<session>` appears on the remote with the agent's
+commit and no `Co-Authored-By` or "Generated with" line in its message.
+
+### 13. Sibling services
+
+```bash
+./sandbox run ~/mini-node --auth apikey --strict --service postgres:16 --service redis:7
+```
+
+In a second terminal:
+
+```bash
+./sandbox shell
+# inside:
+node -e 'for (const v of ["DATABASE_URL","REDIS_URL"]) { const u = new URL(process.env[v]); const s = require("net").connect(u.port, u.hostname); s.on("connect", () => { console.log(v, "open"); s.end(); }).on("error", (e) => console.log(v, e.message)); }'
+exit
+./sandbox verify
+./sandbox logs service | tail -n 5
+./sandbox destroy
+```
+
+**Good:** both print `open`; `verify` exits 0. It covers the two service
+containers too.
+
+### 14. The git relay
+
+```bash
+./sandbox run https://github.com/<you>/<scratch>.git --auth apikey --git-relay --strict
+# paste the narrow git token when asked
+```
+
+In a second terminal:
+
+```bash
+./sandbox shell
+# inside:
+git commit --allow-empty -m "relay test" && git push origin HEAD        # accepted
+git push origin HEAD:refs/heads/some-other-branch                         # refused
+git tag relay-test && git push origin relay-test                          # refused
+exit
+./sandbox verify            # runs B30-other-branch and B30-tag
+./sandbox logs relay | tail -n 5
+./sandbox destroy
+```
+
+**Good:** only the session branch reaches the remote. `B30-force-push` is a
+stated `SKIP` (the relay cannot refuse a force push; protect the branch on
+the git host).
+
+### 15. The disk-backed workspace
+
+```bash
+mkdir -p ~/.config/agent-sandbox
+echo "STORE=/var/lib/agent-sandbox-store" >> ~/.config/agent-sandbox/settings
+./sandbox doctor            # prints the commands to make the store; an admin runs them
+./sandbox doctor            # green now
+./sandbox run ~/mini-node --auth apikey --workspace-driver local --workspace-size 2g --strict
+./sandbox destroy
 scripts/verify.sh --store-test
 ```
 
-Each `verify` run prints one line per check: `PASS`, `FAIL` with a `fix:` line,
-or `SKIP` with a reason. A `SKIP` for anything but a stated, legitimate reason
-counts as a failure.
+**Good:** `B33-share-watch` and `B33-store-full` pass.
+
+### 16. Upgrade
+
+```bash
+./sandbox upgrade
+```
+
+**Good:** every image is rebuilt from scratch and the old and new versions of
+what is in them are printed.
+
+## Part 3 — subscription logins
+
+These need a browser and the dedicated accounts. Open a new terminal in which
+`SANDBOX_TEST_ANTHROPIC_KEY` is **not** set.
+
+### 17. Claude Code with a Pro or Max subscription
+
+```bash
+claude setup-token                 # on any machine signed in to the dedicated account
+./sandbox login                    # paste the token; it goes into the OS keyring
+./sandbox run ~/mini-node --strict
+./sandbox verify
+./sandbox export && ./sandbox destroy
+```
+
+**Good:** as step 7, with no login prompt. In `verify`, `B15-token-absent`
+is a `PASS`: the real token was searched for in the agent container and not
+found.
+
+### 18. Codex with a ChatGPT login, and OpenCode with a key
+
+```bash
+codex login                                        # the Codex CLI on this host; writes ~/.codex/auth.json
+./sandbox login --agent codex
+./sandbox run ~/mini-node --agent codex --strict
+./sandbox verify && ./sandbox destroy
+
+./sandbox login --agent opencode --auth apikey     # the Anthropic key from the dedicated workspace
+./sandbox run ~/mini-node --agent opencode --auth apikey --strict
+./sandbox verify && ./sandbox destroy
+```
+
+**Good:** each CLI answers a prompt.
+
+One thing a single sitting cannot show: the launcher renews the Codex login on
+the host only when its access token has under ten minutes left, about ten days
+after `codex login`. Start a Codex session then. It must start without asking
+you to sign in again, and a second one after it must too (the renewed login
+was written back to the keyring). Until then, record the renewal as not run.
+
+## Part 4 — optional
+
+### 19. Other hosts
+
+- **Fedora** (SELinux on): repeat steps 1 to 6. `B05-lsm-label` runs there
+  and is a stated `SKIP` on Ubuntu.
+- **macOS** with `podman machine`: repeat steps 1 to 6. Everything on macOS
+  is unproven, the keyring handling in particular.
+- **gVisor:** install `runsc`, then `export SANDBOX_RUNTIME_CLASS=runsc` and
+  repeat step 6. Untested by design until a host has it.
+
+## When you are done
+
+Bring back `~/phase-b-logs/` and, for every step, one of: passed, failed (with
+what you saw), or not run. A failed step plus its log is enough to fix from.
+
+| Step | Result | Notes |
+|---|---|---|
+| 1 static tests | | |
+| 2 pin images | | |
+| 3 seccomp identical | | |
+| 4 doctor | | |
+| 5 images | | |
+| 6 cycle and deadline test | | |
+| 7 CLI usable | | |
+| 8 inside the container | | |
+| 9 allow and deny | | |
+| 10 logs | | |
+| 11 verify, export, destroy | | |
+| 12 push and pull request | | |
+| 13 services | | |
+| 14 git relay | | |
+| 15 disk store | | |
+| 16 upgrade | | |
+| 17 Claude subscription | | |
+| 18 Codex and OpenCode | | |
+| 19 other hosts | | |
 
 ## The verify checks — none has been run
 
 Every row of the barrier register in
 [docs/00-threat-model.md](docs/00-threat-model.md) has checks. **Status of all
-of them: not run here.**
+of them: not run here.** Steps 6, 11, 13, 14 and 15 above are where they run.
 
 | Barrier | Checks | Status |
 |---|---|---|
@@ -91,7 +419,7 @@ of them: not run here.**
 | B10 cgroup limits | `B10-pids-max`, `-memory-max`, `-swap-max`, `-cpu-max`, `-fork-limit`, `-limits-all` | not run here |
 | B11 ulimits | `B11-ulimits`, `-fsize`, `-core-all` | not run here |
 | B12 no route out | `B12-no-route`, `B12-network-attach` | not run here |
-| B13 no gateway | `B13-gateway-ports`, `-etc-hosts`, `-network-no-gateway` | not run here |
+| B13 no gateway, no host address | `B13-gateway-ports`, `-etc-hosts`, `-hosts-all`, `-network-no-gateway` | not run here |
 | B14 no resolver | `B14-no-resolver`, `B14-dns-by-hand` | not run here |
 | B15 no credential inside | `B15-key-files`, `-push`, `-token-absent` | not run here |
 | B16 cannot forge an address | `B16-add-address`, `B16-packet-socket` | not run here |
@@ -133,16 +461,10 @@ fails.
 - An internal network with `--disable-dns` has no gateway address (filed
   upstream as a bug; may change), and static `ip=` addresses work on it.
 - `--dns=none` leaves the image's empty `/etc/resolv.conf` in place.
-- `policy/containers.conf` (`host_containers_internal_ip = "none"` and
-  `base_hosts_file = "none"`) keeps the host's address and the host's own
-  `/etc/hosts` lines out of the containers' `/etc/hosts`, and Podman still
-  writes the `localhost` lines. If not, `B13-etc-hosts` fails. **Which Podman
-  first honours `"none"` for the first setting was not established here**: it
-  is 5.3 or 5.4, and `doctor` asks for 5.4 to be safe. If 5.4 does not honour
-  it, raise doctor's minimum; do not relax the check. Supporting older Podman
-  (Ubuntu 24.04's 4.9) would mean not letting Podman manage `/etc/hosts` at
-  all (`--no-hosts`, and addresses in place of the names `proxy`, `sidecar`
-  and `gitrelay`): a design change, not made.
+- `--no-hosts` leaves the image's `/etc/hosts` in place and mounts nothing
+  over it, in every container. `B13-etc-hosts` and `B13-hosts-all` fail if
+  not.
+- `--hostname sandbox` is accepted together with `--no-hosts`.
 - `--image-volume=ignore` stops a service image's declared data directory
   becoming an uncapped volume on disk, and Redis starts with `/data` read-only.
 - `--timeout` kills each container at the deadline with the launcher gone.
@@ -151,6 +473,8 @@ fails.
 - `--cpus` and `--device-write-bps` under rootless (controller delegation).
 - Every `podman inspect --format` field name the launcher and `verify` read.
 - `podman unshare chown` / `du` / `rm` on the disk store.
+- That 4.4 really is the oldest Podman all of the above works on. Ubuntu
+  24.04's 4.9 is the oldest one this plan exercises.
 - macOS: everything, through `podman machine`. In particular, storing a
   Codex login (about 8 KB once encoded) through the `security` tool may be cut
   short by its line limit.
@@ -163,7 +487,9 @@ fails.
   reports its version; Codex's platform package is installed under an alias,
   OpenCode's plain x64 build needs AVX2 (a baseline build is pinned as well).
 - `catatonit -P` as the first process reaps children and stops on SIGTERM.
-- The empty `/etc/resolv.conf` survives the build.
+- The empty `/etc/resolv.conf` and the two-line `/etc/hosts` survive the
+  build as written (builders manage both files themselves while building).
+- The service images' own `/etc/hosts` holds loopback addresses only.
 - Postgres and Redis start as non-root on a read-only root.
 - `scripts/pin-images.sh` records the multi-architecture digest.
 
@@ -189,6 +515,16 @@ fails.
 - The image's certificate store verifies the vendors' certificates through a
   real Squid `CONNECT`.
 
+### Agents
+
+- Each CLI reaches the sidecar when its base URL and `NO_PROXY` hold an
+  address (`http://10.201.x.3:8080`), not a name. The spike did not use this
+  form.
+- Claude Code with `--auto`: whether the one-time "bypass permissions" dialog
+  appears.
+- Codex's interface in API-key mode, and its trusted-directory entry.
+- OpenCode's interface with `--auto`.
+
 ### Codex subscription login
 
 - The host-side renewal: endpoint, request body, reply shape, and that the
@@ -200,7 +536,8 @@ fails.
 
 - Real gitleaks: that the installed version accepts `--ignore-gitleaks-allow`
   and a bare repository, and that the extra rule in `policy/gitleaks.toml`
-  loads.
+  loads. If the packaged gitleaks is too old for the flag, install a current
+  release.
 - git 2.40 or newer: the attribute handling on a bare repository.
 - BSD `awk`, `cut`, `tr` and bash 3.2 on macOS.
 
@@ -208,28 +545,20 @@ fails.
 
 - GitHub or GitLab accepting the relay's push bodies and its Basic
   authentication header, through a real Squid.
-- The agent's git reaching `http://gitrelay:8081/` through `/etc/hosts` and
-  `NO_PROXY`, so that a plain `git push` to the `origin` the import sets works.
-
-### Agents
-
-- Claude Code with `--auto`: whether the one-time "bypass permissions" dialog
-  appears.
-- Codex's interface in API-key mode, and its trusted-directory entry.
-- OpenCode's interface with `--auto`.
+- The agent's git reaching the relay by address with `NO_PROXY` set, so that a
+  plain `git push` to the `origin` the import sets works.
 
 ### Extras
 
 Nothing in `extras/` has been loaded or started: the auditd rules, the Falco
 rules, the Tetragon policy, the Lima template and the Multipass file. Their
-field names and package names are from memory, as are the Ubuntu 26.04 image
-addresses in the Lima template and the `ubuntu-26.04` runner name in
-`.github/workflows/ci.yml`.
+field names and package names are from memory.
 
 ## The sidecar spike (requirement 19)
 
 Done in Phase A against a mock API and a proxy that refuses everything, with
 dummy tokens. All three CLIs can be run with only a dummy credential and a base
 URL pointing at a sidecar; `agents/<name>/compat.md` records the settings each
-needs. What the spike could not show, and step 6 to 8 above will: that the
-vendors accept the requests once the sidecar puts a real credential on them.
+needs. What the spike could not show, and steps 6, 17 and 18 above will: that
+the vendors accept the requests once the sidecar puts a real credential on
+them.
