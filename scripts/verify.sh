@@ -1575,9 +1575,10 @@ store_test() {
   fi
   kill_watchdog
   printf 'Filling the disk store (%s MB free); other sessions on it will see it full until this ends...\n' "$((free_kb / 1024))"
-  # One gigabyte per file, until the first write that fails.
+  # One gigabyte per file, until the first write that fails. dd says why on
+  # the first of its four lines, so all four are kept.
   # shellcheck disable=SC2016  # run by the container's sh
-  out="$(podman exec "$OWN-agent" sh -c 'n=0; while :; do if ! out=$(LC_ALL=C dd if=/dev/zero of=/workspace/.verify-full.$n bs=1048576 count=1024 2>&1); then echo "$out" | tail -n 3; break; fi; n=$((n+1)); [ "$n" -lt 4096 ] || { echo never-filled; break; }; done; rm -f /workspace/.verify-full.*' 2>&1)" || status=$?
+  out="$(podman exec "$OWN-agent" sh -c 'n=0; while :; do if ! out=$(LC_ALL=C dd if=/dev/zero of=/workspace/.verify-full.$n bs=1048576 count=1024 2>&1); then echo "$out" | tail -n 4; break; fi; n=$((n+1)); [ "$n" -lt 4096 ] || { echo never-filled; break; }; done; rm -f /workspace/.verify-full.*' 2>&1)" || status=$?
   case "$out" in
     *"No space left on device"*) pass B33-store-full "took the watch away and wrote to the workspace until it stopped: the store answered 'No space left on device', and the files were removed" ;;
     *) fail B33-store-full "wrote to the disk-backed workspace without a watch and it did not end with 'No space left on device' (status $status): $out" \

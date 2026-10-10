@@ -354,7 +354,7 @@ note_no_store() {
 }
 
 check_store() {
-  local owner device parent_device make
+  local owner device parent_device make device_name backing size blocks allocated
   make="$(store_recipe "$STORE")"
   if [ "$(uname -s)" = Darwin ]; then
     bad "a disk store is set (STORE=$STORE), and on macOS there is no support for one yet" \
@@ -379,6 +379,21 @@ check_store() {
     bad "the disk store $STORE belongs to uid $owner, not to you" "sudo chown $(id -u):$(id -g) '$STORE'"
   else
     ok "disk store $STORE is a separate filesystem that you own"
+    # A loop device over a sparse file: the store reads as 20 GB, but the
+    # blocks are only taken from your disk as they are written, so filling
+    # the store fills your disk after all. fallocate makes the file whole.
+    device_name="$(df --output=source "$STORE" 2>/dev/null | tail -n 1)"
+    case "$device_name" in
+      /dev/loop*)
+        backing="$(cat "/sys/block/${device_name#/dev/}/loop/backing_file" 2>/dev/null || true)"
+        if [ -n "$backing" ] && size="$(stat -c %s "$backing" 2>/dev/null)" && blocks="$(stat -c %b "$backing" 2>/dev/null)"; then
+          allocated=$((blocks * 512))
+          if [ "$allocated" -lt $((size * 9 / 10)) ]; then
+            warn "the store's file $backing is sparse: $((allocated / 1048576)) MB of $((size / 1048576)) MB are taken from your disk so far, and a session that fills the store takes the rest. As an admin: sudo fallocate -l $size '$backing'"
+          fi
+        fi
+        ;;
+    esac
   fi
   if [ -n "$NEED_IO" ]; then
     if [ -b "$STORE_DEVICE" ]; then
