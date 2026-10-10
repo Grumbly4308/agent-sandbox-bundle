@@ -70,8 +70,9 @@ can spare. The VM recipes in `extras/vm-wrapper/` make the store for you.
 
 Optional but worth having on the host:
 
-- `gitleaks` — the secret scan at export. Without it `export` still works but
-  `push` refuses.
+- `gitleaks` 8.18 or newer — the secret scan at export. Without it `export`
+  still works but `push` refuses. Debian 13 packages 8.16, which is too old;
+  take the release binary from github.com/gitleaks/gitleaks instead.
 - `secret-tool` (package `libsecret-tools`) on Linux — stores the model
   credential in your OS keyring. macOS has its own.
 - `gh` or `glab` — lets `./sandbox pr` open the pull request for you.

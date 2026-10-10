@@ -53,7 +53,17 @@ What each is for:
 - `git jq curl`: the launcher uses them.
 - `make shellcheck nodejs`: only for the static tests in step C2.
 - `gitleaks`: the secret scan when work is exported. Without it `push`
-  refuses.
+  refuses. **8.18 or newer is needed**; Debian 13 packages 8.16, which
+  `export` refuses to use (`doctor` says so). On such a host install the
+  release binary for your user instead, with its checksum checked:
+
+  ```bash
+  cd "$(mktemp -d)"
+  curl -sSLO https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+       -O https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_checksums.txt
+  grep linux_x64.tar.gz gitleaks_8.30.1_checksums.txt | sha256sum -c
+  tar -xzf gitleaks_8.30.1_linux_x64.tar.gz gitleaks && install -Dm755 gitleaks ~/.local/bin/gitleaks
+  ```
 - `libsecret-tools`: the keyring, for section F.
 
 On Fedora: `sudo dnf install -y podman git jq make ShellCheck nodejs gitleaks libsecret`.
