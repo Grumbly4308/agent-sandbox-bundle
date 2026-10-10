@@ -68,7 +68,7 @@ printf '{}\n' > "$ROOT/seccomp/agent-seccomp.json"
 printf 'NODE_BASE=UNPINNED\n' >> "$ROOT/images/PINS"
 red "unpinned base images" "UNPINNED base images" "pin-images.sh" doctor
 check "an unpinned base image does not stop a run whose images exist" doctor --preflight
-sed -i.bak '/UNPINNED/d' "$ROOT/images/PINS"
+sed -i.bak '/^NODE_BASE=UNPINNED$/d' "$ROOT/images/PINS"
 
 # Podman missing altogether: a PATH with the usual tools but no podman.
 mkdir "$T/tools"

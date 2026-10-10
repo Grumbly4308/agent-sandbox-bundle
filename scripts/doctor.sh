@@ -242,7 +242,7 @@ check_files_and_tools() {
   # a real host; an image build refuses until they are.
   if [ ! -f "$SANDBOX_ROOT/images/PINS" ]; then
     bad "images/PINS is missing" "restore it from git"
-  elif grep -q UNPINNED "$SANDBOX_ROOT/images/PINS"; then
+  elif grep -Eq '^[A-Z0-9_]+=UNPINNED' "$SANDBOX_ROOT/images/PINS"; then
     bad "images/PINS still has UNPINNED base images" "run scripts/pin-images.sh once, read the digests it wrote, then build"
   else
     ok "base images are pinned by digest"

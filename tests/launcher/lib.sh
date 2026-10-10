@@ -111,7 +111,7 @@ make_root() {
   cp "$REPO/sandbox" "$REPO/topology.sh" "$REPO/VERSION" "$ROOT/"
   cp "$REPO/scripts/doctor.sh" "$ROOT/scripts/"
   printf '{}\n' > "$ROOT/seccomp/agent-seccomp.json"
-  printf '%s\n' '# stand-in' \
+  printf '%s\n' '# stand-in. Each value ships as UNPINNED, as in the real file.' \
     'NODE_BASE=docker.io/library/node:22-bookworm-slim@sha256:1111' \
     'ALPINE_BASE=docker.io/library/alpine:3.20@sha256:2222' > "$ROOT/images/PINS"
   printf '%s\n' '# stand-in' 'DISABLE_AUTOUPDATER=1' > "$ROOT/agents/claude/env"
