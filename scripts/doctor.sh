@@ -249,7 +249,28 @@ check_files_and_tools() {
   fi
   # export scans the agent's commits for secrets with gitleaks.
   if command -v gitleaks >/dev/null 2>&1; then
-    ok "gitleaks is installed"
+    # export tells it to ignore gitleaks:allow comments and .gitleaksignore
+    # files, which it can only do from 8.18; an older one is not run at all.
+    gitleaks_version=$(gitleaks version 2>/dev/null | awk 'NR == 1 { print $NF }') || gitleaks_version=""
+    gitleaks_version=${gitleaks_version#v}
+    case "$gitleaks_version" in *[!0-9.]*) gitleaks_version="" ;; esac   # Debian's build prints a sentence, not a number
+    gitleaks_major=${gitleaks_version%%.*}
+    gitleaks_rest=${gitleaks_version#*.}
+    gitleaks_minor=${gitleaks_rest%%.*}
+    case "$gitleaks_major.$gitleaks_minor" in
+      *[!0-9.]* | .* | *.)
+        gitleaks_help=$(gitleaks detect --help 2>&1) || true
+        if [[ "$gitleaks_help" == *--ignore-gitleaks-allow* && "$gitleaks_help" == *--gitleaks-ignore-path* ]]; then gitleaks_ok=1; else gitleaks_ok=0; fi
+        ;;
+      *)
+        if [ "$gitleaks_major" -gt 8 ] || { [ "$gitleaks_major" -eq 8 ] && [ "$gitleaks_minor" -ge 18 ]; }; then gitleaks_ok=1; else gitleaks_ok=0; fi
+        ;;
+    esac
+    if [ "$gitleaks_ok" -eq 1 ]; then
+      ok "gitleaks is installed${gitleaks_version:+ ($gitleaks_version)}"
+    else
+      warn "gitleaks ${gitleaks_version:-(unknown version)} is too old: export needs 8.18 or newer to keep the tree from silencing the scan, so it will run no scan and push and pr will refuse. Install a newer one from github.com/gitleaks/gitleaks/releases"
+    fi
   else
     warn "gitleaks is not installed: export cannot scan for secrets, so push and pr will refuse. Install it from your distribution or github.com/gitleaks/gitleaks"
   fi

@@ -864,6 +864,26 @@ print_runs_later() {
 # with the shipped configuration and with every way for the tree to silence
 # it switched off (reference finding L4). There is deliberately no fallback
 # when gitleaks is missing: a grep here could be mistaken for a scan.
+# gitleaks_has_ignore_flags <version>: true when this gitleaks takes
+# --ignore-gitleaks-allow and --gitleaks-ignore-path, which arrived in 8.18.
+# When the version cannot be read (Debian's package prints no number), the
+# help text is asked instead.
+gitleaks_has_ignore_flags() {
+  local version="$1" major minor rest help
+  major=${version%%.*}
+  rest=${version#*.}
+  minor=${rest%%.*}
+  case "$major.$minor" in
+    *[!0-9.]* | .* | *.)
+      help=$(env -i "PATH=$PATH" gitleaks detect --help 2>&1) || true
+      [[ "$help" == *--ignore-gitleaks-allow* && "$help" == *--gitleaks-ignore-path* ]]
+      ;;
+    *)
+      [ "$major" -gt 8 ] || { [ "$major" -eq 8 ] && [ "$minor" -ge 18 ]; }
+      ;;
+  esac
+}
+
 secret_scan() {
   local version major minor rest rc=0
   local flags=() args=()
@@ -873,6 +893,18 @@ secret_scan() {
   if ! command -v gitleaks >/dev/null 2>&1; then
     say "gitleaks is not installed, so NO secret scan was run."
     say "push and pr will refuse this export. Install gitleaks and run export again."
+    return 0
+  fi
+
+  version=$(env -i "PATH=$PATH" gitleaks version 2>/dev/null | awk 'NR == 1 { print $NF }') || version=""
+  version=${version#v}
+  case "$version" in *[!0-9.]*) version="" ;; esac   # Debian's build prints a sentence, not a number
+  # Without the two flags below, a `gitleaks:allow` comment or a
+  # .gitleaksignore the agent wrote could quiet the scan, so an older
+  # gitleaks is not run at all (Debian 13 ships 8.16).
+  if ! gitleaks_has_ignore_flags "$version"; then
+    say "gitleaks ${version:-(unknown version)} is too old: it cannot be told to ignore gitleaks:allow comments and .gitleaksignore files, so NO secret scan was run."
+    say "push and pr will refuse this export. Install gitleaks 8.18 or newer (github.com/gitleaks/gitleaks/releases) and run export again."
     return 0
   fi
 
@@ -887,8 +919,6 @@ secret_scan() {
   )
 
   # gitleaks 8.19 renamed `detect --source <repo>` to `git <repo>`.
-  version=$(env -i "PATH=$PATH" gitleaks version 2>/dev/null | awk 'NR == 1 { print $NF }') || version=""
-  version=${version#v}
   major=${version%%.*}
   rest=${version#*.}
   minor=${rest%%.*}
