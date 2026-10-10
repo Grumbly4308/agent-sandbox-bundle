@@ -259,7 +259,7 @@ SECCOMP_FIX="the agent must be created with --security-opt seccomp=<repo>/seccom
 # ---------------------------------------------------------------------------
 NET_JS='
 "use strict";
-const net = require("net"), dgram = require("dgram"), dns = require("dns"), http = require("http"), cp = require("child_process");
+const net = require("net"), dgram = require("dgram"), dns = require("dns"), http = require("http"), https = require("https"), cp = require("child_process");
 const [cmd, ...a] = process.argv.slice(1);
 const out = (s) => process.stdout.write(s + "\n");
 
@@ -331,7 +331,10 @@ function request(host, port, method, path, payload, dummy, ms) {
     const fin = (r) => { if (!done) { done = true; resolve(r); } };
     const headers = { authorization: "Bearer " + dummy, "x-api-key": dummy, "anthropic-version": "2023-06-01" };
     if (payload !== null) { headers["content-type"] = "application/json"; headers["content-length"] = payload.length; }
-    const req = http.request({ host, port: Number(port), method, path, headers, agent: false }, (res) => {
+    // PROBE_CA_B64: the server speaks TLS with this certificate, which must
+    // also name the address asked for (a TLS sidecar).
+    const ca = process.env.PROBE_CA_B64 ? Buffer.from(process.env.PROBE_CA_B64, "base64") : null;
+    const req = (ca ? https : http).request({ host, port: Number(port), method, path, headers, agent: false, ...(ca ? { ca } : {}) }, (res) => {
       status = res.statusCode;
       res.on("data", (d) => { if (text.length < 200) text += d.toString("latin1"); });
       // One line, whatever the body: a streamed reply has line breaks in
@@ -1245,9 +1248,9 @@ c_B21_vendor_forged() {
 # --- B23: the sidecar forwards only what the CLI needs ---------------------------------------------
 c_B23_unknown_path() {
   local out
-  out="$(netprobe post "$(param sidecar)" "$(param sidecar_port)" GET /verify-not-forwarded none path verify-dummy none 8000)"
+  out="$(PROBE_CA_B64="$(param sidecar_ca)" netprobe post "$(param sidecar)" "$(param sidecar_port)" GET /verify-not-forwarded none path verify-dummy none 8000)"
   case "$out" in
-    "http 404"*) pass B23-unknown-path "asked this session's sidecar for /verify-not-forwarded, a path no CLI uses: 404, not forwarded" ;;
+    "http 404"*) pass B23-unknown-path "asked this session's sidecar for /verify-not-forwarded, a path no CLI uses$( [ -z "$(param sidecar_ca)" ] || printf ' (over TLS, with the session certificate)'): 404, not forwarded" ;;
     http\ *) fail B23-unknown-path "asked the sidecar for /verify-not-forwarded and it answered ${out#http }, expected 404" "the sidecar must forward only the routes in agents/<agent>/sidecar.json (images/credsidecar/sidecar.mjs)" ;;
     unavailable*) skip B23-unknown-path no-probe "not attempted: ${out#unavailable }" "node must be in the agent image" ;;
     *) fail B23-unknown-path "no answer from the sidecar at $(param sidecar):$(param sidecar_port) ($out), so nothing was proven" "the sidecar container must be running and reachable from the agent: ./sandbox logs sidecar" ;;

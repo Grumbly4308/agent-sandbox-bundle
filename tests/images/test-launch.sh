@@ -253,6 +253,18 @@ for token in id_token access_token; do
 done
 all_dummy "codex oauth with an account id: credentials are still dummies"
 
+env_lacks "codex oauth: no sidecar certificate when none is handed in" CODEX_CA_CERTIFICATE
+
+# [TLS] The session's sidecar certificate becomes a file Codex is told to trust.
+ca="$(printf '%s\n' '-----BEGIN CERTIFICATE-----' 'MIIBdummydummydummy' '-----END CERTIFICATE-----')"
+envs_extra=(SANDBOX_SIDECAR_CA="$ca")
+run_launch codex oauth
+envs_extra=()
+started "codex oauth with a sidecar certificate: launch succeeds"
+env_has "codex oauth: CODEX_CA_CERTIFICATE names the certificate file" "CODEX_CA_CERTIFICATE=$home/.codex/sidecar-ca.pem"
+check "codex oauth: the file holds the certificate" test "$(cat "$home/.codex/sidecar-ca.pem")" = "$ca"
+env_lacks "codex oauth: the certificate itself is not left in the CLI's environment" SANDBOX_SIDECAR_CA
+
 envs_extra=(SANDBOX_CODEX_ACCOUNT_ID='x","exp":1,"y":"')
 run_launch codex oauth
 envs_extra=()

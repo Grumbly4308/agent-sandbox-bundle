@@ -33,6 +33,15 @@ The real token reaches the sidecar on standard input when a session starts. It
 is never in an environment variable, a command line, a file on your disk or the
 session directory, and it is gone when the container is.
 
+For Codex with a subscription the agent talks to the sidecar in HTTPS, because
+Codex refuses a ChatGPT backend that is not. `run` makes a new key and a
+certificate for the sidecar's address at every start, with `openssl` on your
+host, and pipes both in the same way. The key exists only in that pipe and in
+the sidecar's memory. The agent is given the certificate alone, and is told to
+trust it (`CODEX_CA_CERTIFICATE`); the session directory keeps a copy for
+`shell` and `verify`. Every other agent's sidecar is plain HTTP, on the
+session's internal network.
+
 > **Proven so far against a mock API only.** That the vendors accept requests
 > forwarded this way is a Phase B item ([PHASE-B.md](../PHASE-B.md)).
 

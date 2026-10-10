@@ -131,7 +131,7 @@ async function startMock(tlsFiles = null) {
 // Start the sidecar exactly as the image does (`node sidecar.mjs`), with the
 // test-only settings that move its port, its state directory and its
 // upstream onto this machine.
-async function startSidecar({ agent, auth, budget = '50', env = {} }) {
+async function startSidecar({ agent, auth, budget = '50', env = {}, waitForStart = true }) {
   const stateDir = fs.mkdtempSync(path.join(tempRoot, 'state-'));
   const child = spawn(process.execPath, [SIDECAR], {
     env: bareEnv({
@@ -150,15 +150,27 @@ async function startSidecar({ agent, auth, budget = '50', env = {} }) {
   sidecar.events = () => sidecar.lines().map((line) => { try { return JSON.parse(line); } catch { return { unparsable: line }; } });
   sidecar.logged = (test) => waitFor(() => sidecar.events().filter(test).pop());
   sidecar.stop = () => { child.kill('SIGTERM'); return sidecar.exited; };
-  sidecar.load = async (credential) => {
+  sidecar.load = async (credential, args = []) => {
     const input = typeof credential === 'string' ? credential : JSON.stringify(credential);
-    const result = await run(LOAD, { SANDBOX_SIDECAR_STATE_DIR: stateDir }, input);
+    const result = await new Promise((resolve) => {
+      const loader = spawn(process.execPath, [LOAD, ...args], { env: bareEnv({ SANDBOX_SIDECAR_STATE_DIR: stateDir }), stdio: ['pipe', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      loader.stdout.on('data', (d) => { stdout += d; });
+      loader.stderr.on('data', (d) => { stderr += d; });
+      loader.on('close', (code) => resolve({ code, stdout, stderr }));
+      loader.stdin.end(input);
+    });
     loaderSaid.push(result.stdout, result.stderr);
     return result;
   };
-  await waitFor(() => sidecar.exitCode !== undefined || sidecar.events().some((e) => e.event === 'start'));
-  const start = sidecar.events().find((e) => e.event === 'start');
-  if (start) sidecar.port = Number(start.listen.split(':').pop());
+  sidecar.started = async () => {
+    await waitFor(() => sidecar.exitCode !== undefined || sidecar.events().some((e) => e.event === 'start'));
+    const start = sidecar.events().find((e) => e.event === 'start');
+    if (start) sidecar.port = Number(start.listen.split(':').pop());
+    return start;
+  };
+  if (waitForStart) await sidecar.started();
   return sidecar;
 }
 
@@ -672,6 +684,72 @@ function leakChecks() {
 
 // ---------------------------------------------------------------------------
 const watchdog = setTimeout(() => { console.log('FAIL  the test run did not finish within 3 minutes'); cleanup(); process.exit(1); }, 180_000);
+// [TLS] Codex with a subscription talks to the sidecar in HTTPS only.
+async function tlsMode(mock) {
+  section('TLS to the agent (Codex with a subscription)');
+  await mock.reset();
+  const name = 'sidecar.test';
+  const { key, cert } = selfSigned(name);
+  const sidecar = await startSidecar({
+    agent: 'codex', auth: 'oauth', waitForStart: false,
+    env: { SANDBOX_SIDECAR_TLS: '1', SANDBOX_UPSTREAM_OVERRIDE: `http://127.0.0.1:${mock.port}` },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  check('[TLS] nothing listens before the key and certificate are loaded', sidecar.exitCode === undefined && !sidecar.events().some((e) => e.event === 'start'), sidecar.stdout);
+
+  let result = await sidecar.load({ key: 'not a key', cert }, ['--tls']);
+  check('[TLS] sidecar-load --tls refuses a key that is not one', result.code !== 0 && result.stderr.includes('nothing was stored') && !fs.existsSync(path.join(sidecar.stateDir, 'cred', 'tls.json')), `exit ${result.code}: ${result.stderr}`);
+  result = await sidecar.load({ token: REAL_CODEX }, ['--tls']);
+  check('[TLS] sidecar-load --tls refuses a credential in place of a key', result.code !== 0, result.stderr);
+  result = await sidecar.load({ key, cert }, ['--tls']);
+  check('[TLS] sidecar-load --tls stores a key and certificate', result.code === 0, result.stderr);
+  check('[TLS] and does not print the key', !result.stdout.includes('PRIVATE KEY') && !result.stderr.includes('PRIVATE KEY'));
+  const start = await sidecar.started();
+  check('[TLS] the sidecar then listens, in TLS', start?.tls === true && sidecar.port > 0, JSON.stringify(start));
+
+  const get = (mod, urlPath, extra = {}) => new Promise((resolve) => {
+    const req = mod.request({ host: '127.0.0.1', port: sidecar.port, method: 'GET', path: urlPath, agent: false, timeout: 4000, ...extra }, (res) => {
+      let text = '';
+      res.on('data', (d) => { text += d; });
+      res.on('end', () => resolve({ status: res.statusCode, body: text }));
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', (err) => resolve({ status: 0, error: err.code ?? err.message }));
+    req.end();
+  });
+  const trusted = { ca: cert, servername: name };
+  let reply = await get(https, '/healthz', trusted);
+  check('[TLS] a client trusting the session certificate is answered', reply.status === 200, JSON.stringify(reply));
+  reply = await get(https, '/healthz');
+  check('[TLS] a client that does not trust it is refused by its own check', reply.status === 0, JSON.stringify(reply));
+  reply = await get(http, '/healthz');
+  check('[TLS] plain HTTP gets no answer', reply.status !== 200, JSON.stringify(reply));
+  const healthy = await run(HEALTHCHECK, { SANDBOX_SIDECAR_LISTEN: `127.0.0.1:${sidecar.port}`, SANDBOX_SIDECAR_TLS: '1' });
+  check('[TLS] sidecar-healthcheck speaks TLS to a TLS sidecar', healthy.code === 0, healthy.stderr);
+  const plainCheck = await run(HEALTHCHECK, { SANDBOX_SIDECAR_LISTEN: `127.0.0.1:${sidecar.port}` });
+  check('[TLS] and a plain-HTTP health check of it fails', plainCheck.code !== 0, plainCheck.stderr);
+
+  await sidecar.load({ token: REAL_CODEX, account_id: REAL_ACCOUNT });
+  reply = await get(https, '/backend-api/wham/accounts/check', { ...trusted, headers: CODEX_HEADERS });
+  const last = (await mock.requests()).pop();
+  check('[TLS][B22] a request over TLS reaches the vendor with the real token', reply.status === 200 && last?.headers.authorization === `Bearer ${REAL_CODEX}` && last?.headers['chatgpt-account-id'] === REAL_ACCOUNT, `${JSON.stringify(reply)} ${last?.headers.authorization}`);
+  await sidecar.stop();
+
+  // A TLS file that is not private stops the sidecar; it never falls back
+  // to plain HTTP.
+  const loose = await startSidecar({
+    agent: 'codex', auth: 'oauth', waitForStart: false,
+    env: { SANDBOX_SIDECAR_TLS: '1', SANDBOX_UPSTREAM_OVERRIDE: `http://127.0.0.1:${mock.port}` },
+  });
+  await waitFor(() => loose.exitCode !== undefined || loose.events().some((e) => e.event === 'tls'));
+  check('[TLS] a TLS sidecar says it is waiting for its key', loose.events().some((e) => e.event === 'tls'), `exit ${loose.exitCode}: ${loose.stderr}`);
+  const file = path.join(loose.stateDir, 'cred', 'tls.json');
+  fs.writeFileSync(file, JSON.stringify({ key, cert }), { mode: 0o644 });
+  fs.chmodSync(file, 0o644);
+  await waitFor(() => loose.exitCode !== undefined);
+  check('[TLS] a TLS file others can read stops the sidecar, and it never listens', loose.exitCode !== undefined && loose.exitCode !== 0 && !loose.events().some((e) => e.event === 'start'), `exit ${loose.exitCode}: ${loose.stderr}`);
+}
+
 function cleanup() {
   for (const child of children) child.kill('SIGKILL');
   fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -682,6 +760,7 @@ try {
   await claudeOauth(mock);
   await budgetAndLogCap(mock);
   await codexOauth(mock);
+  await tlsMode(mock);
   await apiKeyModes(mock);
   await refusalsToStart(mock);
   await upstreamDown();

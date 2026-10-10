@@ -22,8 +22,10 @@ vendor accepts the forwarded requests is not yet proven.
 ## Subscription (`--auth oauth`)
 
 `$SANDBOX_SIDECAR_URL` is the credential sidecar's address in this session,
-for example `http://10.201.0.3:8080`. `topology.sh` sets it on the container.
-It is an address, not a name: no container here is found by name.
+for example `https://10.201.0.3:8080`. `topology.sh` sets it on the container.
+It is an address, not a name: no container here is found by name. In this
+mode it is HTTPS (see the row on the sidecar's certificate); with an API key
+it is plain HTTP.
 
 | Setting | Where it is applied | Why | Proven necessary |
 |---|---|---|---|
@@ -32,6 +34,7 @@ It is an address, not a name: no container here is found by name.
 | `chatgpt_base_url = "$SANDBOX_SIDECAR_URL/backend-api"` | `config.toml` | The account check the interactive interface makes at start (`/backend-api/wham/accounts/check`) goes to the sidecar, which forwards it. | yes, for the interactive interface |
 | `auth.json` with dummy tokens: `id_token` and `access_token` shaped like JWTs that expire in 2100, a `refresh_token`, your real `account_id` (in both tokens and in `tokens.account_id`), `last_refresh` = now | `launch` writes `auth.json`; `./sandbox` hands in the account id as `SANDBOX_CODEX_ACCOUNT_ID` | Codex will not start a subscription session without a login file whose tokens parse and are not expired. Every token is a placeholder; the sidecar replaces it with the real one. | yes (see the note below) |
 | The real account id in that login | `./sandbox` reads it from the stored login; `launch` writes it | At start the interactive interface looks the login's account up in the list `/backend-api/wham/accounts/check` returns for the real login, and stops with "selected workspace missing from routing discovery" if it is not there. It did, with `acct-sandbox-dummy`, against the real vendor on 2026-10-10. The agent can read the id: it names the account, it is not a credential. Without a stored id `launch` falls back to `acct-sandbox-dummy`. | yes |
+| The sidecar speaks HTTPS, with a certificate made for the session; `CODEX_CA_CERTIFICATE=~/.codex/sidecar-ca.pem` | `./sandbox` makes the key and certificate (openssl) and pipes them to the sidecar (`sidecar-load --tls`); it hands the certificate alone to `launch` as `SANDBOX_SIDECAR_CA`, which writes the file | With the real account id, the interactive interface goes on to "workspace routing" and stops with "workspace backend must use an HTTPS origin without credentials": it refuses `chatgpt_base_url` in plain HTTP, even for an account whose routing is `NO_CONSTRAINT` (a Plus account, 2026-10-10). Both checks are in every version from 0.159.3 to 0.162.1, and no setting turns workspace routing off. Whether `CODEX_CA_CERTIFICATE` replaces or adds to Codex's trusted roots has not been checked; what the agent can reach is decided by the proxy either way. | yes |
 | `CODEX_REFRESH_TOKEN_URL_OVERRIDE=$SANDBOX_SIDECAR_URL/oauth/token` | `launch` | A backstop. If Codex ever decides to refresh the dummy login, the attempt goes to the sidecar, which does not forward that path, instead of leaving for the vendor's login host. | no |
 
 Note on `auth.json`: the spike's dummy tokens carried more claims (an email

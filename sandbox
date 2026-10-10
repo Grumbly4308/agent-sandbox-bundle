@@ -1087,6 +1087,11 @@ EXEC_ENV=()
 exec_environment() {
   local name email service count=0 account
   EXEC_ENV=(--env "SANDBOX_AUTH=$AUTH")
+  # [TLS] The certificate of this session's sidecar, for the CLI to trust.
+  # Public: the key never left the sidecar.
+  if [ -s "$SESSION_DIR/sidecar-ca.pem" ]; then
+    EXEC_ENV+=(--env "SANDBOX_SIDECAR_CA=$(cat "$SESSION_DIR/sidecar-ca.pem")")
+  fi
   # Codex will not start unless the account in its (dummy) login is one the
   # vendor lists for the real login. Only the id goes in, never a token.
   if [ "$AGENT" = codex ] && [ "$AUTH" = oauth ]; then
@@ -1112,6 +1117,29 @@ exec_environment() {
     fi
     count=$((count + 1))
   done
+}
+
+# [TLS] Codex with a subscription refuses a ChatGPT backend that is not
+# HTTPS, so its sidecar speaks TLS. Every other agent's stays plain HTTP on
+# the session's internal network.
+sidecar_tls() { [ "$AGENT" = codex ] && [ "$AUTH" = oauth ]; }
+
+# sidecar_tls_json <address> <seconds>: a new key and a certificate for the
+# sidecar's address, valid a day longer than the session, as the JSON
+# `sidecar-load --tls` reads. The key exists only in this pipe and in the
+# sidecar's memory; the certificate alone is kept, in the session directory,
+# for the agent to trust (exec_environment).
+sidecar_tls_json() {
+  local address="$1" days=$(( $2 / 86400 + 2 )) key cert
+  command -v openssl >/dev/null 2>&1 || die "a Codex subscription session needs openssl on this host"
+  key="$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 2>/dev/null)" \
+    || die "openssl could not make a key for the sidecar"
+  cert="$(printf '%s\n' "$key" | openssl req -x509 -key /dev/stdin -subj "/CN=agent-sandbox sidecar $address" \
+            -addext "subjectAltName=IP:$address" -addext "basicConstraints=critical,CA:FALSE" \
+            -addext "extendedKeyUsage=serverAuth" -days "$days" 2>/dev/null)" \
+    || die "openssl could not make a certificate for the sidecar"
+  printf '%s\n' "$cert" > "$SESSION_DIR/sidecar-ca.pem"
+  jq -nc --arg key "$key" --arg cert "$cert" '{key: $key, cert: $cert}'
 }
 
 # If `run` stops half-way, nothing is left behind.
@@ -1245,6 +1273,7 @@ cmd_run() {
   # a placeholder lets the memory total be added up.
   export SANDBOX_BRANCH="$BRANCH" SANDBOX_RELAY_UPSTREAM="not-known-yet"
   export SANDBOX_AGENT="$AGENT" SANDBOX_AUTH="$AUTH" SANDBOX_TOOLCHAIN="$TOOLCHAIN"
+  if sidecar_tls; then export SANDBOX_SIDECAR_TLS=1; else unset SANDBOX_SIDECAR_TLS; fi
   export SANDBOX_CPUS="$cpus" SANDBOX_PIDS="$pids" SANDBOX_NPROC="$nproc"
   export SANDBOX_BUDGET="$budget" SANDBOX_TTL_SECONDS="$ttl_seconds"
   export SANDBOX_TMP_SIZE="$tmp_bytes" SANDBOX_HOME_SIZE="$home_bytes"
@@ -1391,6 +1420,12 @@ cmd_run() {
     podman start "$service" >/dev/null
   done
   wait_for "the proxy" 30 podman exec "$SESSION-proxy" squid -k check -f /var/run/squid/squid.conf
+  # [TLS] Before the health check: a TLS sidecar listens only once it has
+  # its key.
+  if sidecar_tls; then
+    sidecar_tls_json "$SANDBOX_SIDECAR_IP" "$ttl_seconds" | podman exec -i "$SESSION-credsidecar" sidecar-load --tls >/dev/null \
+      || die "the credential sidecar did not accept its TLS key and certificate"
+  fi
   wait_for "the credential sidecar" 30 podman exec "$SESSION-credsidecar" sidecar-healthcheck
   for service in $SERVICES; do
     load_service "$service"

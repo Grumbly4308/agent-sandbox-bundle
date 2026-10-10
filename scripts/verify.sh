@@ -1154,6 +1154,11 @@ verify_session() {
     "selinux=$SELINUX" "label=$(field agent label | grep -v '^!' || true)"
     "origin_url=$ORIGIN_URL"
   )
+  # A TLS sidecar (Codex with a subscription): its certificate, so the probe
+  # speaks HTTPS to it and checks the certificate names its address.
+  if [ -s "$SESSION_DIR/sidecar-ca.pem" ]; then
+    PARAMS+=("sidecar_ca=$(base64 < "$SESSION_DIR/sidecar-ca.pem" | tr -d '\n')")
+  fi
   case "$(field agent nanocpus)" in
     ''|*[!0-9]*) ;;
     *) PARAMS+=("cpu_milli=$(( $(field agent nanocpus) / 1000000 ))") ;;

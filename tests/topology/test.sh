@@ -181,6 +181,18 @@ for f in topo_network_sandbox topo_network_egress topo_volume_workspace topo_kee
   has_pair --label agent-sandbox.session=asb-test-0a1b2c || fail "$f: no session label"
 done
 
+# [TLS] Without SANDBOX_SIDECAR_TLS the sidecar is plain HTTP; with it (Codex
+# with a subscription) the sidecar is told so and the agent uses HTTPS.
+topo_sidecar
+has_pair --env SANDBOX_SIDECAR_TLS= || fail "sidecar: TLS switched on without SANDBOX_SIDECAR_TLS"
+export SANDBOX_SIDECAR_TLS=1
+topo_sidecar
+has_pair --env SANDBOX_SIDECAR_TLS=1 || fail "sidecar: not told to speak TLS"
+topo_agent
+has_pair --env SANDBOX_SIDECAR_URL=https://10.201.7.3:8080 || fail "agent: the TLS sidecar is not given as https"
+has_pair --env NO_PROXY=localhost,127.0.0.1,10.201.7.3 || fail "agent: the TLS sidecar is not reached directly"
+unset SANDBOX_SIDECAR_TLS
+
 # A missing required variable must stop the build of the argument list.
 if (unset SANDBOX_BUDGET; topo_sidecar) 2>/dev/null; then
   fail "topo_sidecar: built without SANDBOX_BUDGET"

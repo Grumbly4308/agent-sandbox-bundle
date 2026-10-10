@@ -15,6 +15,7 @@ setup
 make_root
 make_repo "$T/src"
 log="$FAKE_PODMAN_LOG"
+tab="$(printf '\t')"
 mkdir "$T/keyring"
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -107,6 +108,12 @@ s="$(only_session)"
 loaded="$(find "$FAKE_PODMAN_STATE/stdin" -name "*.$s-credsidecar.sidecar-load")"
 check "the stored token is what the sidecar receives" test "$(cat "$loaded")" = "{\"token\":\"$CLAUDE_TOKEN\"}"
 nowhere "and it is nowhere else" "$CLAUDE_TOKEN"
+if find "$FAKE_PODMAN_STATE/stdin" -name "*.$s-credsidecar.sidecar-load--tls" | grep -q .; then
+  fail "a Claude sidecar was given a TLS key"
+else
+  pass "other agents' sidecars stay plain HTTP"
+fi
+check "and the agent is pointed at it in HTTP" grep -qE "^create${tab}.*--env${tab}SANDBOX_SIDECAR_URL=http://" "$log"
 "$ROOT/sandbox" destroy >/dev/null 2>&1
 
 # --- Codex: only the access token and the account id enter a container -------------
@@ -119,6 +126,21 @@ check "a token with time left is not renewed" test ! -e "$T/curl.args"
 if grep -rqF "rt_FIRST" "$FAKE_PODMAN_STATE/stdin"; then fail "the refresh token was piped into a container"; else pass "the refresh token is piped into no container"; fi
 nowhere "the refresh token is nowhere else either" "rt_FIRST-refresh-token"
 nowhere "the access token is on no command line and in no file" "$ACCESS_1"
+
+# [TLS] Codex refuses a plain-HTTP ChatGPT backend: the sidecar is given a key
+# and certificate made for this session, and the agent the certificate only.
+tls_loaded="$(find "$FAKE_PODMAN_STATE/stdin" -name "*.$s-credsidecar.sidecar-load--tls")"
+check "the sidecar is given a TLS key and certificate" jq -e '(.key | startswith("-----BEGIN PRIVATE KEY-----")) and (.cert | startswith("-----BEGIN CERTIFICATE-----"))' "$tls_loaded"
+before "it gets them before its health check, which waits for them" "sidecar-load${tab}--tls" "^exec${tab}$s-credsidecar${tab}sidecar-healthcheck"
+check "the certificate names the sidecar's address" bash -c "jq -r .cert '$tls_loaded' | openssl x509 -noout -ext subjectAltName | grep -q 'IP Address:10.201.0.3'"
+check "and outlives the session" bash -c "jq -r .cert '$tls_loaded' | openssl x509 -noout -checkend $(( 4 * 3600 ))"
+check "the session keeps the certificate, for the agent" test "$(cat "$dir/sidecar-ca.pem")" = "$(jq -r .cert "$tls_loaded")"
+key_line="$(jq -r .key "$tls_loaded" | sed -n 2p)"
+nowhere "the key is on no command line and in no file" "$key_line"
+check "the sidecar is started in TLS mode" grep -qE "^create${tab}.*--env${tab}SANDBOX_SIDECAR_TLS=1${tab}.*credsidecar" "$log"
+check "the agent is pointed at it in HTTPS" grep -qE "^create${tab}.*--env${tab}SANDBOX_SIDECAR_URL=https://10\.201\.0\.3:8080" "$log"
+check "the CLI is handed the certificate" grep -qF -- "SANDBOX_SIDECAR_CA=-----BEGIN CERTIFICATE-----" "$log"
+check "and the account id" grep -qF -- "SANDBOX_CODEX_ACCOUNT_ID=acct-42" "$log"
 check "a watchdog was started for the session" test -s "$dir/watchdog.pid"
 watchdog="$(cat "$dir/watchdog.pid")"
 check "it is running" kill -0 "$watchdog"

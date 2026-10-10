@@ -286,6 +286,10 @@ check_files_and_tools() {
   # Only a Codex subscription login needs it: that credential is a JSON file.
   command -v jq >/dev/null 2>&1 \
     || warn "jq is not installed: needed only for 'login --agent codex --auth oauth'"
+  # The same login is served to Codex over HTTPS, with a certificate made
+  # for each session.
+  command -v openssl >/dev/null 2>&1 \
+    || warn "openssl is not installed: needed only for 'run --agent codex --auth oauth'"
 }
 
 # ---------------------------------------------------------------------------

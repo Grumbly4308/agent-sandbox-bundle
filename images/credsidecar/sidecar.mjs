@@ -99,6 +99,7 @@
 
 import fs from 'node:fs';
 import http from 'node:http';
+import https from 'node:https';
 import path from 'node:path';
 import tls from 'node:tls';
 import { pipeline } from 'node:stream';
@@ -212,6 +213,13 @@ const STATE_DIR = process.env.SANDBOX_SIDECAR_STATE_DIR || '/run/sidecar';
 const AGENTS_DIR = process.env.SANDBOX_AGENTS_DIR || '/usr/share/sandbox/agents';
 const CRED_DIR = path.join(STATE_DIR, 'cred');
 const CRED_FILE = path.join(CRED_DIR, 'credential.json');
+// [TLS] Set for agents whose CLI talks to this sidecar in HTTPS only (Codex
+// with a subscription, which refuses a plain-HTTP ChatGPT backend). The key
+// and certificate are piped in by `sidecar-load --tls` after the container
+// starts, like the credential; until they are, nothing listens.
+const TLS = process.env.SANDBOX_SIDECAR_TLS === '1';
+const TLS_FILE = path.join(CRED_DIR, 'tls.json');
+const TLS_POLL_MS = 100;
 
 function readRouting() {
   if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(AGENT)) die('SANDBOX_AGENT must be the name of an agent plug-in');
@@ -981,23 +989,63 @@ const listen = readListen();
 budgetLeft = readBudget();
 ensurePrivateDir(CRED_DIR);
 
-const server = http.createServer((req, res) => {
+function onRequest(req, res) {
   handle(req, res).catch((err) => {
     log({ event: 'error', message: clip(err?.message ?? err, 300) });
     if (res.headersSent) res.destroy();
     else answer({ res }, 500, 'sandbox_internal_error', 'the sandbox sidecar hit an internal error; see its log');
   });
-});
-server.maxConnections = MAX_CONNECTIONS;
-server.on('error', (err) => die(`cannot listen on ${listen.host}:${listen.port}: ${err.message}`));
-server.listen(listen.port, listen.host, () => {
-  log({
-    event: 'start', agent: AGENT, auth: AUTH, upstream: routing.host, routes: [...routing.routes.keys()], budget: budgetLeft,
-    listen: `${listen.host}:${server.address().port}`,
-    ...(wayOut.override ? { test_upstream_override: `http://${wayOut.override.host}:${wayOut.override.port}` } : {}),
+}
+
+// [TLS] The key and certificate sidecar-load --tls stored, or null while
+// there are none. A file that is there but not private, or not usable, stops
+// the sidecar: it must not fall back to plain HTTP.
+function readTls() {
+  let st;
+  try {
+    st = fs.lstatSync(TLS_FILE);
+  } catch {
+    return null;
+  }
+  if (!st.isFile() || st.uid !== process.getuid() || (st.mode & 0o077) !== 0) die('the TLS file is not a private file of this user');
+  try {
+    const doc = JSON.parse(fs.readFileSync(TLS_FILE, 'utf8'));
+    if (!isObject(doc) || typeof doc.key !== 'string' || typeof doc.cert !== 'string') throw new Error('it has no key and certificate');
+    tls.createSecureContext({ key: doc.key, cert: doc.cert });
+    return { key: doc.key, cert: doc.cert };
+  } catch (err) {
+    die(`the stored TLS key and certificate are not usable: ${clip(err?.message ?? err, 200)}`);
+  }
+}
+
+let server = null;
+function start(tlsOptions) {
+  server = tlsOptions
+    ? https.createServer({ ...tlsOptions, minVersion: 'TLSv1.2' }, onRequest)
+    : http.createServer(onRequest);
+  server.maxConnections = MAX_CONNECTIONS;
+  server.on('error', (err) => die(`cannot listen on ${listen.host}:${listen.port}: ${err.message}`));
+  server.listen(listen.port, listen.host, () => {
+    log({
+      event: 'start', agent: AGENT, auth: AUTH, upstream: routing.host, routes: [...routing.routes.keys()], budget: budgetLeft,
+      listen: `${listen.host}:${server.address().port}`, tls: Boolean(tlsOptions),
+      ...(wayOut.override ? { test_upstream_override: `http://${wayOut.override.host}:${wayOut.override.port}` } : {}),
+    });
+    currentCredential();
   });
-  currentCredential();
-});
+}
+
+if (TLS) {
+  log({ event: 'tls', state: 'waiting for the key and certificate (sidecar-load --tls)' });
+  const wait = setInterval(() => {
+    const tlsOptions = readTls();
+    if (!tlsOptions) return;
+    clearInterval(wait);
+    start(tlsOptions);
+  }, TLS_POLL_MS);
+} else {
+  start(null);
+}
 
 setInterval(() => { if (Date.now() - capped.windowStart >= 60_000) flushSuppressed(); }, 60_000).unref();
 
@@ -1007,6 +1055,7 @@ setInterval(() => { if (Date.now() - capped.windowStart >= 60_000) flushSuppress
 function shutdown(signal) {
   flushSuppressed();
   log({ event: 'stop', signal, budget_left: budgetLeft });
+  if (!server) process.exit(0);
   server.close(() => process.exit(0));
   server.closeIdleConnections();
   setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS).unref();

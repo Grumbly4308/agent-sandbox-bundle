@@ -224,6 +224,38 @@ if printf '%s\n' "$out" | grep -q 'nothing was proven'; then ok "a dead proxy: t
 out="$(bash "$inside" sidecar=127.0.0.1 "sidecar_port=$(free_port)" B23-unknown-path)"
 expect "a dead sidecar" "$out" B23-unknown-path FAIL
 
+# [TLS] A TLS sidecar (Codex with a subscription): B23 speaks HTTPS to it
+# with the session certificate, which must also name its address.
+make_cert() {   # <dir>: key.pem and cert.pem for IP 127.0.0.1
+  mkdir -p "$1"
+  openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$1/key.pem" 2>/dev/null
+  openssl req -x509 -key "$1/key.pem" -subj /CN=smoke -addext subjectAltName=IP:127.0.0.1 -days 1 -out "$1/cert.pem" 2>/dev/null
+}
+make_cert "$T/tls"
+make_cert "$T/other-tls"
+tls_port="$(free_port)"
+mkdir -p "$T/tls-sidecar-state"
+SANDBOX_AGENT=codex SANDBOX_AUTH=oauth SANDBOX_BUDGET=3 SANDBOX_SIDECAR_TLS=1 HTTPS_PROXY=http://127.0.0.1:3128 SANDBOX_UPSTREAM_OVERRIDE=http://127.0.0.1:9 \
+  SANDBOX_SIDECAR_LISTEN="127.0.0.1:$tls_port" SANDBOX_SIDECAR_STATE_DIR="$T/tls-sidecar-state" SANDBOX_AGENTS_DIR="$repo/agents" \
+  node "$repo/images/credsidecar/sidecar.mjs" > "$T/tls-sidecar.log" 2>&1 &
+printf '%s\n' "$!" >> "$T/pids"
+jq -n --rawfile key "$T/tls/key.pem" --rawfile cert "$T/tls/cert.pem" '{key: $key, cert: $cert}' \
+  | SANDBOX_SIDECAR_STATE_DIR="$T/tls-sidecar-state" node "$repo/images/credsidecar/sidecar-load" --tls >/dev/null 2>&1 \
+  || not_ok "the TLS sidecar did not take its key"
+tries=0
+until SANDBOX_SIDECAR_TLS=1 SANDBOX_SIDECAR_LISTEN="127.0.0.1:$tls_port" node "$repo/images/credsidecar/sidecar-healthcheck" >/dev/null 2>&1; do
+  tries=$((tries + 1)); [ "$tries" -lt 50 ] || { not_ok "the TLS sidecar did not start: $(tail -n 1 "$T/tls-sidecar.log")"; break; }
+  sleep 0.1
+done
+b64() { base64 < "$1" | tr -d '\n'; }
+out="$(bash "$inside" sidecar=127.0.0.1 "sidecar_port=$tls_port" "sidecar_ca=$(b64 "$T/tls/cert.pem")" B23-unknown-path)"
+expect "a TLS sidecar, with its certificate" "$out" B23-unknown-path PASS
+if printf '%s\n' "$out" | grep -q 'over TLS'; then ok "a TLS sidecar: the pass says it was over TLS"; else not_ok "a TLS sidecar: the pass does not say TLS"; fi
+out="$(bash "$inside" sidecar=127.0.0.1 "sidecar_port=$tls_port" "sidecar_ca=$(b64 "$T/other-tls/cert.pem")" B23-unknown-path)"
+expect "a TLS sidecar, with some other certificate" "$out" B23-unknown-path FAIL
+out="$(bash "$inside" sidecar=127.0.0.1 "sidecar_port=$tls_port" B23-unknown-path)"
+expect "a TLS sidecar, asked in plain HTTP" "$out" B23-unknown-path FAIL
+
 # ---------------------------------------------------------------------------
 # 5. The raw system-call probes, through each interpreter.
 # ---------------------------------------------------------------------------

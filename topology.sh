@@ -247,8 +247,10 @@ topo_agent() {
 
     --env HOME=/home/agent
     # Where the credential sidecar is. agents/<name>/launch points the CLI at
-    # it; the address differs from session to session.
-    --env "SANDBOX_SIDECAR_URL=http://${SANDBOX_SIDECAR_IP:?}:8080"
+    # it; the address differs from session to session. HTTPS when the CLI
+    # needs it (SANDBOX_SIDECAR_TLS, set by ./sandbox for Codex with a
+    # subscription); the certificate is the session's own, see ./sandbox.
+    --env "SANDBOX_SIDECAR_URL=http${SANDBOX_SIDECAR_TLS:+s}://${SANDBOX_SIDECAR_IP:?}:8080"
     # The only way out for everything that is not a model call.
     --env "HTTP_PROXY=http://${SANDBOX_PROXY_IP:?}:3128"
     --env "HTTPS_PROXY=http://${SANDBOX_PROXY_IP}:3128"
@@ -406,6 +408,7 @@ topo_sidecar() {
     --env "SANDBOX_AGENT=${SANDBOX_AGENT:?}"       # which vendor's routes to serve
     --env "SANDBOX_AUTH=${SANDBOX_AUTH:?}"         # oauth (subscription) or apikey
     --env "SANDBOX_BUDGET=${SANDBOX_BUDGET:?}"     # [logical B24] model requests allowed this run
+    --env "SANDBOX_SIDECAR_TLS=${SANDBOX_SIDECAR_TLS:+1}"   # 1: HTTPS only, once sidecar-load --tls has given it a key
     # Its own way out is the same proxy; it has no second network.
     --env "HTTPS_PROXY=http://${SANDBOX_PROXY_IP:?}:3128"
     "localhost/agent-sandbox/credsidecar:${SANDBOX_VERSION:?}"

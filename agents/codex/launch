@@ -31,6 +31,15 @@ umask 077
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 mkdir -p "$codex_home"
 
+# With a subscription the sidecar speaks HTTPS (Codex refuses a plain-HTTP
+# ChatGPT backend), with a certificate made for this session and handed in
+# by ./sandbox. CODEX_CA_CERTIFICATE tells Codex to trust it.
+if [ -n "${SANDBOX_SIDECAR_CA:-}" ]; then
+  printf '%s\n' "$SANDBOX_SIDECAR_CA" >"$codex_home/sidecar-ca.pem"
+  export CODEX_CA_CERTIFICATE="$codex_home/sidecar-ca.pem"
+fi
+unset SANDBOX_SIDECAR_CA
+
 # The part of config.toml both modes share. Top-level keys must come before
 # the first [table], so each mode writes its own top-level keys first and
 # appends this.

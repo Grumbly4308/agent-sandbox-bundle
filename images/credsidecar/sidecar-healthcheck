@@ -9,8 +9,15 @@
 // credential yet is healthy, and answers model requests with 503.
 //
 // SANDBOX_SIDECAR_LISTEN is set by the tests only; the port is 8080.
+//
+// With SANDBOX_SIDECAR_TLS=1 the server speaks only HTTPS, and only once
+// `sidecar-load --tls` has given it a key: until then this fails, which is
+// what ./sandbox waits on. The certificate names the session address, not
+// loopback, and this asks only whether the listener is up, so it is not
+// checked here; the agent checks it.
 
 const http = require('node:http');
+const https = require('node:https');
 
 const listen = process.env.SANDBOX_SIDECAR_LISTEN || '0.0.0.0:8080';
 const port = Number(listen.slice(listen.lastIndexOf(':') + 1));
@@ -20,7 +27,9 @@ function unhealthy(why) {
   process.exit(1);
 }
 
-const request = http.get({ host: '127.0.0.1', port, path: '/healthz', agent: false, timeout: 2000 }, (res) => {
+const tls = process.env.SANDBOX_SIDECAR_TLS === '1';
+const options = { host: '127.0.0.1', port, path: '/healthz', agent: false, timeout: 2000 };
+const request = (tls ? https : http).get(tls ? { ...options, rejectUnauthorized: false } : options, (res) => {
   res.resume();
   if (res.statusCode === 200) process.exit(0);
   unhealthy(`the sidecar answered ${res.statusCode}`);

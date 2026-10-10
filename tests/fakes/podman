@@ -11,7 +11,7 @@
 #                       networks, volumes and images "exist" (default:
 #                       $FAKE_PODMAN_LOG.state). Standard input of every
 #                       `exec -i` is kept in its stdin/ directory, numbered in
-#                       call order: <n>.<container>.<command>
+#                       call order: <n>.<container>.<command>[--option]
 #
 # Switches, all optional:
 #   FAKE_PODMAN_ROOTLESS=false       `podman info` reports a root-run Podman
@@ -364,7 +364,11 @@ case "$command" in
       *)
         if [ "$interactive" -eq 1 ]; then
           number="$(find "$state/stdin" -type f | wc -l | tr -d ' ')"
-          cat > "$state/stdin/$(( number + 1 )).$container.$program"
+          # An option (--x) is part of the name: `sidecar-load --tls` is kept
+          # as <n>.<container>.sidecar-load--tls.
+          option=""
+          case "${3:-}" in --*) option="$3" ;; esac
+          cat > "$state/stdin/$(( number + 1 )).$container.$program$option"
         fi
         ;;
     esac
