@@ -888,6 +888,10 @@ start_test_sidecar() {
   IFS= read -r SANDBOX_VERSION < "$ROOT/VERSION" || true
   export SANDBOX_VERSION SANDBOX_ROOT="$ROOT" SANDBOX_SESSION="$SESSION" SANDBOX_AGENT="$AGENT" SANDBOX_AUTH="$AUTH"
   export SANDBOX_BUDGET=3 SANDBOX_TTL_SECONDS=300 SANDBOX_PROXY_IP="$PROXY_IP" SANDBOX_SIDECAR_IP="$TEST_SIDECAR_IP"
+  # Plain HTTP whatever the session's own sidecar speaks: the probes talk
+  # http to this one, and nobody pipes it a key. (run exports the switch for
+  # a Codex subscription session, and this inherits run's environment.)
+  unset SANDBOX_SIDECAR_TLS
   SANDBOX_SELINUX_OPT=""
   if [ "$SELINUX" = true ]; then SANDBOX_SELINUX_OPT="label=type:container_t"; fi
   export SANDBOX_SELINUX_OPT

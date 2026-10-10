@@ -215,6 +215,7 @@ case "$cmd" in
       else
         SANDBOX_AGENT=claude SANDBOX_AUTH=oauth SANDBOX_BUDGET="$(cat "$F/budget")" HTTPS_PROXY=http://127.0.0.1:3128 \
           SANDBOX_UPSTREAM_OVERRIDE="$(sed -n 's/^SANDBOX_UPSTREAM_OVERRIDE=//p' "$F/created.args")" \
+          SANDBOX_SIDECAR_TLS="$(sed -n 's/^SANDBOX_SIDECAR_TLS=//p' "$F/created.args")" \
           SANDBOX_SIDECAR_LISTEN="127.0.0.1:$port" SANDBOX_SIDECAR_STATE_DIR="$F/sidecar-state" SANDBOX_AGENTS_DIR="$REPO/agents" \
           node "$REPO/images/credsidecar/sidecar.mjs" > "$F/testsidecar.log" 2>&1 &
       fi
@@ -458,6 +459,22 @@ done
 # The real token never went into a container, by argument or by stdin.
 if grep -qF "$TOKEN" "$F/calls" "$F/agentfs" -r 2>/dev/null; then not_ok "the real token was passed to podman or written into the agent"; fi
 if printf '%s' "$OUT" | grep -qF "$TOKEN"; then not_ok "the real token was printed"; fi
+done_scenario
+
+# [TLS] run exports SANDBOX_SIDECAR_TLS=1 for a Codex subscription session and
+# verify.sh inherits it. The second sidecar must stay plain HTTP all the same:
+# it is created with the switch off, comes up, and B22-B25 run.
+scenario "called from a TLS session, the second sidecar is still plain HTTP"
+new_world
+export SANDBOX_SIDECAR_TLS=1
+verify --quick "$SESSION"
+unset SANDBOX_SIDECAR_TLS
+want_rc 0
+want_not 'no-test-sidecar'
+grep -qxF -- "SANDBOX_SIDECAR_TLS=" "$F/created.args" || not_ok "the second sidecar was not created with TLS switched off"
+for name in B22-credential-swap B22-credential-replace B23-mcp-servers B23-web-fetch B24-oversized B24-budget B25-search-logged; do
+  want "^PASS $name — "
+done
 done_scenario
 
 scenario "a good session passes in full, and with stdout not a terminal there is no colour"
