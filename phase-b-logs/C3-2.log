@@ -1,0 +1,51 @@
++ scripts/pin-images.sh
+images/PINS: NODE_BASE: UNPINNED -> docker.io/library/node:22-bookworm-slim@sha256:efd0ab5780c2d9ab1f0f869571a00d5edb17793bff4cce4a2792e3eb0ffc7562
+images/PINS: ALPINE_BASE: UNPINNED -> docker.io/library/alpine:3.20@sha256:c64c687cbea9300178b30c95835354e34c4e4febc4badfe27102879de0483b5e
+services/postgres/service.conf: IMAGE: UNPINNED -> docker.io/library/postgres:16-alpine@sha256:1a66d744c1b459e13b05a8fca341da84cb63383e99ce262210efee5a319d4551
+services/redis/service.conf: IMAGE: UNPINNED -> docker.io/library/redis:7-alpine@sha256:ca0acbb137c1dc3339c8b147a58fd6f42775d4599327b50e7b116c23de501af2
+pin-images: done. Review with 'git diff', then commit.
++ git diff images/PINS services/
+diff --git a/images/PINS b/images/PINS
+index 48bf749..7f15f08 100644
+--- a/images/PINS
++++ b/images/PINS
+@@ -18,8 +18,8 @@
+ 
+ # The agent, credential sidecar and git relay images: Debian 12 with Node 22.
+ # tag: docker.io/library/node:22-bookworm-slim
+-NODE_BASE=UNPINNED
++NODE_BASE=docker.io/library/node:22-bookworm-slim@sha256:efd0ab5780c2d9ab1f0f869571a00d5edb17793bff4cce4a2792e3eb0ffc7562
+ 
+ # The egress proxy image (Squid).
+ # tag: docker.io/library/alpine:3.20
+-ALPINE_BASE=UNPINNED
++ALPINE_BASE=docker.io/library/alpine:3.20@sha256:c64c687cbea9300178b30c95835354e34c4e4febc4badfe27102879de0483b5e
+diff --git a/services/postgres/service.conf b/services/postgres/service.conf
+index 6118d1a..f1ce9d2 100644
+--- a/services/postgres/service.conf
++++ b/services/postgres/service.conf
+@@ -7,7 +7,7 @@
+ # user. Ships UNPINNED; scripts/pin-images.sh pulls the tag named here and
+ # writes the digest, and ./sandbox refuses the service until it has.
+ # tag: docker.io/library/postgres:16-alpine
+-IMAGE=UNPINNED
++IMAGE=docker.io/library/postgres:16-alpine@sha256:1a66d744c1b459e13b05a8fca341da84cb63383e99ce262210efee5a319d4551
+ 
+ # What `--service postgres:<version>` accepts. One image is pinned above, so
+ # one version.
+diff --git a/services/redis/service.conf b/services/redis/service.conf
+index a8d6830..19a6a73 100644
+--- a/services/redis/service.conf
++++ b/services/redis/service.conf
+@@ -7,7 +7,7 @@
+ # user. Ships UNPINNED; scripts/pin-images.sh pulls the tag named here and
+ # writes the digest, and ./sandbox refuses the service until it has.
+ # tag: docker.io/library/redis:7-alpine
+-IMAGE=UNPINNED
++IMAGE=docker.io/library/redis:7-alpine@sha256:ca0acbb137c1dc3339c8b147a58fd6f42775d4599327b50e7b116c23de501af2
+ 
+ # What `--service redis:<version>` accepts. One image is pinned above, so one
+ # version.
++ git commit -am 'Pin the base and service images'
+[build/phase-a e553315] Pin the base and service images
+ 3 files changed, 4 insertions(+), 4 deletions(-)

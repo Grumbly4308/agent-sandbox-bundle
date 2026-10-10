@@ -1,0 +1,5 @@
+PASS B33-share-watch — gave a session 64 MB of the disk store and wrote 96 MB: the host's watch stopped the session after about 35 seconds and recorded why
+Filling the disk store (19968 MB free); other sessions on it will see it full until this ends...
+PASS B33-store-full — took the watch away and wrote to the workspace until it stopped: the store answered 'No space left on device', and the files were removed
+
+2 passed, 0 failed, 0 skipped for a stated reason.

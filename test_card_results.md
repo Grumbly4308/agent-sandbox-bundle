@@ -2,7 +2,7 @@
 
 Host: Debian 13 (kernel 6.12), Podman 5.4.2 rootless, 8 GB memory, a 20 GB
 loop-device store. Run as `sandboxer` on 2026-10-09 and 2026-10-10 from the
-[test card](test_card.md). Logs are in `~/phase-b-logs/` on that host; a
+[test card](test_card.md). Logs are in [phase-b-logs/](phase-b-logs/) (copied from `~/phase-b-logs/` on that host); a
 `-N` suffix is a re-run after a fix.
 
 Everything that failed was fixed on `build/phase-a` in the commits after

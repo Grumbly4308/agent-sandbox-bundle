@@ -1,0 +1,70 @@
+++ ./sandbox allow example.com --reason 'test card'
+==> allowed example.com
+2026/10/10 05:13:00| Processing Configuration File: /var/run/squid/squid.conf (depth 0)
+2026/10/10 05:13:00| WARNING: (A) '10.201.0.0/24' is a subnetwork of (B) '10.0.0.0/8'
+2026/10/10 05:13:00| WARNING: because of this '10.201.0.0/24' is ignored to keep splay tree searching predictable
+2026/10/10 05:13:00| WARNING: You should probably remove '10.201.0.0/24' from the ACL named 'to_private'
+2026/10/10 05:13:00| WARNING: (A) '10.201.0.0/24' is a subnetwork of (B) '10.0.0.0/8'
+2026/10/10 05:13:00| WARNING: because of this '10.201.0.0/24' is ignored to keep splay tree searching predictable
+2026/10/10 05:13:00| WARNING: You should probably remove '10.201.0.0/24' from the ACL named 'to_private'
+2026/10/10 05:13:00| WARNING: (A) '10.202.0.0/24' is a subnetwork of (B) '10.0.0.0/8'
+2026/10/10 05:13:00| WARNING: because of this '10.202.0.0/24' is ignored to keep splay tree searching predictable
+2026/10/10 05:13:00| WARNING: You should probably remove '10.202.0.0/24' from the ACL named 'to_private'
+2026/10/10 05:13:00| Processing Configuration File: /etc/squid/session/extra.conf (depth 1)
+2026/10/10 05:13:00| WARNING: HTTP requires the use of Via
+2026/10/10 05:13:00| Set Current Directory to /var/cache/squid
+==> session asb-mini-node-e9aefc: the proxy has re-read its lists
+++ set +x
+
+  [inside] $ curl -sS -o /dev/null https://example.com; echo "exit $?"
+  exit 0
+++ ./sandbox deny example.com
+==> removed example.com
+2026/10/10 05:13:02| Processing Configuration File: /var/run/squid/squid.conf (depth 0)
+2026/10/10 05:13:02| WARNING: (A) '10.201.0.0/24' is a subnetwork of (B) '10.0.0.0/8'
+2026/10/10 05:13:02| WARNING: because of this '10.201.0.0/24' is ignored to keep splay tree searching predictable
+2026/10/10 05:13:02| WARNING: You should probably remove '10.201.0.0/24' from the ACL named 'to_private'
+2026/10/10 05:13:02| WARNING: (A) '10.201.0.0/24' is a subnetwork of (B) '10.0.0.0/8'
+2026/10/10 05:13:02| WARNING: because of this '10.201.0.0/24' is ignored to keep splay tree searching predictable
+2026/10/10 05:13:02| WARNING: You should probably remove '10.201.0.0/24' from the ACL named 'to_private'
+2026/10/10 05:13:02| WARNING: (A) '10.202.0.0/24' is a subnetwork of (B) '10.0.0.0/8'
+2026/10/10 05:13:02| WARNING: because of this '10.202.0.0/24' is ignored to keep splay tree searching predictable
+2026/10/10 05:13:02| WARNING: You should probably remove '10.202.0.0/24' from the ACL named 'to_private'
+2026/10/10 05:13:02| Processing Configuration File: /etc/squid/session/extra.conf (depth 1)
+2026/10/10 05:13:02| WARNING: HTTP requires the use of Via
+2026/10/10 05:13:02| Set Current Directory to /var/cache/squid
+==> session asb-mini-node-e9aefc: the proxy has re-read its lists
+++ set +x
+
+  [inside] $ curl -sS -o /dev/null https://example.com; echo "exit $?"
+  curl: (56) CONNECT tunnel failed, response 403
+  exit 56
+++ ./sandbox allow --preset github-downloads --reason 'test card'
+==> allowed github-downloads
+2026/10/10 05:13:03| Processing Configuration File: /var/run/squid/squid.conf (depth 0)
+2026/10/10 05:13:03| WARNING: (A) '10.201.0.0/24' is a subnetwork of (B) '10.0.0.0/8'
+2026/10/10 05:13:03| WARNING: because of this '10.201.0.0/24' is ignored to keep splay tree searching predictable
+2026/10/10 05:13:03| WARNING: You should probably remove '10.201.0.0/24' from the ACL named 'to_private'
+2026/10/10 05:13:03| WARNING: (A) '10.201.0.0/24' is a subnetwork of (B) '10.0.0.0/8'
+2026/10/10 05:13:03| WARNING: because of this '10.201.0.0/24' is ignored to keep splay tree searching predictable
+2026/10/10 05:13:03| WARNING: You should probably remove '10.201.0.0/24' from the ACL named 'to_private'
+2026/10/10 05:13:03| WARNING: (A) '10.202.0.0/24' is a subnetwork of (B) '10.0.0.0/8'
+2026/10/10 05:13:03| WARNING: because of this '10.202.0.0/24' is ignored to keep splay tree searching predictable
+2026/10/10 05:13:03| WARNING: You should probably remove '10.202.0.0/24' from the ACL named 'to_private'
+2026/10/10 05:13:03| Processing Configuration File: /etc/squid/session/extra.conf (depth 1)
+2026/10/10 05:13:03| WARNING: HTTP requires the use of Via
+2026/10/10 05:13:03| Set Current Directory to /var/cache/squid
+==> session asb-mini-node-e9aefc: the proxy has re-read its lists
+++ set +x
+
+  [inside] $ curl -sSI https://raw.githubusercontent.com/jonschlinkert/is-number/master/README.md | head -n 3
+  HTTP/1.1 200 Connection established
+  
+  HTTP/2 200 
+
+  [inside] $ curl -sSI https://github.com/ | head -n 3; echo "exit ${PIPESTATUS[0]}"
+  curl: (56) CONNECT tunnel failed, response 403
+  HTTP/1.1 403 Forbidden
+  Server: squid
+  Mime-Version: 1.0
+  exit 56

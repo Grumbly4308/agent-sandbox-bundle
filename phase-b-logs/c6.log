@@ -1,0 +1,21 @@
+  ok    not root (sandboxer)
+  ok    this account cannot become root with sudo
+  ok    Podman 5.4.2, rootless, on this machine
+  ok    Podman is 4.4 or newer
+  ok    network backend is netavark
+  ok    cgroup v2 with cpu, memory and pids delegated
+  ok    subordinate UIDs cover the container users (61000-61003)
+  ok    subordinate GIDs cover the container users (61000-61003)
+  warn  no SELinux on this host, and rootless Podman applies no AppArmor profile: barrier B05 is absent here
+  ok    seccomp/agent-seccomp.json is present
+  ok    git is installed
+  FAIL  images/PINS still has UNPINNED base images
+        fix: run scripts/pin-images.sh once, read the digests it wrote, then build
+  ok    gitleaks is installed
+  ok    keyring tool (secret-tool) is present
+  ok    no crash handler is started on the host (core_pattern is a file name)
+  ok    disk store /var/lib/agent-sandbox-store is a separate filesystem that you own
+  ok    memory: the session may use up to 3.5 GB; 6.3 GB is available
+  ok    no session is past its time limit
+
+Not safe to run yet: fix the FAIL lines above.

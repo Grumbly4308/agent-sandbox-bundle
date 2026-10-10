@@ -1,0 +1,3 @@
+# ~/mini-node was made earlier in this run (while diagnosing D1) with the same commands as E0:
+# cp -R tests/fixtures/mini-node ~/mini-node && git init && git add -A && git commit -m fixture
+b38e947 fixture

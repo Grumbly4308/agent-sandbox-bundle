@@ -1,0 +1,52 @@
+# D1 re-run, one combination by hand, with a watcher capturing the proxy container before cleanup
+# command: ./sandbox run ~/mini-node --agent opencode --auth apikey --strict -- --version   (made-up key on stdin)
+This session may use up to 3.5 GB of this host's memory:
+  agent 3.0 GB = 2g for processes + 512m /tmp + 512m home + 64m shared memory
+  proxy, sidecar, keeper and services 0.5 GB
+Its workspace is on disk: up to 4g of the store at /var/lib/agent-sandbox-store.
+Only committed work goes in: uncommitted changes in /home/sandboxer/mini-node stay where they are.
+==> cloning /home/sandboxer/mini-node on this host
+==> creating session asb-mini-node-66f880
+error: the proxy did not come up within 30 seconds. Look at: ./sandbox logs
+warning: run did not finish; removing what it had made of session asb-mini-node-66f880
+==> removed session asb-mini-node-66f880
+
+# ---- proxy container, captured by the watcher ----
+== proxy container: asb-mini-node-66f880-proxy
+--- t=2s
+asb-mini-node-66f880-keeper Up Less than a second
+asb-mini-node-66f880-proxy Created
+asb-mini-node-66f880-credsidecar Created
+asb-mini-node-66f880-agent Created
+--- podman logs
+2026/10/10 03:59:37| Processing Configuration File: /var/run/squid/squid.conf (depth 0)
+2026/10/10 03:59:37| WARNING: (A) '10.201.0.0/24' is a subnetwork of (B) '10.0.0.0/8'
+2026/10/10 03:59:37| WARNING: because of this '10.201.0.0/24' is ignored to keep splay tree searching predictable
+2026/10/10 03:59:37| WARNING: You should probably remove '10.201.0.0/24' from the ACL named 'to_private'
+2026/10/10 03:59:37| WARNING: (A) '10.201.0.0/24' is a subnetwork of (B) '10.0.0.0/8'
+2026/10/10 03:59:37| WARNING: because of this '10.201.0.0/24' is ignored to keep splay tree searching predictable
+2026/10/10 03:59:37| WARNING: You should probably remove '10.201.0.0/24' from the ACL named 'to_private'
+2026/10/10 03:59:37| WARNING: (A) '10.202.0.0/24' is a subnetwork of (B) '10.0.0.0/8'
+2026/10/10 03:59:37| WARNING: because of this '10.202.0.0/24' is ignored to keep splay tree searching predictable
+2026/10/10 03:59:37| WARNING: You should probably remove '10.202.0.0/24' from the ACL named 'to_private'
+2026/10/10 03:59:37| Processing Configuration File: /etc/squid/session/extra.conf (depth 1)
+2026/10/10 03:59:37| WARNING: HTTP requires the use of Via
+2026/10/10 03:59:37| Created PID file (/var/run/squid/squid.pid)
+2026/10/10 03:59:37| storeDirWriteCleanLogs: Starting...
+2026/10/10 03:59:37|   Finished.  Wrote 0 entries.
+2026/10/10 03:59:37|   Took 0.00 seconds (  0.00 entries/sec).
+2026/10/10 03:59:37| FATAL: Ipc::Mem::Segment::create failed to shm_open(/squid-cf__metadata.shm): (30) Read-only file system
+
+2026/10/10 03:59:37| Squid Cache (Version 6.9): Terminated abnormally.
+CPU Usage: 0.040 seconds = 0.028 user + 0.012 sys
+Maximum Resident Size: 57776 KB
+Page faults with physical i/o: 0
+2026/10/10 03:59:37| Removing PID file (/var/run/squid/squid.pid)
+--- exec squid -k check
+Error: can only create exec sessions on running containers: container state improper
+exec exit: 255
+--- exec ls /var/run/squid
+Error: can only create exec sessions on running containers: container state improper
+--- t=4s
+time="2026-10-09T23:00:04-05:00" level=warning msg="Could not find mount at destination \"/var/run/squid\" when parsing user volumes for container 8eee76a8c2698d4d5cb8074e9d6707100f86a4d5f41d8991da3b12684f670313"
+exited exit=1 err=

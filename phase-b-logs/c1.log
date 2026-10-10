@@ -1,0 +1,30 @@
+usage: ./sandbox <command>
+
+  doctor                      check that this host is safe to run on
+  login [--agent A] [--auth oauth|apikey]
+                              store the model credential in your OS keyring
+  run <repo-url|path> [options]
+                              start a session and attach to the agent
+      --agent claude|codex|opencode    --auth oauth|apikey    --branch B
+      --toolchain node|python|full     --service name:version  (repeatable)
+      --auto        let the agent act without asking; the container is the boundary
+      --strict      run the barrier checks even if this image passed them before
+      --git-relay   let the agent push the session branch itself (skips export)
+      --mem N  --cpus N  --pids N  --ttl D  --budget N
+      --workspace-size N  --workspace-driver memory|local  --io-limit N
+      -- args...    everything after -- goes to the agent's CLI unchanged
+  shell                       a shell inside the agent container
+  verify [--quick]            attempt every bypass in the barrier register
+  allow <host>[:port] --reason "<why>" [--until YYYY-MM-DD]
+  allow --url <url> --reason "<why>"      allow --preset <name> --reason "<why>"
+  deny <host>                 remove an entry you added
+  export [--out dir]          bring the session branch out and review it
+  push                        push the exported branch to the repository
+  pr                          push, then open a pull or merge request
+  logs [agent|proxy|sidecar|relay|service]
+  destroy [--all]             remove the session: containers, networks, workspace
+  upgrade                     rebuild every image from scratch
+
+Sizes are written 512m or 4g; durations 90m, 4h or 2d. Defaults live in your
+settings file. Commands other than run act on the session named by
+SANDBOX_SESSION, or on the only session there is.
