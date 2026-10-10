@@ -36,9 +36,9 @@ check reports, and the sidecar and the store were right all along.
 | E8 git relay | not run | needs a scratch repository and a token |
 | E9 store limits; workspace in memory | pass | after the store-full check fix |
 | E10 upgrade | pass | all seven images rebuilt, versions printed |
-| F0 keyring | fail | no keyring on this host over SSH; see [test_card_subscriptions.md](test_card_subscriptions.md) |
-| F1 Claude subscription | to do by hand | [test_card_subscriptions.md](test_card_subscriptions.md) |
-| F2 Codex subscription | to do by hand | [test_card_subscriptions.md](test_card_subscriptions.md) |
+| F0 keyring | pass | after starting a keyring by hand; see [test_card_subscriptions.md](test_card_subscriptions.md) |
+| F1 Claude subscription | pass | Claude Code 2.1.283 started with no login prompt and answered; `B15-token-absent` PASS |
+| F2 Codex subscription | pass | after four fixes; Codex 0.162.1, a Plus account; 72 passed, 0 failed, 13 skipped; the renewal after ten days is not run |
 | F3 OpenCode | not run | needs an API key |
 | G optional | not run | |
 
@@ -88,6 +88,44 @@ almost fully allocated after the test, so this host needs nothing.
 key was in the environment.** The test now clears
 `SANDBOX_TEST_ANTHROPIC_KEY` (`tests/verify/host-fake-podman.sh`).
 
+**F2: Codex stopped at start with "selected workspace missing from
+routing discovery".** At start the interactive interface looks the account
+in its login up in the list `/wham/accounts/check` returns for the real
+login, and the dummy `acct-sandbox-dummy` was never in it. `run` now reads
+the account id from the stored login and hands it to the agent as
+`SANDBOX_CODEX_ACCOUNT_ID`; `launch` writes it into the dummy login. The
+id names the account; the tokens stay dummies (`agents/codex/launch`,
+`sandbox`). While there, both CLIs were moved to npm's latest (Codex
+0.159.3 → 0.162.1, Claude Code 2.1.283 → 2.1.296); the account check turned
+out to be in every version from 0.159.3 on.
+
+**F2, second start: "workspace backend must use an HTTPS origin without
+credentials".** With the real account id, Codex goes on to "workspace
+routing" and refuses a `chatgpt_base_url` in plain HTTP, even for a Plus
+account whose routing is `NO_CONSTRAINT`, and no setting turns the routing
+off. For a Codex subscription the sidecar now speaks TLS: `run` makes a key
+and a certificate for the sidecar's address with `openssl` and pipes them
+in (`sidecar-load --tls`), the key never on disk; the sidecar listens only
+once it has them and never falls back to plain HTTP; the agent is handed
+the certificate alone (`CODEX_CA_CERTIFICATE`). Other agents stay on plain
+HTTP. `B23-unknown-path` speaks TLS to such a sidecar and checks the
+certificate names its address (`images/credsidecar/`, `sandbox`,
+`topology.sh`, `scripts/verify.sh`, `images/agent/verify-inside.sh`).
+
+**F2, third start: the sidecar refused `--tls`.** `run` had reused the
+old sidecar image: an image's tag does not change when the files it is
+built from do, and only a missing image was built. Every image is now
+labelled with a checksum of its build inputs and `run` rebuilds the one
+that differs; `run` and the build also warn when a pinned CLI is behind
+npm's latest, and never stop on it (`sandbox`).
+
+**F2, fourth start: B22 to B25 skipped, "the second sidecar did not come
+up".** `run` exports the TLS switch for the session and `verify.sh`
+inherits it, so its own second sidecar, in front of the mock vendor, was
+created in TLS mode too and waited for a key nobody pipes it. That sidecar
+now stays plain HTTP whatever the session speaks (`scripts/verify.sh`),
+and the fake-Podman test has a scenario for it.
+
 ## Noticed, not changed
 
 - Every `./sandbox allow` and `deny` prints 14 lines of Squid's
@@ -104,5 +142,8 @@ key was in the environment.** The test now clears
 
 - D2's agent task and E1's, with a real API key from a capped workspace.
 - E6 and E8, with a scratch repository and a narrow token.
-- F1 and F2 by hand, and F2's renewal about ten days after `codex login`.
+- F2's renewal of the Codex login, about ten days after `codex login`.
+- Codex web search: F2 made no search, so that the query comes back in the
+  reply and is logged (B25) is still unproven against the vendor.
+- Whether `CODEX_CA_CERTIFICATE` replaces or adds to Codex's trusted roots.
 - Section G.

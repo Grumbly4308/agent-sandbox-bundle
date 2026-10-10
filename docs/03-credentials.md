@@ -42,8 +42,10 @@ trust it (`CODEX_CA_CERTIFICATE`); the session directory keeps a copy for
 `shell` and `verify`. Every other agent's sidecar is plain HTTP, on the
 session's internal network.
 
-> **Proven so far against a mock API only.** That the vendors accept requests
-> forwarded this way is a Phase B item ([PHASE-B.md](../PHASE-B.md)).
+> **Proven against the real vendors on 2026-10-10** for Claude Code with a
+> subscription (test card F1) and Codex with a subscription (F2): both
+> started with a dummy credential and answered through the sidecar. The
+> API-key paths (Claude, Codex, OpenCode) have run against a mock only.
 
 ## Which credential, for which agent
 

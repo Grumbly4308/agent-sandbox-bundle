@@ -14,7 +14,9 @@ the sidecar (`topology.sh`, `docs/00-threat-model.md`), not here. We ship no
 without the setting, against a mock API and a proxy that refuses everything,
 and the CLI did not work without it. "No" means the CLI works without it, or
 the spike did not test the difference. The spike used a mock; that the
-vendor accepts the forwarded requests is not yet proven.
+vendor accepts the forwarded requests was proven on 2026-10-10 (test card
+F2, Codex 0.162.1, a Plus account), which took the two rows below on the
+account id and on TLS.
 
 `launch` writes `$CODEX_HOME/config.toml` (and, for a subscription,
 `auth.json`) afresh at every start. `$CODEX_HOME` is `~/.codex`.
@@ -39,8 +41,8 @@ it is plain HTTP.
 
 Note on `auth.json`: the spike's dummy tokens carried more claims (an email
 address, a plan type, a user id). The ones written here carry only an expiry
-and the account id. That the smaller token is enough has **not** been
-run; if Codex refuses it, add the claims back in `launch`.
+and the account id. Codex 0.162.1 accepted the smaller token against the
+real vendor (F2, 2026-10-10).
 
 ## API key (`--auth apikey`)
 

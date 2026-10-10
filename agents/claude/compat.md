@@ -14,7 +14,8 @@ the sidecar (`topology.sh`, `docs/00-threat-model.md`), not here. We ship no
 without the setting, against a mock API and a proxy that refuses everything,
 and the CLI did not work without it. "No" means the CLI works without it and
 the setting is a convenience. The spike used a mock; that the vendor accepts
-the forwarded requests is not yet proven.
+the forwarded requests was proven on 2026-10-10 (test card F1, Claude Code
+2.1.283 with a subscription).
 
 `$SANDBOX_SIDECAR_URL` is the credential sidecar's address in this session,
 for example `http://10.201.0.3:8080`. `topology.sh` sets it on the container.
