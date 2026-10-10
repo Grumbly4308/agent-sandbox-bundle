@@ -502,6 +502,9 @@ async function codexOauth(mock) {
     'an unknown OpenAI tool type': codexBody({ tools: [{ type: 'brand_new_openai_tool' }] }),
     'a tool with no type': codexBody({ tools: [{ name: 'untyped' }] }),
     'an mcp tool hidden inside a namespace': codexBody({ tools: [{ type: 'namespace', name: 'ns', tools: [{ type: 'mcp', server_url: 'https://evil.example' }] }] }),
+    // Codex 0.162 declares its tools in an "additional_tools" input item, not in "tools".
+    'an mcp tool declared in an additional_tools input item': codexBody({ tools: undefined, input: [{ type: 'additional_tools', id: 'at_1', role: 'developer', tools: [{ type: 'namespace', name: 'functions', tools: [{ type: 'custom', name: 'exec' }, { type: 'mcp', server_url: 'https://evil.example' }] }] }, { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }] }),
+    'a file_search tool declared in an additional_tools input item': codexBody({ tools: undefined, input: [{ type: 'additional_tools', id: 'at_1', role: 'developer', tools: [{ type: 'file_search', vector_store_ids: ['vs_1'] }] }, { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }] }),
     'an image the vendor would fetch by URL': codexBody({ input: [{ type: 'message', role: 'user', content: [{ type: 'input_image', image_url: 'https://evil.example/?leak=1' }] }] }),
     'a file the vendor would fetch by URL': codexBody({ input: [{ type: 'message', role: 'user', content: [{ type: 'input_file', file_url: 'https://evil.example/x' }] }] }),
   };
@@ -516,6 +519,26 @@ async function codexOauth(mock) {
   check('[B23] ... and none of the refused requests reached the vendor', (await mock.requests()).length === 0);
   reply = await codex(codexBody({ tools: [{ type: 'namespace', name: 'ns', tools: [{ type: 'function', name: 'inner' }] }, { type: 'local_shell' }, { type: 'image_generation' }, { type: 'tool_search' }, { type: 'apply_patch' }, { type: 'web_search_preview' }], input: [{ type: 'message', role: 'user', content: [{ type: 'input_image', image_url: 'data:image/png;base64,AAAA' }] }] }));
   check('[B23] the tool types Codex uses, and an inline image, are let through', reply.status === 200, `${reply.status} ${reply.body.slice(0, 200)}`);
+  reply = await codex(codexBody({ tools: undefined, input: [{ type: 'additional_tools', id: 'at_1', role: 'developer', tools: [{ type: 'namespace', name: 'functions', tools: [{ type: 'custom', name: 'exec' }, { type: 'function', name: 'wait' }] }, { type: 'web_search' }] }, { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }] }));
+  check('[B23] the tools Codex 0.162 declares in an additional_tools input item are let through', reply.status === 200, `${reply.status} ${reply.body.slice(0, 200)}`);
+
+  // Standalone web search: the CLI posts the queries to <provider>/alpha/search itself.
+  const searchBody = (commands, input = [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'look it up' }] }]) =>
+    ({ id: 'search-session', model: 'gpt-mock-codex', input, commands, settings: { external_web_access: true }, max_output_tokens: 2500 });
+  const search = (body) => call(port, { urlPath: '/backend-api/codex/alpha/search', headers: CODEX_HEADERS, body });
+  await mock.reset();
+  const before = (await sidecar.logged((e) => e.event === 'request' && typeof e.budget_left === 'number')).budget_left;
+  reply = await search(searchBody({ search_query: [{ q: 'standalone search query' }, { q: 'a second query', recency: 7 }], image_query: [{ q: 'an image query' }], open: [{ ref_id: 'https://example.com/docs' }], find: [{ ref_id: 'turn0search0', pattern: 'install' }], weather: [{ location: 'Paris' }] }));
+  seen = await mock.requests();
+  check('[B23] Codex\'s standalone web search is forwarded to the vendor with the real credential', reply.status === 200 && reply.body.includes('search result from the mock') && seen.length === 1 && seen[0].headers.authorization === `Bearer ${REAL_CODEX}`, `${reply.status} ${reply.body.slice(0, 200)}`);
+  const searchEntry = await sidecar.logged((e) => e.path === '/backend-api/codex/alpha/search' && e.status === 200);
+  const kinds = (searchEntry?.web_search ?? []).map((s) => `${s.kind}:${s.query ?? s.url ?? s.pattern ?? ''}`);
+  check('[B25] every query, page and pattern in a standalone search is in the log', kinds.includes('search:standalone search query') && kinds.includes('search:a second query') && kinds.includes('image_search:an image query') && kinds.includes('open_page:https://example.com/docs') && kinds.includes('find_in_page:turn0search0') && kinds.includes('weather:') && searchEntry.web_search.every((s) => s.from === 'request'), JSON.stringify(searchEntry));
+  check('[B24] a standalone search uses one request of the budget', searchEntry?.budget_left === before - 1, `${before} -> ${searchEntry?.budget_left}`);
+  reply = await search(searchBody({ search_query: [{ q: 'x' }] }, [{ type: 'message', role: 'user', content: [{ type: 'input_image', image_url: 'https://evil.example/?leak=1' }] }]));
+  check('[B23] a standalone search carrying an image the vendor would fetch by URL is refused with 400', reply.status === 400 && errorType(reply).startsWith('sandbox_'), `${reply.status} ${reply.body}`);
+  reply = await search('{"commands":');
+  check('[B23] a standalone search that is not JSON is refused with 400', reply.status === 400, `${reply.status}`);
   await sidecar.stop();
 }
 

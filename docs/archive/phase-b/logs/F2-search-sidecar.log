@@ -1,0 +1,16 @@
+{"t":"2026-10-10T14:17:54.780Z","event":"tls","state":"waiting for the key and certificate (sidecar-load --tls)"}
+{"t":"2026-10-10T14:17:55.188Z","event":"start","agent":"codex","auth":"oauth","upstream":"chatgpt.com","routes":["POST /backend-api/codex/responses","GET /backend-api/codex/models","GET /backend-api/wham/accounts/check","GET /backend-api/wham/usage","GET /backend-api/wham/rate-limit-reset-credits"],"budget":500,"listen":"0.0.0.0:8080","tls":true}
+{"t":"2026-10-10T14:18:13.115Z","event":"request","method":"GET","path":"/verify-not-forwarded","refused":"sandbox_route_not_forwarded","detail":"the sandbox does not forward GET /verify-not-forwarded","status":404,"ms":1,"budget_left":500}
+{"t":"2026-10-10T14:18:18.019Z","event":"credential","state":"loaded","account_id":true}
+{"t":"2026-10-10T14:18:18.849Z","event":"request","method":"GET","path":"/backend-api/codex/models","status":200,"ms":830,"budget_left":500}
+{"t":"2026-10-10T14:18:18.903Z","event":"request","method":"GET","path":"/backend-api/wham/accounts/check","status":200,"ms":880,"budget_left":500}
+{"t":"2026-10-10T14:18:18.979Z","event":"credential","state":"loaded","account_id":true}
+{"t":"2026-10-10T14:18:19.288Z","event":"request","method":"GET","path":"/backend-api/wham/rate-limit-reset-credits","status":200,"ms":309,"budget_left":500}
+{"t":"2026-10-10T14:18:19.336Z","event":"request","method":"GET","path":"/backend-api/wham/usage","status":200,"ms":355,"budget_left":500}
+{"t":"2026-10-10T14:18:19.354Z","event":"request","method":"GET","path":"/backend-api/wham/usage","status":200,"ms":374,"budget_left":500}
+{"t":"2026-10-10T14:18:27.777Z","event":"request","method":"GET","path":"/backend-api/wham/settings/user","refused":"sandbox_route_not_forwarded","detail":"the sandbox does not forward GET /backend-api/wham/settings/user","status":404,"ms":0,"budget_left":500}
+{"t":"2026-10-10T14:18:27.826Z","event":"request","method":"GET","path":"/backend-api/wham/settings/user","refused":"sandbox_route_not_forwarded","detail":"the sandbox does not forward GET /backend-api/wham/settings/user","status":404,"ms":0,"budget_left":499}
+{"t":"2026-10-10T14:18:31.431Z","event":"request","method":"POST","path":"/backend-api/codex/responses","model":"gpt-6.1-sol","stream":true,"tools":[],"tool_types":[],"tools_total":0,"status":200,"cut_short":true,"ms":3635,"budget_left":498}
+{"t":"2026-10-10T14:18:35.562Z","event":"request","method":"POST","path":"/backend-api/codex/responses","model":"gpt-6.1-sol","stream":true,"tools":[],"tool_types":[],"tools_total":0,"status":200,"cut_short":true,"ms":4118,"budget_left":497}
+{"t":"2026-10-10T14:18:38.650Z","event":"request","method":"POST","path":"/backend-api/codex/responses","model":"gpt-6.1-sol","stream":true,"tools":[],"tool_types":[],"tools_total":0,"status":200,"cut_short":true,"ms":2866,"budget_left":496}
+{"t":"2026-10-10T14:18:43.048Z","event":"request","method":"POST","path":"/backend-api/codex/responses","model":"gpt-6.1-sol","stream":true,"tools":[],"tool_types":[],"tools_total":0,"status":200,"ms":4226,"budget_left":495}

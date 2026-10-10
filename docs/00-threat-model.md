@@ -2,9 +2,10 @@
 
 Read this before anything else. The other files implement it.
 
-> **Status: design.** The launcher and the checks are not written yet. The
-> "Verify attempts" column says what each check must do. Nothing in this
-> document has been run against a container runtime.
+> **Status: verified on one real host.** Every check in the register was
+> run on Debian 13 with rootless Podman 5.4.2 on 2026-10-10 and held.
+> [08 — Verification](08-verification.md) says what that covers and what it
+> does not: other hosts, above all.
 
 Unfamiliar word? See [Words used here](#words-used-here) at the end.
 
@@ -201,7 +202,7 @@ Unless a line says otherwise, these describe the agent container.
 | B22 | **Credential sidecar.** Holds a token that can make model requests and nothing more, swaps it in for the agent's dummy, and sends model requests to exactly one upstream. For Claude it is a one-year token limited to inference, with nothing to refresh. For Codex it is a short-lived access token; your host renews it and pipes in the next one, and the long-lived login never enters a container. Proven against the real vendors for the Claude Code and Codex subscriptions (test card F1 and F2, 2026-10-10); the API-key paths against a mock only. | Runs a request through to a mock upstream that checks the real header arrived and the agent only ever held the dummy; replaces the token mid-session and checks the next request uses the new one. |
 | B23 | **The sidecar forwards only what the CLI needs.** Only the API paths the CLI uses. It refuses request features that make the vendor's servers contact other hosts for the agent (server-side URL fetch, MCP connectors). Web search is let through and logged. | Requests another path; sends a model request asking for a server-side fetch and one naming an MCP server; expects refusals. |
 | B24 | **Request budget.** The sidecar counts model requests before forwarding and stops at the number you set. It caps request size and how many run at once. This is a count, not a spend limit. | Sends one request past a budget of N; sends an oversized one. |
-| B25 | **Request log.** The proxy logs every request line; the sidecar logs every model request and any web search query in it. For Claude Code the query is in the request; for Codex it comes back in the reply, which is not yet proven. Entries are fixed-size and escaped. | Runs one search against the mock and looks for the query in the sidecar's log. |
+| B25 | **Request log.** The proxy logs every request line; the sidecar logs every model request and any web search query in it. For Claude Code the query is in the request. For Codex it depends on the model: for one the vendor's catalogue marks "Responses Lite" (every ChatGPT model on 2026-10-10) the CLI posts its searches to a search endpoint of its own, through the sidecar, and every query and page address is logged from that request (proven against the vendor, 2026-10-10); for any other model the query comes back in the reply, which is not yet seen. Entries are fixed-size and escaped. | Runs one search against the mock and looks for the query in the sidecar's log. |
 | B26 | **Time limit, enforced from outside every container.** The agent, the proxy, the sidecar, the git relay and the services are each created with a deadline, and Podman's own monitor (a process outside the container) kills each one when it passes, whether or not the launcher is still running. The **keeper**, a container with no network and nothing to do, holds the workspace open, so the work is still there for `export` until you run `destroy`. The agent cannot signal or reach the keeper. Nothing inside the agent container counts as part of the time limit. | Runs with a short limit and the launcher's terminal closed; checks every container but the keeper is dead at the deadline, including an agent that is forking as fast as it can; checks the workspace can still be exported. |
 | B27 | **Export, on your host.** See [How code gets in and out](#how-code-gets-in-and-out). The bundle is written by a fresh container with no network, which the agent's processes are not in. The host never runs git, gitleaks or any other tool inside a tree the agent wrote. | Plants a hostile `.git/config` and hook; an attribution trailer; a fake secret with a `.gitleaksignore` entry and a `gitleaks:allow` comment; a lockfile change hidden with `.gitattributes`; a symlink to a host path; an endless output stream. Expects each caught or harmless. |
 | B28 | **Logs are collected by Podman** from each container's standard output, into a file that belongs to the container and is deleted with it. No log path is mounted into any container. | Fails if any log path is mounted writable; checks the log driver from the host. |
@@ -264,8 +265,7 @@ vendor's servers, not in the container, so the allowlist does not limit what
 they look up. A search query is a string that leaves, and a search *result* is
 a page that can carry an injection. With Codex the vendor's search tool can
 also open a page by its address, so a URL may leave too. We accept this and log
-it (B25; for Codex the logging is not yet proven, and until it is we do not
-claim it). Claude Code's
+it (B25). Claude Code's
 WebFetch is different: it runs inside the container and is bounded by the
 allowlist like everything else.
 

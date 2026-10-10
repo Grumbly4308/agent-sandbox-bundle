@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build and verify the images for the agents the cycle does not exercise
-# (Codex, OpenCode), and the python and full toolchains. NOT run in Phase A.
+# (Codex, OpenCode), and the python and full toolchains. Passed on a real
+# host on 2026-10-10 (docs/08-verification.md).
 #
 # No vendor is contacted with a real credential: each session's sidecar is
 # given a made-up key, typed in below, and the CLI is only asked for its

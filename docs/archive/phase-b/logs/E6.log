@@ -1,0 +1,66 @@
+++ ./sandbox export
+==> writing a bundle of branch agent/asb-sandbox-test-e0f540 in a container with no network
+
+==== agent-sandbox export: asb-sandbox-test-e0f540 ====
+bundle: 1903 bytes    branch: agent/asb-sandbox-test-e0f540    started from: 30db2ef3567f6cc30a252d8e89f9364f41a022b2
+
+==== Attribution ====
+No AI attribution in the commit messages.
+
+==== Commits (1) ====
+7fe9cca  2026-10-10  sandboxer  Add a line to the README
+
+==== Code diff (first 200 lines of each file) ====
+Files that run later are not in this diff. They have their own section below.
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..bd2ebc3
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,2 @@
++
++A line added inside the sandbox (test card E6).
+
+==== RUNS LATER — read this first ====
+Nothing in the sandbox ran these for you. They run on your machine, in CI, or in
+the next agent session, after you merge. Reading them is the only barrier.
+
+No changed path matches a runs-later pattern, and no symlink or submodule changed.
+
+This list is made from the path patterns in policy/runs-later.txt; any source file can run later too.
+
+==== Secret scan ====
+Running gitleaks 8.30.1 over the exported commits ...
+[90m9:09AM[0m [32mINF[0m [1m1 commits scanned.[0m
+[90m9:09AM[0m [32mINF[0m [1mscanned ~49 bytes (49 bytes) in 102ms[0m
+[90m9:09AM[0m [32mINF[0m [1mno leaks found[0m
+gitleaks found no secrets.
+
+==== Summary ====
+RUNS LATER — no changed path matches a pattern. Any source file can still run later.
+history:      intact
+attribution:  clean
+secret scan:  passed
+tip:          7fe9cca45750e32ec0cde6def3f97d17e6ae1edf
+repository:   /home/sandboxer/agent-sandbox-out/asb-sandbox-test-e0f540/repo.git
+status file:  /home/sandboxer/agent-sandbox-out/asb-sandbox-test-e0f540/export.status
+Clean. Read the diff, then: ./sandbox push
+
+Exported to /home/sandboxer/agent-sandbox-out/asb-sandbox-test-e0f540/repo.git. Read the dependency diff first, then the code diff.
+Then: ./sandbox push   or   ./sandbox pr   and, when you are done,   ./sandbox destroy
+++ ./sandbox push
+==> pushing agent/asb-sandbox-test-e0f540 to https://github.com/Grumbly4308/sandbox_test.git from your environment
+remote: 
+remote: Create a pull request for 'agent/asb-sandbox-test-e0f540' on GitHub by visiting:        
+remote:      https://github.com/Grumbly4308/sandbox_test/pull/new/agent/asb-sandbox-test-e0f540        
+remote: 
+To https://github.com/Grumbly4308/sandbox_test.git
+ * [new branch]      agent/asb-sandbox-test-e0f540 -> agent/asb-sandbox-test-e0f540
+++ ./sandbox pr
+==> pushing agent/asb-sandbox-test-e0f540 to https://github.com/Grumbly4308/sandbox_test.git from your environment
+Everything up-to-date
+Open the pull request here:
+  https://github.com/Grumbly4308/sandbox_test/compare/agent/asb-sandbox-test-e0f540?expand=1
+++ ./sandbox destroy
+==> removed session asb-sandbox-test-e0f540
+exit: 0

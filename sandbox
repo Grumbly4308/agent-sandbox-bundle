@@ -427,7 +427,7 @@ keyring_put() {   # <agent> <auth>; the secret on stdin; replaces what is there
   if [ "$(uname -s)" = Darwin ]; then
     # `security` takes a new password as an argument or by typing. To keep it
     # off the command line it is given as hexadecimal on the tool's own
-    # standard input. UNPROVEN until Phase B.
+    # standard input. Not yet tried on a Mac (docs/08-verification.md).
     hex="$(od -An -v -tx1 | tr -d ' \n')"
     printf 'add-generic-password -U -s agent-sandbox -a %s -X %s\n' "$1-$2" "$hex" | security -i >/dev/null
   else
@@ -489,9 +489,10 @@ credential_json() {
 # token and the account id ever go to the sidecar. This host renews the access
 # token before it runs out and pipes in the next one.  [logical B22]
 
-# UNPROVEN until Phase B: the endpoint, the client id and the body are the
-# ones the Codex CLI uses, and none of it has been run against the real
-# service. Everything that talks to it is in this one function.
+# Not exercised against the real service: the endpoint, the client id and
+# the body are the ones the Codex CLI uses, and the renewal was closed
+# without a check (docs/08-verification.md). Everything that talks to it is
+# in this one function.
 # stdin: the refresh token. stdout: the service's JSON reply.
 codex_token_request() {
   jq -Rsc '{client_id: "app_EMoamEEZ73f0CkXaXp7hrann", grant_type: "refresh_token",

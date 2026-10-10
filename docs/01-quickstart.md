@@ -9,10 +9,10 @@ this does and does not protect. The short version: the agent gets one copy of
 one repository, a short list of hosts, and a number of model requests. It does
 not get your files, your keys or your login.
 
-> **Status.** The code has been written and tested without a container
-> runtime. It has not yet been run against Podman. [PHASE-B.md](../PHASE-B.md)
-> lists what is still unproven. Until that list is worked through, treat every
-> barrier as designed, not verified.
+> **Status.** This path was followed on a real host (Debian 13, rootless
+> Podman 5.4.2) on 2026-10-10 and every barrier held. On any other host, and
+> on macOS in particular, read [08 — Verification](08-verification.md) first:
+> it says what has not been tried.
 
 ## 1. An ordinary account
 

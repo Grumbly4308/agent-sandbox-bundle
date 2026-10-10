@@ -136,7 +136,7 @@ for name in 'sandbox=' '${AGENT}=' 'node=' 'git=' 'toolchain='; do
 done
 check "sbom: written to /usr/share/sandbox/sbom.json" grep -q '> /usr/share/sandbox/sbom.json' "$cf"
 check "resolv.conf: an empty one is copied in last" grep -qx 'COPY --from=empty /out/resolv.conf /etc/resolv.conf' "$cf"
-check "resolv.conf: marked unproven" grep -q 'UNPROVEN' "$cf"
+check "resolv.conf: the comment says verify checks it (B14)" grep -qF 'checked by `./sandbox verify` (B14)' "$cf"
 # The hosts file the agent sees is the image's (containers start with
 # --no-hosts): loopback only, and copied after the last RUN, because a RUN
 # step sees the builder's temporary file, not the image's.

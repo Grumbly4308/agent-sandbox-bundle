@@ -43,9 +43,10 @@ trust it (`CODEX_CA_CERTIFICATE`); the session directory keeps a copy for
 session's internal network.
 
 > **Proven against the real vendors on 2026-10-10** for Claude Code with a
-> subscription (test card F1) and Codex with a subscription (F2): both
-> started with a dummy credential and answered through the sidecar. The
-> API-key paths (Claude, Codex, OpenCode) have run against a mock only.
+> subscription (F1) and Codex with a subscription (F2): both started with a
+> dummy credential and answered through the sidecar. The API-key paths
+> (Claude, Codex, OpenCode) have run against a mock only and were closed
+> without a check; see [08 — Verification](08-verification.md).
 
 ## Which credential, for which agent
 

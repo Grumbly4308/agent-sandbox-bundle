@@ -9,10 +9,12 @@ hidden in a README or a web page can make it so, and asks what it can then
 reach. The answer: one throwaway container, one copy of one repository, a
 number of model requests you chose, and a short list of hosts.
 
-> **Status: written, not yet run.** Version 2 was built and tested on a machine
-> with no container runtime. The static tests pass; no barrier has been
-> verified against Podman. [PHASE-B.md](PHASE-B.md) lists what to run and what
-> is still unproven.
+> **Status: 2.0.0, verified on one real host.** Every barrier in the register
+> was attempted and held on Debian 13 with rootless Podman 5.4.2, against the
+> real vendors for Claude Code and Codex with subscriptions.
+> [08 — Verification](docs/08-verification.md) says exactly what was proven,
+> what was closed without a check, and what is still unproven (other hosts,
+> above all).
 
 ## In one screen
 
@@ -41,7 +43,9 @@ cannot become root.
 | [05 — Agents and toolchains](docs/05-agents-and-toolchains.md) | Agent plug-ins, `--auto`, what is in the image |
 | [06 — Services](docs/06-services.md) | A database beside the agent |
 | [07 — Troubleshooting](docs/07-troubleshooting.md) | When it refuses, and why |
+| [08 — Verification](docs/08-verification.md) | What the real run proved, what it fixed, and what is still unproven |
 | [CHANGELOG](CHANGELOG.md) | What changed from version 1, finding by finding |
+| [docs/archive/phase-b](docs/archive/phase-b/README.md) | The first run on a real host: plan, cards, results, logs |
 
 ## How it is laid out
 
@@ -58,7 +62,9 @@ services/<name>/         databases and caches you can start beside the agent
 policy/                  the default allowlist, the never-allow list, export rules
 scripts/                 doctor, verify, export, allowlist handling
 extras/                  optional host-side auditing; running it all in a VM
+docs/                    these pages; docs/archive/ holds the record of the real run
 tests/                   everything that can be tested without a container runtime
+tests/phase-b/           the two scripts that need a real Podman: images, and the full cycle
 ```
 
 ## Tests
@@ -69,4 +75,5 @@ make test
 
 runs every test that needs no container runtime. It proves what the code asks
 Podman for and how the host-side parts behave. It does not prove Podman does
-it: that is `./sandbox verify` on a real host.
+it: that is `./sandbox verify` on a real host, which
+[08 — Verification](docs/08-verification.md) records.

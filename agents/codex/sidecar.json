@@ -7,6 +7,7 @@
       "inject": { "authorization": "Bearer {token}", "chatgpt-account-id": "{account_id}" },
       "routes": [
         { "method": "POST", "path": "/backend-api/codex/responses", "body": "openai-responses", "model": true },
+        { "method": "POST", "path": "/backend-api/codex/alpha/search", "body": "openai-search", "model": true },
         { "method": "GET", "path": "/backend-api/codex/models" },
         { "method": "GET", "path": "/backend-api/wham/accounts/check" },
         { "method": "GET", "path": "/backend-api/wham/usage" },
@@ -19,6 +20,7 @@
       "inject": { "authorization": "Bearer {token}" },
       "routes": [
         { "method": "POST", "path": "/v1/responses", "body": "openai-responses", "model": true },
+        { "method": "POST", "path": "/v1/alpha/search", "body": "openai-search", "model": true },
         { "method": "POST", "path": "/v1/chat/completions", "body": "openai-chat", "model": true },
         { "method": "GET", "path": "/v1/models" }
       ]
@@ -38,6 +40,14 @@
       "deny_keys": [],
       "tools_untyped": false,
       "tools_allow": ["function", "custom"],
+      "tools_deny": [],
+      "web_search": []
+    },
+    "openai-search": {
+      "dialect": "openai-search",
+      "deny_keys": [],
+      "tools_untyped": false,
+      "tools_allow": [],
       "tools_deny": [],
       "web_search": []
     }

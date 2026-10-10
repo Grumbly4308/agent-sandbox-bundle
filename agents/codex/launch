@@ -93,6 +93,7 @@ name = "sidecar"
 base_url = "$sidecar/backend-api/codex"
 wire_api = "responses"
 requires_openai_auth = true
+supports_standalone_web_search = true
 
 $common_tables
 EOF

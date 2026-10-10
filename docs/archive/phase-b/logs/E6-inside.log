@@ -1,0 +1,16 @@
++ cd /workspace/repo
++ git status -sb
++ head -1
+## agent/asb-sandbox-test-e0f540
++ ls
+LICENSE
++ printf '\nA line added inside the sandbox (test card E6).\n'
++ git add README.md
++ git commit -m 'Add a line to the README'
+[agent/asb-sandbox-test-e0f540 7fe9cca] Add a line to the README
+ 1 file changed, 2 insertions(+)
+ create mode 100644 README.md
++ git log --oneline -2
+7fe9cca Add a line to the README
+30db2ef Initial commit
+exit: 0

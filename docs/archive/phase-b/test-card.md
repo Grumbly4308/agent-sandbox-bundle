@@ -1,5 +1,9 @@
 # Test card — agent-sandbox v2
 
+> **Archived.** This card was followed on 2026-10-09 and 2026-10-10; the
+> filled-in table is [results.md](results.md). Its header below still
+> describes the state before that run.
+
 Install it, set it up, and test it on a real machine, one tick box at a time.
 
 **Where things stand.** The code was written and tested on a machine with no
@@ -15,7 +19,7 @@ is what it is for.
 - Tick `pass` or `fail` on every step and fill in the table in section H.
 - When a step fails, write down what you saw and keep the log. **Do not
   change a check to make it pass.**
-- [PHASE-B.md](PHASE-B.md) is the reference behind this card: every `verify`
+- [plan.md](plan.md) is the reference behind this card: every `verify`
   check by name, and everything still unproven, by component. Start there
   when a step fails.
 
@@ -800,14 +804,14 @@ enough to fix from.
 | What you see | Look at |
 |---|---|
 | A `FAIL` or `refused:` line | The `fix:` line right under it. |
-| `a barrier check failed, so the session was not started` | The `FAIL` lines above it. Find the check's name in the table in [PHASE-B.md](PHASE-B.md). |
+| `a barrier check failed, so the session was not started` | The `FAIL` lines above it. Find the check's name in the table in [plan.md](plan.md). |
 | `... did not come up within 30 seconds` | `podman ps -a`, then `podman logs <session>-proxy` or `<session>-credsidecar`. |
-| An image fails to build | The build output. "Images" under "Unproven" in PHASE-B.md lists the likely causes. |
+| An image fails to build | The build output. "Images" under "Unproven" in plan.md lists the likely causes. |
 | The CLI starts but every model request fails | `./sandbox logs sidecar`: the status and path of each request. |
 | An allowed host is refused | `./sandbox logs proxy`. |
 | The session stopped by itself; the next command says `its workspace grew past --workspace-size` | It used more than its share of the store. The work is still there: `./sandbox export`. Start again with a larger `--workspace-size`. |
 | A session is left over and in the way | `./sandbox destroy --all` |
-| Anything else that refuses | [docs/07-troubleshooting.md](docs/07-troubleshooting.md) |
+| Anything else that refuses | [docs/07-troubleshooting.md](../../07-troubleshooting.md) |
 
 Which session a command acts on: the only one there is, or the one named in
 `SANDBOX_SESSION` when there are several.

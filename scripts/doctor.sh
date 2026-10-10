@@ -132,7 +132,7 @@ check_podman() {
   if [ "$remote" != false ]; then
     # On macOS Podman always runs in a small Linux VM on the same machine and
     # is driven over a local connection. That one case is let through; any
-    # other remote Podman is refused. UNPROVEN until Phase B.
+    # other remote Podman is refused. The Mac case is not yet tried.
     uri=""
     if [ "$(uname -s)" = Darwin ]; then
       uri="$(podman system connection list --format '{{if .Default}}{{.URI}}{{end}}' 2>/dev/null || true)"

@@ -62,8 +62,11 @@ sidecar.
 ## Web tools
 
 - **Web search** (Claude Code's WebSearch, Codex's web search) runs on the
-  vendor's servers, as part of a model request. It is allowed; the sidecar logs
-  each query. It is one of the stated non-goals of the threat model: a query is
+  vendor's servers. For Claude it is part of a model request; for Codex's
+  ChatGPT models it is a request of the CLI's own to the vendor's search
+  endpoint, which the sidecar forwards and counts against the budget like a
+  model request. It is allowed; the sidecar logs each query and each page
+  address. It is one of the stated non-goals of the threat model: a query is
   a string that leaves.
 - **WebFetch** in Claude Code runs inside the container. It goes through the
   proxy and reaches only hosts on the allowlist.

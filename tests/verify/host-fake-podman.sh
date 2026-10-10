@@ -28,7 +28,7 @@
 #
 # Exit 0 = every scenario behaved as expected.
 set -euo pipefail
-# The test card puts the test key in the terminal's environment, and verify.sh
+# The Phase B test card put the test key in the terminal's environment, and verify.sh
 # reads it; the "no credential" scenario below must not see it.
 unset SANDBOX_TEST_ANTHROPIC_KEY
 

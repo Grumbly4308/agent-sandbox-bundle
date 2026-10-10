@@ -1,11 +1,16 @@
 # Phase B — the test plan for a real host
 
+> **Archived.** This is the plan as it stood before the run on 2026-10-09
+> and 2026-10-10; the status columns below still say "not run here". What
+> the run proved is in [results.md](results.md) and, in short, in
+> [docs/08-verification.md](../../08-verification.md).
+
 Version 2 was written on a machine with **no container runtime**. Everything
 that could be tested without one was (`make test`). Nothing that needs Podman
 has been run: no image has been built, no container started, and **no `verify`
 check has passed or failed**.
 
-[test_card.md](test_card.md) is the same plan as a tick-box card, with the
+[test-card.md](test-card.md) is the same plan as a tick-box card, with the
 install and onboarding steps spelled out. This file is the reference behind
 it: what to set up, what to run in which order, what a good result looks
 like, and where to look when a step fails. After the plan come the full list
@@ -416,7 +421,7 @@ what you saw), or not run. A failed step plus its log is enough to fix from.
 ## The verify checks — none has been run
 
 Every row of the barrier register in
-[docs/00-threat-model.md](docs/00-threat-model.md) has checks. **Status of all
+[docs/00-threat-model.md](../../00-threat-model.md) has checks. **Status of all
 of them: not run here.** Steps 6, 11, 13, 14 and 15 above are where they run.
 
 | Barrier | Checks | Status |
@@ -531,7 +536,10 @@ fails.
 - The real CLIs tolerate the sidecar's 503 and 403 answers as intended, and
   send no tool type, path or encoding outside the lists in `sidecar.json` (a
   refusal shows up as a logged 400 or 404).
-- Web-search queries are found in real reply streams (Codex in particular).
+- Web-search queries are found in real reply streams. (Codex's ChatGPT models
+  turned out to search through a request of the CLI's own instead, which the
+  sidecar now forwards and logs; proven 2026-10-10. The reply path is still
+  unproven for any model that uses the hosted tool.)
 - The image's certificate store verifies the vendors' certificates through a
   real Squid `CONNECT`.
 

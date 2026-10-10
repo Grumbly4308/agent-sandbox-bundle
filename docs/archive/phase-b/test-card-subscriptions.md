@@ -1,6 +1,9 @@
 # Test card, section F by hand: subscription logins
 
-Steps F0 to F2 of [test_card.md](test_card.md), written out for doing them
+> **Archived.** Followed on 2026-10-10; the F rows are filled in in
+> [results.md](results.md).
+
+Steps F0 to F2 of [test-card.md](test-card.md), written out for doing them
 yourself on this host. Each step says what to type, what you should see,
 and what to write down. Keep the log of each step in `~/phase-b-logs/`, as
 in the rest of the card.
@@ -270,7 +273,7 @@ echo "exit: ${PIPESTATUS[0]}"
 ```
 
 Then fill in the F rows of the table in
-[test_card_results.md](test_card_results.md).
+[results.md](results.md).
 
 ## If something refuses
 

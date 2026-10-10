@@ -9,9 +9,9 @@ Start with:
 It prints a green or red line per check and, under each red, the command that
 fixes it.
 
-> Nothing on this page comes from a real run yet: the sandbox has not been
-> started on Podman. These are the failures the design expects, with their
-> causes. [PHASE-B.md](../PHASE-B.md) is where real ones will be recorded.
+> The failures the first real run met, with their causes and fixes, are in
+> [docs/archive/phase-b/results.md](archive/phase-b/results.md). The rest of
+> this page is what the design expects.
 
 ## `run` refuses to start
 

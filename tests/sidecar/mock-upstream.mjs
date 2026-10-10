@@ -136,6 +136,9 @@ async function handle(req, res) {
   if (route === 'POST /v1/chat/completions') {
     return json(res, 200, { id: 'chatcmpl_mock', object: 'chat.completion', choices: [{ index: 0, message: { role: 'assistant', content: 'hello from the mock' } }] });
   }
+  if (route === 'POST /backend-api/codex/alpha/search' || route === 'POST /v1/alpha/search') {
+    return json(res, 200, { output: 'search result from the mock', results: [{ type: 'text_result', ref_id: 'turn0search0', url: 'https://example.com/result' }] });
+  }
   if (route === 'GET /backend-api/wham/accounts/check') return json(res, 200, ACCOUNTS_CHECK);
   if (['GET /backend-api/codex/models', 'GET /backend-api/wham/usage', 'GET /backend-api/wham/rate-limit-reset-credits', 'GET /v1/models'].includes(route)) {
     return json(res, 200, { mock: true, path: pathOnly });

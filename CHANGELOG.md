@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0 — unreleased
+## 2.0.0 — 2026-10-10
 
 A rewrite. The architecture of version 1 is kept: an agent container, a Squid
 egress proxy on a network with no route out, no capabilities, no new
@@ -8,9 +8,13 @@ privileges, a tightened seccomp profile from a pinned upstream, a read-only
 root filesystem, a memory-backed home, a never-allow list, per-vendor
 allowlists. Almost everything around it changed.
 
-> **Not yet run against a container runtime.** This version was written and
-> tested on a machine with no Podman. Every barrier is designed and statically
-> tested; none is verified. See [PHASE-B.md](PHASE-B.md).
+> **Verified on one real host** (Debian 13, rootless Podman 5.4.2) on
+> 2026-10-09 and 2026-10-10: every barrier in the register held, and the
+> sidecar was accepted by the real vendors for Claude Code and Codex with
+> subscriptions. Ten defects found by that run are fixed in this version.
+> [docs/08-verification.md](docs/08-verification.md) has the full account;
+> the plan, cards, results and logs are in
+> [docs/archive/phase-b/](docs/archive/phase-b/README.md).
 
 ### Findings from the review of version 1, and how each is closed
 
@@ -57,6 +61,29 @@ Barrier numbers refer to the register in
 - **A time limit on every session**, enforced by Podman from outside each
   container. The workspace survives it until `destroy`.
 - **Sibling services** (`--service postgres:16`) started by the operator.
+
+### Fixed by the first run on a real host
+
+Found on 2026-10-09 and 2026-10-10 and fixed before release; each is written
+up in [docs/archive/phase-b/results.md](docs/archive/phase-b/results.md).
+
+- The proxy gets a writable `/dev/shm` (Squid keeps shared tables there).
+- The `full` toolchain's setuid dbus helper is removed from the image.
+- `export` runs no secret scan with a gitleaks older than 8.18, which cannot
+  be told to ignore the tree's own exceptions, and `doctor` says which to install.
+- The in-container probe keeps its answer to one line (Codex streams).
+- Codex gets the real account id in its dummy login, and a sidecar over TLS
+  with a certificate made per session; `verify`'s own second sidecar stays on
+  plain HTTP.
+- `run` rebuilds an image whose build inputs changed, and says when a pinned
+  CLI is behind npm's latest.
+- `B33-store-full` keeps all of `dd`'s answer; `doctor` warns of a sparse
+  store file.
+- The sidecar inspects the tools Codex 0.162 declares in an `additional_tools`
+  input item; before, B23's allow and deny lists never saw a Codex tool.
+- Codex's ChatGPT models search through a request of the CLI's own
+  (`alpha/search`); the provider is marked for it, and the sidecar forwards
+  that path, counts it against the budget and logs every query (B25).
 
 ### Different from the original brief for version 2
 

@@ -1,0 +1,9 @@
+This session may use up to 3.7 GB of this host's memory:
+  agent 3.0 GB = 2g for processes + 512m /tmp + 512m home + 64m shared memory
+  proxy, sidecar, keeper and services 0.6 GB
+Its workspace is on disk: up to 4g of the store at /var/lib/agent-sandbox-store.
+==> cloning https://github.com/Grumbly4308/sandbox_test.git on this host
+The git relay lets the agent push branch agent/asb-sandbox-test-5d9c50 to https://github.com/Grumbly4308/sandbox_test.git by itself.
+What it pushes does NOT go through export: no diff review, no secret scan.
+error: --git-relay needs a git token, typed or on standard input
+exit: 1

@@ -1,0 +1,90 @@
++ ./sandbox verify
+PASS B01-user — read its own ids from the kernel: real, effective, saved and filesystem uid and gid are all 61000
+PASS B02-caps — read the five capability sets from the kernel: all empty (CapBnd, the ceiling for anything started here, included)
+PASS B02-raw-socket — opened a raw ICMP socket, which needs the NET_RAW capability: refused (1 Operation not permitted)
+PASS B02-caps-all — in each of [keeper proxy credsidecar agent]: Podman reports no capability added and empty effective and bounding sets, and a process started inside reads all five capability sets as empty from the kernel
+PASS B03-nnp-flag — the kernel reports NoNewPrivs: 1 for this process
+PASS B03-setuid-inert — found 11 setuid/setgid files on the root filesystem (/usr/bin/chfn /usr/bin/chsh /usr/bin/gpasswd /usr/bin/mount /usr/bin/newgrp /usr/bin/passwd ); ran /usr/bin/chfn: it started with effective uid 61000 and gid 61000, still the agent's
+PASS B03-nnp-all — in each of [keeper proxy credsidecar agent]: created with no-new-privileges, and a process started inside reads NoNewPrivs: 1 from the kernel
+PASS B04-seccomp-mode — the kernel reports Seccomp: 2 (a filter is attached to this process)
+PASS B04-ptrace — called ptrace(PTRACE_TRACEME), which the kernel and Podman's default filter both allow: refused (1 Operation not permitted)
+PASS B04-mount — called mount() to put a new filesystem on /tmp/.verify-mnt.1507 (the system call itself, not the mount program, which gives up before asking): refused (1 Operation not permitted)
+PASS B04-unshare-user — ran 'unshare -U true' to create a user namespace: refused (unshare: unshare failed: Operation not permitted)
+PASS B04-clone-newuser — called clone() with CLONE_NEWUSER to start a process in a new user namespace: refused (1 Operation not permitted)
+PASS B04-clone3 — called clone3() with CLONE_NEWUSER: refused (38 Function not implemented)
+PASS B04-setns — called setns() on its own user namespace, which the kernel alone would answer with 'invalid argument': refused (1 Operation not permitted)
+PASS B04-process-vm-readv — called process_vm_readv() on its own process, which the kernel alone always allows: refused (1 Operation not permitted)
+PASS B04-bpf — called bpf() to create a map: refused (1 Operation not permitted)
+SKIP B05-lsm-label — (no-selinux) this host does not run SELinux, so there is no label to compare (the kernel reports 'runc (unconfined)'). Rootless Podman applies no AppArmor profile either: this barrier is absent on this host
+PASS B06-runtime-sockets — looked for the Docker, Podman, containerd and CRI-O sockets by path and by environment variable, and searched every mount for socket files outside the writable places: none
+PASS B06-runtime-binaries — looked on PATH for docker, podman, nerdctl and buildah, and searched the whole root filesystem for those programs and for dockerd, containerd, runc and crun: none
+PASS B06-pid1 — listed every process visible here: 4, all owned by uid 61000; process 1 is 'catatonit', the container's own first process, not the host's
+PASS B06-cgroupns — /proc/self/cgroup reads '0::/': this process sees the root of its own cgroup tree and nothing of the host's
+PASS B06-private-modes — in each of [keeper proxy credsidecar agent]: Podman reports not privileged, private process, shared-memory and cgroup namespaces, not the host's network, and no device passed in
+SKIP B06-runtime-class — (no-runtime-class) SANDBOX_RUNTIME_CLASS is not set, so the containers run on Podman's default runtime (runc), not gVisor
+PASS B07-readonly-root — tried to create a file and a directory in each of / /usr /etc: every attempt answered 'Read-only file system'
+PASS B07-readonly-all — in each of [keeper proxy credsidecar agent]: created with a read-only root, and creating a file in / from inside answered 'Read-only file system'
+PASS B08-writable-set — tried to create a file in each of the 29 mounts; it worked only in: /tmp /home /workspace /dev/shm /dev/mqueue. /dev/mqueue also accepts entries: they are message queues, not files, capped at 819200 bytes per user by ulimit.
+PASS B08-mount-flags — read the kernel's mount table: /tmp /home /dev/shm /workspace are each nosuid,nodev, capped at the size asked for, /dev/shm also noexec; the home directory and /workspace/repo are mode 700
+PASS B08-workspace-volume — podman volume inspect: the workspace is the directory /var/lib/agent-sandbox-store/asb-mini-node-eca66b on the disk store, nosuid and nodev, and is a volume made for this session, not a folder of yours
+PASS B08-fill — filled /tmp /home /dev/shm to the brim, all at the same time (0 full gigabytes plus the remainders): each answered 'No space left on device' and no process was killed
+PASS B09-mounts — went through all 29 mounts in the kernel's table: the only host files are the ones Podman generates, read-only ( /run/.containerenv /etc/hostname), and the workspace on the disk store
+PASS B09-host-mounts — listed every mount Podman reports for [keeper proxy credsidecar agent]: the agent has the workspace volume and nothing else, no host path is writable anywhere, and the only host path at all is the proxy's read-only allowlists ( keeper:/workspace(volume,read-only) proxy:/etc/squid/session(bind,read-only) agent:/workspace(volume,writable) )
+PASS B10-pids-max — /sys/fs/cgroup/pids.max reads 512, the --pids-limit asked for
+PASS B10-memory-max — /sys/fs/cgroup/memory.max reads 3288334336 bytes, the --memory asked for (3288334336)
+PASS B10-swap-max — /sys/fs/cgroup/memory.swap.max reads 0: nothing of this container can be pushed to swap
+PASS B10-cpu-max — /sys/fs/cgroup/cpu.max reads '200000 100000': 200000/100000 = 2.000 processors, the --cpus asked for
+PASS B10-limits-all — Podman reports, for each of [keeper proxy credsidecar agent]: a memory limit, a memory+swap limit equal to it, a process limit and a CPU limit (the agent's are compared with the kernel's own numbers in B10-*-max)
+PASS B10-fork-limit — started processes until the kernel refused: 469 started, then 'resource temporarily unavailable' from the per-user process ulimit; the limit asked for is 512 (it also counts the processes already running)
+PASS B11-ulimits — read /proc/self/limits: open files 65536, processes 512, largest file 4294967296 bytes, core dumps 0, each as asked for, soft and hard
+PASS B11-fsize — wrote one byte at offset 4294967296, just past the largest-file limit: refused (the writer got the file-size signal)
+PASS B11-core-all — in each of [keeper proxy credsidecar agent]: a process started inside reads a core-dump limit of 0 (soft and hard) from the kernel
+PASS B12-no-route — connected straight to public addresses, ignoring the proxy: 1.1.1.1 [443 ENETUNREACH 80 ENETUNREACH 53 ENETUNREACH ] 2606:4700:4700::1111 [443 ENETUNREACH ] datagram to 8.8.8.8 [error ENETUNREACH]; the routing table has no default route and the only interface besides loopback is eth0 
+PASS B12-network-attach — Podman reports the agent on one network, asb-mini-node-eca66b-sandbox, which is marked internal; the proxy is the only container on asb-mini-node-eca66b-egress
+PASS B13-network-no-gateway — podman network inspect asb-mini-node-eca66b-sandbox: subnet 10.201.0.0/24, no gateway address, name service off (B13-gateway-ports probes the address from inside)
+PASS B13-hosts-all — in each of [keeper proxy credsidecar agent]: read /etc/hosts from inside. It is the image's own file, not one Podman wrote, and holds loopback addresses only
+PASS B13-gateway-ports — probed 10.201.0.1, the address a gateway would have, on 22 53 80 443 2375 2376 3000 5432 8080: nothing answered ( 22:EHOSTUNREACH 53:EHOSTUNREACH 80:EHOSTUNREACH 443:EHOSTUNREACH 2375:EHOSTUNREACH 2376:EHOSTUNREACH 3000:EHOSTUNREACH 5432:EHOSTUNREACH 8080:EHOSTUNREACH )
+PASS B13-etc-hosts — read all 2 entries of /etc/hosts: loopback only, and the file is the image's own, not one Podman wrote (which would name the host)
+PASS B14-no-resolver — /etc/resolv.conf names no resolver; 'getent hosts example.com' found nothing (and found localhost, so the tool works); a lookup from node failed with EAI_AGAIN
+PASS B14-dns-by-hand — sent a hand-made DNS question for example.com to 10.201.0.1 port 53, where a gateway's name service would be: no answer (timeout)
+PASS B15-token-absent — read the oauth credential from your keyring on this host, copied out and searched the agent's environment, /proc/*/environ, home, workspace, /tmp and /dev/shm for it: not there. Two canaries planted first were found, so the search works. The credential itself never entered the container
+PASS B15-key-files — searched every mount except the repository itself for SSH private keys, .git-credentials, .netrc and cloud, Docker, GitHub-CLI and Kubernetes credential files; looked for a git credential helper and for token variables in the environment: none
+SKIP B15-push — (no-remote) this session's repository was given as a local path, so there is no remote to push to
+PASS B16-add-address — tried to add 10.201.0.3 (the sidecar's address) to interface eth0, which needs the NET_ADMIN capability: refused (1 Operation not permitted)
+PASS B16-packet-socket — opened a packet socket, the kind used to forge another machine's address: refused (1 Operation not permitted)
+PASS B20-allowed-host — asked the proxy for a tunnel to files.pythonhosted.org:443, a host on the agent's list (the control: refusals mean nothing if nothing is ever allowed): the proxy answered 200 (allowed)
+PASS B20-denied-host — asked the proxy for a tunnel to vb03121a7d50578b5.example.com:443, a host on no list: the proxy answered 403 (refused)
+PASS B20-port-80 — asked the proxy for http://files.pythonhosted.org/ in plaintext on port 80 (an ALLOWED host, so only the port rule can refuse it): the proxy answered 403 (refused)
+PASS B20-connect-port — asked the proxy for a tunnel to files.pythonhosted.org:8443 (an ALLOWED host, so only the port rule can refuse it): the proxy answered 403 (refused)
+PASS B20-ip-literal-v4 — asked the proxy for a tunnel to the bare address 1.1.1.1:443: the proxy answered 403 (refused)
+PASS B20-ip-literal-v6 — asked the proxy for a tunnel to the bare address [2606:4700:4700::1111]:443: the proxy answered 403 (refused)
+PASS B20-never-allow — tried to allow storage.googleapis.com, a host on the never-allow list, twice: through the function './sandbox allow' uses, and by writing the entry into a copy of allowlist.local by hand and rendering the proxy's lists. Both were refused
+PASS B21-vendor-plain — asked the proxy, from the agent, for a tunnel to the model vendor's host api.openai.com:443 (B21-sidecar-allowed shows the same request is allowed from the sidecar): the proxy answered 403 (refused)
+PASS B21-vendor-forged — asked again for api.openai.com:443, this time claiming to be the sidecar with X-Forwarded-For: 10.201.0.3 and Forwarded: for=10.201.0.3: the proxy answered 403 (refused)
+PASS B21-sidecar-allowed — from the sidecar's address, asked the proxy for a tunnel to api.openai.com:443: allowed (200). The same request from the agent is refused (B21-vendor-plain), so the rule really is about the address
+PASS B22-credential-swap — sent a model request (POST /backend-api/codex/responses) from the agent with a dummy credential to a second sidecar: the mock vendor received the sidecar's token and never saw the dummy
+PASS B22-credential-replace — piped a new token into the running sidecar and sent another request: the mock vendor received the new token, not the old one, with no restart
+PASS B23-mcp-servers — sent a model request naming a remote MCP server: refused with 400, and the mock vendor never received it
+PASS B23-web-fetch — sent a model request asking the vendor's servers to fetch a URL: refused with 400, and the mock vendor never received it
+PASS B24-oversized — sent a 33 MB model request: refused (http 413), and the mock vendor never received it
+PASS B25-search-logged — ran one web search through the second sidecar with the query 'verifysearchc8ed6cabd7ca1092' and found that query in the sidecar's log, as Podman collected it (read from the mock reply; not yet proven against the real vendor)
+PASS B24-budget — with a budget of 3, the fourth model request was refused with 403 and the mock vendor received exactly 3 (the refused requests above cost nothing)
+PASS B23-unknown-path — asked this session's sidecar for /verify-not-forwarded, a path no CLI uses (over TLS, with the session certificate): 404, not forwarded
+PASS B25-proxy-log — the request B20-denied-host made is in the proxy's log, as Podman collected it: [10/Oct/2026:14:19:15] src=10.201.0.10 TCP_DENIED/403 up=95 down=3757 ms=0 dst=- CONNECT vb03121a7d50578b5.example.com:443
+PASS B26-deadline-set — Podman reports its own kill timer of 14400 seconds (this session's time limit) on every container of [keeper proxy credsidecar agent] except the keeper, which has none. Letting it pass is a test of its own: scripts/verify.sh --deadline-test
+PASS B26-keeper — Podman reports the keeper running with no network and as its own user 61003, so the agent can neither reach nor signal what holds the workspace (the agent's process list is checked in B06-pid1)
+SKIP B26-deadline — (separate) letting a time limit pass, with the launcher gone and the agent forking, needs a session of its own: scripts/verify.sh --deadline-test
+SKIP B27-export — (separate) the export attempts (hostile .git/config and hooks, attribution, a fake secret, a hidden lockfile change, a symlink, an endless stream) run in: scripts/verify.sh --deadline-test
+PASS B28-log-driver — Podman reports, for each of [keeper proxy credsidecar agent]: the k8s-file log driver (a file that belongs to the container and is deleted with it), and no log file lies inside anything mounted into a container
+PASS B29-rootless — this host: not root (uid 1002), and Podman reports that it runs rootless and on this machine
+PASS B29-doctor — ran scripts/doctor.sh, which checks each condition the launcher refuses on: it found nothing wrong
+SKIP B30-other-branch — (no-git-relay) this session has no git relay (it is off unless you pass --git-relay)
+SKIP B30-tag — (no-git-relay) this session has no git relay (it is off unless you pass --git-relay)
+SKIP B30-force-push — (no-git-relay) this session has no git relay (it is off unless you pass --git-relay)
+SKIP B31-destroy — (separate) checking that destroy leaves nothing would destroy this session; it runs in: scripts/verify.sh --deadline-test
+PASS B32-logs-filter — wrote escape sequences (set-title, clear-screen, colour) into the agent's log and into a request line to the proxy. Podman's raw log holds them (5 control characters); './sandbox logs agent' and 'logs proxy' printed the same lines with none
+SKIP B33-store — (separate) writing past this session's share of the disk store would stop it; it runs in: scripts/verify.sh --store-test
+
+75 passed, 0 failed, 10 skipped for a stated reason.
++ ./sandbox destroy
+==> removed session asb-mini-node-eca66b

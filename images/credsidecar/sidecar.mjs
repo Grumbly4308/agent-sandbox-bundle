@@ -484,7 +484,7 @@ const DIALECTS = {
     },
     // In a streamed reply the query arrives in pieces: a content block of
     // type server_tool_use opens, its input follows as input_json_delta
-    // fragments, and the block closes. NOT yet proven against the real API.
+    // fragments, and the block closes. Not yet seen against the real API.
     replyScanner(note) {
       const open = new Map();   // block index -> { name, input, json }
       const noteUse = (name, input) => {
@@ -521,12 +521,12 @@ const DIALECTS = {
   'openai-responses': {
     remoteContent: openaiRemoteContent,
     requestSearches: () => [],
-    // UNPROVEN against the real API. The request only switches web search
-    // on; the query the model chose comes back in the reply as an output
-    // item {type: "web_search_call", action: {type: "search", query}} (or
+    // The hosted web_search tool: the request only switches it on, and the
+    // query the model chose comes back in the reply as an output item
+    // {type: "web_search_call", action: {type: "search", query}} (or
     // action.type "open_page" with a url). This reads the items as they
-    // pass. Until it has been seen working against the vendor, B25 is not
-    // claimed for Codex.
+    // pass. Not yet seen against the vendor: every ChatGPT model searches
+    // through the standalone route below instead (2026-10-10).
     replyScanner(note) {
       const seen = new Set();
       const noteItem = (item) => {
@@ -561,6 +561,39 @@ const DIALECTS = {
   'openai-chat': {
     remoteContent: openaiRemoteContent,
     requestSearches: () => [],
+    replyScanner: null,
+  },
+
+  // Codex's standalone web search (<provider>/alpha/search). For a model the
+  // vendor's catalogue marks "Responses Lite" (every ChatGPT model on
+  // 2026-10-10) Codex sends no hosted web_search tool at all: the CLI itself
+  // POSTs here, with the recent conversation as "input" and the searches the
+  // model asked for as "commands" (search_query, image_query, open, find,
+  // and a few more), and the results come back in the reply. The queries
+  // are in the request, so they are logged from here. Proven against the
+  // vendor on 2026-10-10: four searches, every query logged.  [logical B25]
+  'openai-search': {
+    remoteContent: openaiRemoteContent,
+    requestSearches(body) {
+      const found = [];
+      const commands = isObject(body.commands) ? body.commands : {};
+      const list = (key) => (Array.isArray(commands[key]) ? commands[key].filter(isObject) : []);
+      for (const q of list('search_query')) if (typeof q.q === 'string') found.push({ from: 'request', kind: 'search', query: q.q });
+      for (const q of list('image_query')) if (typeof q.q === 'string') found.push({ from: 'request', kind: 'image_search', query: q.q });
+      for (const o of list('open')) if (typeof o.ref_id === 'string') found.push({ from: 'request', kind: 'open_page', url: o.ref_id });
+      for (const f of list('find')) {
+        const item = { from: 'request', kind: 'find_in_page' };
+        if (typeof f.ref_id === 'string') item.url = f.ref_id;
+        if (typeof f.pattern === 'string') item.pattern = f.pattern;
+        found.push(item);
+      }
+      // click, screenshot, finance, weather, sports, time: named, not detailed.
+      // response_length is a setting Codex sends beside the commands, not a command.
+      for (const key of Object.keys(commands)) {
+        if (!['search_query', 'image_query', 'open', 'find', 'response_length'].includes(key)) found.push({ from: 'request', kind: clip(key, 32) });
+      }
+      return found;
+    },
     replyScanner: null,
   },
 };
@@ -630,6 +663,19 @@ function inspectBody(body, rules) {
   if (body.tools !== undefined && body.tools !== null) {
     const refusal = checkTools(body.tools, rules, seen, 0);
     if (refusal) return { refusal };
+  }
+  // Codex 0.162 sends no top-level "tools" at all: its tools are declared in
+  // "input" items of type "additional_tools" (a developer item holding a
+  // "tools" list, namespaces and all), seen against the real CLI on
+  // 2026-10-10. Those lists are checked exactly like the top-level one, or
+  // the allow and deny lists above would never see a Codex tool.
+  if (rules.dialect === 'openai-responses' && Array.isArray(body.input)) {
+    for (const item of body.input) {
+      if (!isObject(item) || item.type !== 'additional_tools') continue;
+      if (item.tools === undefined || item.tools === null) continue;
+      const refusal = checkTools(item.tools, rules, seen, 0);
+      if (refusal) return { refusal };
+    }
   }
   const dialect = DIALECTS[rules.dialect];
   const remote = dialect.remoteContent(body);

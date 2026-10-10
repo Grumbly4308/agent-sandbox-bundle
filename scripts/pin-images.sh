@@ -21,7 +21,7 @@
 # images. Nothing else in the project ever pulls by tag. Closes reference
 # finding M2 (unpinned images).
 #
-# Not yet run against a real Podman. In particular, for an image published
+# When you run it, and in particular for an image published
 # for several processor types, check that the digest printed is the one of
 # the multi-platform list (the "index digest" the registry shows), so the
 # same PINS file works on Intel and ARM hosts.

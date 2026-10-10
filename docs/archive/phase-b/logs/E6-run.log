@@ -1,0 +1,17 @@
+This session may use up to 3.5 GB of this host's memory:
+  agent 3.0 GB = 2g for processes + 512m /tmp + 512m home + 64m shared memory
+  proxy, sidecar, keeper and services 0.5 GB
+Its workspace is on disk: up to 4g of the store at /var/lib/agent-sandbox-store.
+==> cloning https://github.com/Grumbly4308/sandbox_test.git on this host
+==> creating session asb-sandbox-test-e0f540
+==> importing branch agent/asb-sandbox-test-e0f540 (starting at 30db2ef3567f)
+/tmp/sandbox-import.Kmud9B/repo.bundle is okay
+sandbox-import: agent/asb-sandbox-test-e0f540 at 30db2ef3567f6cc30a252d8e89f9364f41a022b2
+Session asb-sandbox-test-e0f540 runs until 2026-10-10 13:08, at most 500 model requests.
+From here on every byte on this screen is the agent's. Do not type a password into it.
+Failed to authenticate. API Error: 403 the model vendor rejected the sandbox's credential (it may have expired or been revoked). The agent cannot fix this; the operator can, with ./sandbox login
+
+The agent's CLI has exited with status 1. Session asb-sandbox-test-e0f540 is still there, holding its workspace.
+  bring the work out:   SANDBOX_SESSION=asb-sandbox-test-e0f540 ./sandbox export
+  remove the session:   SANDBOX_SESSION=asb-sandbox-test-e0f540 ./sandbox destroy
+exit: 1

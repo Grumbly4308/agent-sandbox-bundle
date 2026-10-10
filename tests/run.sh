@@ -6,7 +6,7 @@
 #
 # These tests prove what the code asks Podman for and how the host-side parts
 # behave. They do NOT prove that Podman does it: that is `./sandbox verify` on
-# a real host, listed in PHASE-B.md.
+# a real host; docs/08-verification.md records the run that did it.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -36,13 +36,13 @@ if [ -z "$only" ] || [ "$only" = lint ]; then
       *.sh) files+=("$f") ;;
       *) if head -n 1 "$f" | grep -qE '^#!.*\b(ba)?sh\b'; then files+=("$f"); fi ;;
     esac
-  done < <(git ls-files --cached --others --exclude-standard | grep -v '^reference/')
+  done < <(git ls-files --cached --others --exclude-standard)
   run shellcheck -x "${files[@]}"
 fi
 
 for dir in tests/*/; do
   name="$(basename "$dir")"
-  # phase-b needs a real Podman; it is run by hand (see PHASE-B.md).
+  # phase-b needs a real Podman; it is run by hand (docs/archive/phase-b/plan.md).
   case "$name" in fakes | fixtures | phase-b) continue ;; esac
   [ -z "$only" ] || [ "$only" = "$name" ] || continue
   if [ -f "$dir/run.sh" ]; then

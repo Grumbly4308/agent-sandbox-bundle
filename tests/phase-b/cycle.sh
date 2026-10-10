@@ -2,9 +2,10 @@
 # The full cycle on a real host with rootless Podman:
 #   doctor -> run -> verify -> export -> destroy, then check nothing is left.
 #
-# NOT run in Phase A: the machine this was written on has no container
-# runtime. PHASE-B.md says what to do before running it and what each failure
-# means. It is not part of `make test`.
+# Needs a real Podman and a real key, so it is not part of `make test`.
+# docs/archive/phase-b/plan.md says what to do before running it and what each
+# failure means. Its deadline test has run (10 of 10); the cycle itself was
+# closed without a run (docs/08-verification.md).
 #
 #   SANDBOX_TEST_ANTHROPIC_KEY=sk-ant-... tests/phase-b/cycle.sh
 #
@@ -127,7 +128,7 @@ scripts/verify.sh --deadline-test || problem "the deadline test reported a faile
 
 printf '\n'
 if [ "$problems" -gt 0 ]; then
-  printf '%s problem(s). Record each one in PHASE-B.md and fix the cause, not the check.\n' "$problems"
+  printf '%s problem(s). Record each one beside docs/archive/phase-b/results.md and fix the cause, not the check.\n' "$problems"
   exit 1
 fi
 printf 'The cycle completed: doctor, run, verify, export and destroy, in path mode and URL mode.\n'

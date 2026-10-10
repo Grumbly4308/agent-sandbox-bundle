@@ -1,0 +1,17 @@
+This session may use up to 3.5 GB of this host's memory:
+  agent 3.0 GB = 2g for processes + 512m /tmp + 512m home + 64m shared memory
+  proxy, sidecar, keeper and services 0.5 GB
+Its workspace is on disk: up to 4g of the store at /var/lib/agent-sandbox-store.
+Only committed work goes in: uncommitted changes in /home/sandboxer/mini-node stay where they are.
+==> cloning /home/sandboxer/mini-node on this host
+==> creating session asb-mini-node-c1909c
+==> importing branch agent/asb-mini-node-c1909c (starting at 54c27ae67dcd)
+/tmp/sandbox-import.pqzQ1X/repo.bundle is okay
+sandbox-import: agent/asb-mini-node-c1909c at 54c27ae67dcd65986690c451ca4df994d7ae4af9
+Session asb-mini-node-c1909c runs until 2026-10-10 13:41, at most 500 model requests.
+From here on every byte on this screen is the agent's. Do not type a password into it.
+codex-cli 0.162.1
+
+The agent's CLI has exited. Session asb-mini-node-c1909c is still there, holding its workspace.
+  bring the work out:   SANDBOX_SESSION=asb-mini-node-c1909c ./sandbox export
+  remove the session:   SANDBOX_SESSION=asb-mini-node-c1909c ./sandbox destroy

@@ -14,8 +14,8 @@ the sidecar (`topology.sh`, `docs/00-threat-model.md`), not here. We ship no
 without the setting, against a mock API and a proxy that refuses everything,
 and the CLI did not work without it. "No" means the CLI works without it, or
 the spike did not test the difference. The spike used a mock; that the
-vendor accepts the forwarded requests was proven on 2026-10-10 (test card
-F2, Codex 0.162.1, a Plus account), which took the two rows below on the
+vendor accepts the forwarded requests was proven on 2026-10-10 (Phase B
+step F2, Codex 0.162.1, a Plus account), which took the two rows below on the
 account id and on TLS.
 
 `launch` writes `$CODEX_HOME/config.toml` (and, for a subscription,
@@ -32,6 +32,7 @@ it is plain HTTP.
 | Setting | Where it is applied | Why | Proven necessary |
 |---|---|---|---|
 | `model_provider = "sidecar"` with `[model_providers.sidecar]` `name = "sidecar"`, `base_url = "$SANDBOX_SIDECAR_URL/backend-api/codex"`, `wire_api = "responses"` | `config.toml` | Codex's built-in `openai` provider takes its address from the vendor's own reply and insists on HTTPS; it cannot be pointed at the sidecar. A provider defined here can. | yes |
+| `supports_standalone_web_search = true` (same table) | `config.toml` | For every ChatGPT model the vendor's catalogue marks "Responses Lite" (all of them on 2026-10-10), Codex never offers the model a hosted `web_search` tool: web search is a tool of the CLI's own (`web.run`, nested in its code-mode `exec` tool) that POSTs the queries to `<provider>/alpha/search` itself. The CLI only registers that tool for a provider marked this way; the built-in `openai` provider is. The sidecar forwards that one path and logs every query from the request (B25). Without this line Codex answers that it has no web search tool, whatever `--search` says (seen 2026-10-10). | yes |
 | `requires_openai_auth = true` (same table) | `config.toml` | Makes Codex send its ChatGPT login to this provider, so the request has the shape the vendor expects once the sidecar swaps the token. | yes |
 | `chatgpt_base_url = "$SANDBOX_SIDECAR_URL/backend-api"` | `config.toml` | The account check the interactive interface makes at start (`/backend-api/wham/accounts/check`) goes to the sidecar, which forwards it. | yes, for the interactive interface |
 | `auth.json` with dummy tokens: `id_token` and `access_token` shaped like JWTs that expire in 2100, a `refresh_token`, your real `account_id` (in both tokens and in `tokens.account_id`), `last_refresh` = now | `launch` writes `auth.json`; `./sandbox` hands in the account id as `SANDBOX_CODEX_ACCOUNT_ID` | Codex will not start a subscription session without a login file whose tokens parse and are not expired. Every token is a placeholder; the sidecar replaces it with the real one. | yes (see the note below) |
@@ -83,6 +84,9 @@ them and the CLI carries on. None is on the agent's allowlist.
 
 ## Not covered by the spike
 
-- Web search runs on the vendor's servers as part of a model request and can
-  also open a page by its address. The sidecar lets it through; logging of
-  the query for Codex is not yet proven `[logical B25]`.
+- Web search. For a model on "Responses Lite" it is the CLI's own `web.run`
+  tool posting to `<provider>/alpha/search`; the sidecar forwards that path,
+  counts it against the budget and logs every query from the request
+  `[logical B25]`. For any other model it is the hosted `web_search` tool,
+  and the query is read from the reply; that path is not yet seen against
+  the vendor.

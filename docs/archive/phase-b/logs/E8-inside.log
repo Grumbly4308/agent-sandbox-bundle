@@ -1,0 +1,36 @@
++ cd /workspace/repo
++ git status -sb
++ head -2
+## agent/asb-sandbox-test-7075da
++ git remote -v
+origin	http://10.201.0.4:8081/repo.git (fetch)
+origin	http://10.201.0.4:8081/repo.git (push)
++ git log --oneline -1
+30db2ef Initial commit
++ git commit --allow-empty -m 'relay test'
+[agent/asb-sandbox-test-7075da 5966042] relay test
++ git push origin HEAD
+remote: 
+remote: Create a pull request for 'agent/asb-sandbox-test-7075da' on GitHub by visiting:        
+remote:      https://github.com/Grumbly4308/sandbox_test/pull/new/agent/asb-sandbox-test-7075da        
+remote: 
+To http://10.201.0.4:8081/repo.git
+ * [new branch]      HEAD -> agent/asb-sandbox-test-7075da
+accepted-push exit: 0
++ echo 'accepted-push exit: 0'
++ git push origin HEAD:refs/heads/some-other-branch
+remote: git relay: push refused. This relay accepts pushes to refs/heads/agent/asb-sandbox-test-7075da only: no other branch, no tag, no delete.        
+To http://10.201.0.4:8081/repo.git
+ ! [remote rejected] HEAD -> some-other-branch (only refs/heads/agent/asb-sandbox-test-7075da may be pushed through the git relay)
+error: failed to push some refs to 'http://10.201.0.4:8081/repo.git'
+other-branch exit: 1
++ echo 'other-branch exit: 1'
++ git tag relay-test
++ git push origin relay-test
+remote: git relay: push refused. This relay accepts pushes to refs/heads/agent/asb-sandbox-test-7075da only: no other branch, no tag, no delete.        
+To http://10.201.0.4:8081/repo.git
+ ! [remote rejected] relay-test -> relay-test (tags may not be pushed through the git relay)
+error: failed to push some refs to 'http://10.201.0.4:8081/repo.git'
+tag exit: 1
++ echo 'tag exit: 1'
+exit: 0
