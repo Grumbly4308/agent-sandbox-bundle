@@ -18,8 +18,8 @@
 
 # The agent, credential sidecar and git relay images: Debian 12 with Node 22.
 # tag: docker.io/library/node:22-bookworm-slim
-NODE_BASE=UNPINNED
+NODE_BASE=docker.io/library/node:22-bookworm-slim@sha256:efd0ab5780c2d9ab1f0f869571a00d5edb17793bff4cce4a2792e3eb0ffc7562
 
 # The egress proxy image (Squid).
 # tag: docker.io/library/alpine:3.20
-ALPINE_BASE=UNPINNED
+ALPINE_BASE=docker.io/library/alpine:3.20@sha256:c64c687cbea9300178b30c95835354e34c4e4febc4badfe27102879de0483b5e
