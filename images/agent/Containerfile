@@ -127,7 +127,12 @@ RUN case "${TOOLCHAIN}" in full) ;; *) exit 0 ;; esac \
       python3-dev \
       # chromium: a headless browser for end-to-end tests (see the note above)
       chromium \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ # chromium depends on dbus-daemon, which ships one setuid program: the helper
+ # that starts system services on a D-Bus system bus. There is no system bus
+ # here, and the last step of this file refuses any new setuid program, so it
+ # goes. Found in Phase B.
+ && rm -f /usr/lib/dbus-1.0/dbus-daemon-launch-helper
 
 # `ext::` remotes let git run any command as the transport: a URL in a
 # cloned submodule is enough. Switched off for the whole system. The agent

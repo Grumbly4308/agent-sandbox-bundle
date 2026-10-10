@@ -353,6 +353,11 @@ topo_proxy() {
     # configuration rendered at start from the variables below.
     --tmpfs "/var/cache/squid:size=16m,mode=1777,nosuid,nodev,noexec"
     --tmpfs "/var/run/squid:size=16m,mode=1777,nosuid,nodev,noexec"
+    # Squid 6 keeps its collapsed-forwarding tables in POSIX shared memory,
+    # which is /dev/shm. Without a writable one it dies at start with
+    # "shm_open ... Read-only file system", even with caching off. Proven on
+    # Alpine's Squid 6.9 in Phase B.
+    --tmpfs "/dev/shm:size=16m,mode=1777,nosuid,nodev,noexec"
     # The allowlists for this session, written by ./sandbox on the host and
     # mounted read-only. `./sandbox allow` and `deny` rewrite a list and tell
     # Squid to re-read it: no rebuild, no restart. ./sandbox creates the
