@@ -150,6 +150,22 @@ From now on, run every command with a log:
 <command> 2>&1 | tee ~/phase-b-logs/<step>.log
 ```
 
+Steps with several commands are written out that way already:
+
+```bash
+( set -ex
+  <command>
+  <command>
+) 2>&1 | tee ~/phase-b-logs/<step>.log
+echo "exit: ${PIPESTATUS[0]}"
+```
+
+`set -x` writes each command into the log ahead of its output, and `set -e`
+stops at the first one that fails. `exit:` is the status of the commands, not
+of `tee`; read it before running anything else. Commands that open a session
+or a shell are left outside, since they need the terminal to themselves. To
+run a step again, write to `<step>-2.log` rather than over the first log.
+
 ☐ done
 
 ---
@@ -187,9 +203,12 @@ The repository ships with placeholders where the exact image versions go, and
 a build refuses until they are filled in.
 
 ```bash
-scripts/pin-images.sh
-git diff images/PINS services/
-git commit -am "Pin the base and service images"
+( set -ex
+  scripts/pin-images.sh
+  git diff images/PINS services/
+  git commit -am "Pin the base and service images"
+) 2>&1 | tee ~/phase-b-logs/C3.log
+echo "exit: ${PIPESTATUS[0]}"
 ```
 
 **Good:** `images/PINS` and both `services/*/service.conf` now hold
@@ -200,9 +219,12 @@ git commit -am "Pin the base and service images"
 ### C4. Regenerate the system-call filter
 
 ```bash
-scripts/make-seccomp.sh
-git diff --exit-code seccomp/agent-seccomp.json
-sha256sum seccomp/agent-seccomp.json
+( set -ex
+  scripts/make-seccomp.sh
+  git diff --exit-code seccomp/agent-seccomp.json
+  sha256sum seccomp/agent-seccomp.json
+) 2>&1 | tee ~/phase-b-logs/C4.log
+echo "exit: ${PIPESTATUS[0]}"
 ```
 
 **Good:** no diff, and the checksum is
@@ -219,8 +241,11 @@ there, and a later line wins over an earlier one. The first `./sandbox doctor`
 writes the file.
 
 ```bash
-./sandbox doctor > /dev/null 2>&1 || true        # writes the file; its verdict comes in C6
-cat ~/.config/agent-sandbox/settings
+( set -ex
+  ./sandbox doctor > /dev/null 2>&1 || true        # writes the file; its verdict comes in C6
+  cat ~/.config/agent-sandbox/settings
+) 2>&1 | tee ~/phase-b-logs/C5.log
+echo "exit: ${PIPESTATUS[0]}"
 ```
 
 The file must name the store from step B3, which `./sandbox` found by itself:
@@ -355,8 +380,11 @@ agent's task fails with an error from the model API, look at
 Scripts cannot judge an interactive session. Make a small repository:
 
 ```bash
-cp -R tests/fixtures/mini-node ~/mini-node
-git -C ~/mini-node init -q && git -C ~/mini-node add -A && git -C ~/mini-node commit -qm fixture
+( set -ex
+  cp -R tests/fixtures/mini-node ~/mini-node
+  git -C ~/mini-node init -q && git -C ~/mini-node add -A && git -C ~/mini-node commit -qm fixture
+) 2>&1 | tee ~/phase-b-logs/E0.log
+echo "exit: ${PIPESTATUS[0]}"
 ```
 
 ### E1. Start a session
@@ -420,9 +448,13 @@ In a third terminal on the host, or after leaving the shell and coming back:
 ### E4. The logs say what happened
 
 ```bash
-./sandbox logs proxy | tail -n 20
-./sandbox logs sidecar | tail -n 5
-./sandbox logs sidecar | grep -c "$SANDBOX_TEST_ANTHROPIC_KEY"     # must print 0
+( set -ex
+  ./sandbox logs proxy | tail -n 20
+  ./sandbox logs sidecar | tail -n 5
+  set +x                                                             # keeps the key out of the log
+  ./sandbox logs sidecar | grep -c "$SANDBOX_TEST_ANTHROPIC_KEY"     # must print 0
+) 2>&1 | tee ~/phase-b-logs/E4.log
+echo "exit: ${PIPESTATUS[0]}"         # 1 here is right: grep -c exits 1 when it counts nothing
 ```
 
 **Good:** the proxy log has one line for each request from E2 and E3, allowed
@@ -436,10 +468,13 @@ request with the budget left. The key appears nowhere.
 Leave Claude Code (`/exit`). The session stays.
 
 ```bash
-./sandbox verify
-./sandbox export
-./sandbox destroy
-podman ps -a; podman volume ls; podman network ls
+( set -ex
+  ./sandbox verify
+  ./sandbox export
+  ./sandbox destroy
+  podman ps -a; podman volume ls; podman network ls
+) 2>&1 | tee ~/phase-b-logs/E5.log
+echo "exit: ${PIPESTATUS[0]}"
 ```
 
 **Good:**
@@ -457,11 +492,14 @@ podman ps -a; podman volume ls; podman network ls
 ### E6. Push and pull request
 
 ```bash
-./sandbox run https://github.com/<you>/<scratch>.git --auth apikey --auto -- -p "Add a line to the README and commit."
-./sandbox export
-./sandbox push
-./sandbox pr          # optional; needs gh or glab on the host
-./sandbox destroy
+( set -ex
+  ./sandbox run https://github.com/<you>/<scratch>.git --auth apikey --auto -- -p "Add a line to the README and commit."
+  ./sandbox export
+  ./sandbox push
+  ./sandbox pr || true          # optional; needs gh or glab on the host
+  ./sandbox destroy
+) 2>&1 | tee ~/phase-b-logs/E6.log
+echo "exit: ${PIPESTATUS[0]}"
 ```
 
 **Good:** the branch `agent/<session>` appears on the remote with the agent's
@@ -484,9 +522,17 @@ In the second terminal:
 # inside:
 node -e 'for (const v of ["DATABASE_URL","REDIS_URL"]) { const u = new URL(process.env[v]); const s = require("net").connect(u.port, u.hostname); s.on("connect", () => { console.log(v, "open"); s.end(); }).on("error", (e) => console.log(v, e.message)); }'
 exit
-./sandbox verify
-./sandbox logs service | tail -n 5
-./sandbox destroy
+```
+
+Back on the host:
+
+```bash
+( set -ex
+  ./sandbox verify
+  ./sandbox logs service | tail -n 5
+  ./sandbox destroy
+) 2>&1 | tee ~/phase-b-logs/E7.log
+echo "exit: ${PIPESTATUS[0]}"
 ```
 
 **Good:** `DATABASE_URL open` and `REDIS_URL open`; `verify` ends with
@@ -517,9 +563,12 @@ In the second terminal:
 | ☐ | `git tag relay-test && git push origin relay-test` | refused |
 
 ```bash
-./sandbox verify            # B30-other-branch and B30-tag are PASS
-./sandbox logs relay | tail -n 5
-./sandbox destroy
+( set -ex
+  ./sandbox verify            # B30-other-branch and B30-tag are PASS
+  ./sandbox logs relay | tail -n 5
+  ./sandbox destroy
+) 2>&1 | tee ~/phase-b-logs/E8.log
+echo "exit: ${PIPESTATUS[0]}"
 ```
 
 `B30-force-push` is a stated `SKIP`: the relay cannot refuse a force push.
@@ -575,9 +624,12 @@ Open a **new terminal** in which `SANDBOX_TEST_ANTHROPIC_KEY` is not set.
 server reached over SSH there is usually no keyring running.
 
 ```bash
-printf 'probe' | secret-tool store --label "probe" service agent-sandbox-probe agent probe
-secret-tool lookup service agent-sandbox-probe agent probe      # must print: probe
-secret-tool clear  service agent-sandbox-probe agent probe
+( set -ex
+  printf 'probe' | secret-tool store --label "probe" service agent-sandbox-probe agent probe
+  secret-tool lookup service agent-sandbox-probe agent probe      # must print: probe
+  secret-tool clear  service agent-sandbox-probe agent probe
+) 2>&1 | tee ~/phase-b-logs/F0.log
+echo "exit: ${PIPESTATUS[0]}"
 ```
 
 If that fails, one way to start a keyring by hand (not tried by the authors):
@@ -602,8 +654,16 @@ F2 (Codex) needs the keyring.
 claude setup-token                 # on any machine signed in to the dedicated account
 ./sandbox login                    # paste the token; it goes into the keyring
 ./sandbox run ~/mini-node --strict
-./sandbox verify
-./sandbox export && ./sandbox destroy
+```
+
+After `/exit`:
+
+```bash
+( set -ex
+  ./sandbox verify
+  ./sandbox export && ./sandbox destroy
+) 2>&1 | tee ~/phase-b-logs/F1.log
+echo "exit: ${PIPESTATUS[0]}"
 ```
 
 `login` also prints three things worth reading: use a dedicated account,
@@ -621,7 +681,15 @@ container and not found.
 codex login                        # the Codex CLI, on a machine with a browser; writes ~/.codex/auth.json
 ./sandbox login --agent codex      # asks for the path to that file
 ./sandbox run ~/mini-node --agent codex --strict
-./sandbox verify && ./sandbox destroy
+```
+
+After leaving Codex:
+
+```bash
+( set -ex
+  ./sandbox verify && ./sandbox destroy
+) 2>&1 | tee ~/phase-b-logs/F2.log
+echo "exit: ${PIPESTATUS[0]}"
 ```
 
 **Good:** Codex starts with no login prompt and answers.
@@ -639,7 +707,15 @@ record the renewal as not run.
 ```bash
 ./sandbox login --agent opencode --auth apikey     # the Anthropic key from the dedicated workspace
 ./sandbox run ~/mini-node --agent opencode --auth apikey --strict
-./sandbox verify && ./sandbox destroy
+```
+
+After leaving OpenCode:
+
+```bash
+( set -ex
+  ./sandbox verify && ./sandbox destroy
+) 2>&1 | tee ~/phase-b-logs/F3.log
+echo "exit: ${PIPESTATUS[0]}"
 ```
 
 **Good:** OpenCode starts and answers.
@@ -664,8 +740,11 @@ record the renewal as not run.
 Clean up:
 
 ```bash
-./sandbox destroy --all
-podman ps -a; podman volume ls; podman network ls        # nothing starting asb-
+( set -ex
+  ./sandbox destroy --all
+  podman ps -a; podman volume ls; podman network ls        # nothing starting asb-
+) 2>&1 | tee ~/phase-b-logs/H.log
+echo "exit: ${PIPESTATUS[0]}"
 ```
 
 Then revoke the test API key in the console, revoke the subscription tokens
