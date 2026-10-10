@@ -13,6 +13,15 @@ fixes it.
 > [docs/archive/phase-b/results.md](archive/phase-b/results.md). The rest of
 > this page is what the design expects.
 
+## `login` will not store the credential
+
+| Message | Why | What to do |
+|---|---|---|
+| `your account has no keyring` | On Linux the keyring is made by your desktop login. An account reached over SSH with no password never had one, and gnome-keyring can only create one through a graphical prompt. | `scripts/keyring-unlock.py` creates it over D-Bus with a password you choose. `gnome-keyring-daemon --unlock` does not help: on the systemd-managed daemon (gnome-keyring 48) it returns 0 and changes nothing. |
+| `your keyring is locked` | It is locked after every reboot, and nothing without a display can prompt you to unlock it. | `scripts/keyring-unlock.py`, with the keyring's password. Or skip it: `run` asks for the credential when the keyring will not answer. |
+| `that is not the keyring's password` (from the script) | The keyring was made earlier, by PAM at a password login or by an earlier attempt, with another password. | If nothing in it matters: `rm ~/.local/share/keyrings/login.keyring && systemctl --user restart gnome-keyring-daemon`, then run the script again to make a new one. |
+| `secret-tool: Cannot create an item in a locked collection` | The same two causes, reported by `secret-tool` itself on a version of `./sandbox` before this check existed, or when `busctl` is not installed and the state could not be read. | As above. `./sandbox doctor` says which it is when it can. |
+
 ## `run` refuses to start
 
 | Message | Why | What to do |

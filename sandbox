@@ -422,6 +422,41 @@ keyring_get() {   # <agent> <auth>; the secret on stdout
   fi
 }
 
+# Linux only: does the account have a default keyring, and is it open? Prints
+# ready, missing, locked or unknown (no busctl, no session bus, no Secret
+# Service). secret-tool cannot tell these apart in what it says, and on a host
+# without a desktop nothing can create or unlock a keyring for it, so the
+# states are told apart here and the fix named: scripts/keyring-unlock.py.
+keyring_state() {
+  local collection locked
+  command -v busctl >/dev/null 2>&1 || { printf unknown; return; }
+  collection="$(busctl --user call org.freedesktop.secrets /org/freedesktop/secrets \
+                  org.freedesktop.Secret.Service ReadAlias s default 2>/dev/null)" \
+    || { printf unknown; return; }
+  case "$collection" in
+    'o "/"') printf missing; return ;;
+    'o "/'*'"') collection="${collection#o \"}"; collection="${collection%\"}" ;;
+    *) printf unknown; return ;;
+  esac
+  locked="$(busctl --user get-property org.freedesktop.secrets "$collection" \
+              org.freedesktop.Secret.Collection Locked 2>/dev/null)" \
+    || { printf unknown; return; }
+  case "$locked" in
+    'b true')  printf locked ;;
+    'b false') printf ready ;;
+    *)         printf unknown ;;
+  esac
+}
+
+# One line saying why the keyring will not take or give a credential, for the
+# states that have a fix; nothing for the others.
+keyring_trouble() {   # <state>
+  case "$1" in
+    missing) printf 'your account has no keyring, and without a desktop session nothing creates one. This does: %s/scripts/keyring-unlock.py' "$SANDBOX_ROOT" ;;
+    locked)  printf 'your keyring is locked, and without a desktop session nothing can ask you to unlock it. This does: %s/scripts/keyring-unlock.py' "$SANDBOX_ROOT" ;;
+  esac
+}
+
 keyring_put() {   # <agent> <auth>; the secret on stdin; replaces what is there
   local hex
   if [ "$(uname -s)" = Darwin ]; then
@@ -457,7 +492,7 @@ valid_branch() {
 
 # Prints the JSON object the sidecar's loader reads: {"token":"..."}.
 credential_json() {
-  local agent="$1" auth="$2" secret=""
+  local agent="$1" auth="$2" secret="" trouble=""
   if [ "$agent" = codex ] && [ "$auth" = oauth ]; then
     codex_sidecar_json 600
     return
@@ -467,6 +502,10 @@ credential_json() {
     # sitting in your shell should not end up in a sandbox by accident.
     secret="$SANDBOX_TEST_ANTHROPIC_KEY"
   elif ! secret="$(keyring_get "$agent" "$auth")" || [ -z "$secret" ]; then
+    if [ "$(uname -s)" != Darwin ]; then
+      trouble="$(keyring_trouble "$(keyring_state)")"
+      [ -z "$trouble" ] || warn "$trouble"
+    fi
     if [ -t 0 ]; then
       read -rsp "Credential for $agent ($auth), used for this session only: " secret
       printf '\n' >&2
@@ -1785,7 +1824,7 @@ cmd_pr() {
 # ---------------------------------------------------------------------------
 
 cmd_login() {
-  local agent auth secret="" path=""
+  local agent auth secret="" path="" trouble=""
   agent="$(setting AGENT)"
   auth="$(setting AUTH)"
   while [ $# -gt 0 ]; do
@@ -1799,8 +1838,12 @@ cmd_login() {
   agent_exists "$agent" || die "--agent: there is no agents/$agent"
   case "$auth" in oauth|apikey) ;; *) die "--auth is oauth or apikey, not '$auth'" ;; esac
   require_auth_mode "$agent" "$auth"
-  if [ "$(uname -s)" != Darwin ] && ! command -v secret-tool >/dev/null 2>&1; then
-    die "secret-tool is not installed (apt install libsecret-tools, dnf install libsecret). Without a keyring, ./sandbox run asks for the credential each time."
+  if [ "$(uname -s)" != Darwin ]; then
+    command -v secret-tool >/dev/null 2>&1 \
+      || die "secret-tool is not installed (apt install libsecret-tools, dnf install libsecret). Without a keyring, ./sandbox run asks for the credential each time."
+    # Found out before the credential is asked for, not after it has been pasted.
+    trouble="$(keyring_trouble "$(keyring_state)")"
+    [ -z "$trouble" ] || die "$trouble"
   fi
 
   case "$agent/$auth" in
@@ -1832,7 +1875,8 @@ cmd_login() {
   if [ "$agent/$auth" != codex/oauth ]; then
     looks_like_token "$secret" || die "that does not look like a token"
   fi
-  printf '%s' "$secret" | keyring_put "$agent" "$auth" || die "the keyring did not take the credential (is it unlocked?)"
+  printf '%s' "$secret" | keyring_put "$agent" "$auth" \
+    || die "the keyring did not take the credential. If it is locked or missing, $SANDBOX_ROOT/scripts/keyring-unlock.py fixes that."
   secret=""
 
   say ""

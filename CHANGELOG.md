@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **`login` on a headless Linux host.** The account the quickstart recommends
+  (no password, reached over SSH) has no keyring, and gnome-keyring can create
+  or unlock one only through a graphical prompt, so `./sandbox login` ended in
+  `secret-tool: Cannot create an item in a locked collection`.
+  `gnome-keyring-daemon --unlock`, the usual advice, returns 0 and changes
+  nothing against the systemd-managed daemon of gnome-keyring 48. New
+  `scripts/keyring-unlock.py` creates or unlocks the keyring over D-Bus with a
+  password you choose. `login` now checks the keyring before asking for the
+  token and names that fix; `doctor` reports a missing or locked keyring; `run`
+  says why it is asking for the credential. Tests use a stand-in `busctl`.
+
 ## 2.0.0 — 2026-10-10
 
 A rewrite. The architecture of version 1 is kept: an agent container, a Squid

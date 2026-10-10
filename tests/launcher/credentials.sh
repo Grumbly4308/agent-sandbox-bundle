@@ -90,6 +90,18 @@ printf 'sk-ant-api03-KEY\n' | "$ROOT/sandbox" login --agent claude --auth apikey
 check "an API key is stored under its own mode" test "$(cat "$T/keyring/claude-apikey")" = "sk-ant-api03-KEY"
 refuse "something that is not a token is not stored" bash -c "printf 'two words\n' | '$ROOT/sandbox' login --agent claude --auth apikey"
 refuse "login for an unknown agent is refused" bash -c "printf 'x\n' | '$ROOT/sandbox' login --agent nosuch"
+# A keyring that cannot take the credential is found out before it is asked for,
+# and the fix is named. (The stand-in busctl in tests/fakes answers the state.)
+for state in locked missing; do
+  out="$(FAKE_BUSCTL_KEYRING=$state "$ROOT/sandbox" login --agent claude --auth apikey </dev/null 2>&1)" && fail "login with a $state keyring succeeded"
+  case "$out" in
+    *"Paste"*) fail "login with a $state keyring asked for the credential" ;;
+    *"your keyring is $state"*|*"has no keyring"*) pass "login with a $state keyring says so" ;;
+    *) fail "login with a $state keyring: $out" ;;
+  esac
+  case "$out" in *"scripts/keyring-unlock.py"*) pass "... and names the fix" ;; *) fail "no fix named for a $state keyring: $out" ;; esac
+done
+check "the stored key is still there" test "$(cat "$T/keyring/claude-apikey")" = "sk-ant-api03-KEY"
 
 # Codex: the whole auth.json, read from the path the operator gives.
 ACCESS_1="$(jwt $(( $(date +%s) + 7200 )) A)"

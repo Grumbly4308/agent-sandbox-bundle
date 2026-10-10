@@ -223,6 +223,28 @@ check_id_range() {
 # ---------------------------------------------------------------------------
 # Files and tools the launcher needs on the host.
 # ---------------------------------------------------------------------------
+# Linux: ready, missing, locked or unknown (no busctl or no Secret Service).
+keyring_state() {
+  local collection locked
+  command -v busctl >/dev/null 2>&1 || { printf unknown; return; }
+  collection="$(busctl --user call org.freedesktop.secrets /org/freedesktop/secrets \
+                  org.freedesktop.Secret.Service ReadAlias s default 2>/dev/null)" \
+    || { printf unknown; return; }
+  case "$collection" in
+    'o "/"') printf missing; return ;;
+    'o "/'*'"') collection="${collection#o \"}"; collection="${collection%\"}" ;;
+    *) printf unknown; return ;;
+  esac
+  locked="$(busctl --user get-property org.freedesktop.secrets "$collection" \
+              org.freedesktop.Secret.Collection Locked 2>/dev/null)" \
+    || { printf unknown; return; }
+  case "$locked" in
+    'b true')  printf locked ;;
+    'b false') printf ready ;;
+    *)         printf unknown ;;
+  esac
+}
+
 check_files_and_tools() {
   # The agent's system-call filter [physical B04]. topology.sh names it for
   # every agent container; without the file nothing starts.
@@ -280,6 +302,14 @@ check_files_and_tools() {
     else warn "the 'security' tool is missing: ./sandbox will ask for the credential at every run"; fi
   elif command -v secret-tool >/dev/null 2>&1; then
     ok "keyring tool (secret-tool) is present"
+    # The tool is not enough: it needs a keyring that exists and is open, and
+    # an account without a desktop session has no way to get one but ours.
+    # The same two questions ./sandbox asks (keyring_state there).
+    case "$(keyring_state)" in
+      ready)   ok "the keyring is unlocked" ;;
+      missing) warn "your account has no keyring: login cannot store the credential and run will ask for it each time. Make one: scripts/keyring-unlock.py" ;;
+      locked)  warn "your keyring is locked: login cannot store the credential and run will ask for it each time. Unlock it: scripts/keyring-unlock.py" ;;
+    esac
   else
     warn "secret-tool is not installed: ./sandbox will ask for the credential at every run (apt install libsecret-tools, dnf install libsecret)"
   fi

@@ -111,8 +111,16 @@ mechanism:
 
 In your OS keyring: `secret-tool` on Linux, the Keychain on macOS. Not in this
 repository, not in a file the tool wrote. `./sandbox doctor` warns if no
-keyring tool is installed; without one you are asked for the credential at each
-`run`.
+keyring tool is installed, or if the keyring is missing or locked; in any of
+those cases you are asked for the credential at each `run`.
+
+On Linux the keyring is created and unlocked by your desktop login. The
+headless account the quickstart recommends has no desktop, so it starts with no
+keyring and no way to make one: gnome-keyring does both through a graphical
+prompt. `scripts/keyring-unlock.py` does it over D-Bus instead, with a
+password you choose, and `login` and `doctor` point at it when needed. The
+keyring then stays open until the daemon stops (a reboot); run the script again
+to reopen it.
 
 A keyring is only as safe as the account it belongs to. That is one more reason
 for the ordinary, no-`sudo` account in the [quickstart](01-quickstart.md).

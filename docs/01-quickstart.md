@@ -74,7 +74,9 @@ Optional but worth having on the host:
   still works but `push` refuses. Debian 13 packages 8.16, which is too old;
   take the release binary from github.com/gitleaks/gitleaks instead.
 - `secret-tool` (package `libsecret-tools`) on Linux — stores the model
-  credential in your OS keyring. macOS has its own.
+  credential in your OS keyring. macOS has its own. An account made as in
+  step 1 (no password, reached over SSH) has no keyring yet and no desktop to
+  create one; `scripts/keyring-unlock.py` makes it, see step 4.
 - `gh` or `glab` — lets `./sandbox pr` open the pull request for you.
 
 ## 3. Check the host
@@ -107,6 +109,19 @@ It tells you what to paste and puts it in your OS keyring. It also tells you
 three things that matter more than the command: use a **dedicated account** for
 sandboxes, switch **overage billing off** on it, and how to **revoke** the
 credential. See [03 — Credentials](03-credentials.md).
+
+On a Linux host with no desktop session the keyring is usually missing or
+locked, and `login` says so instead of asking for the token. The fix it names:
+
+```bash
+scripts/keyring-unlock.py            # creates the keyring the first time; unlocks it after a reboot
+```
+
+It asks for a password of your choice. Nothing else can do this without a
+display: gnome-keyring creates and unlocks keyrings through a graphical prompt,
+and `gnome-keyring-daemon --unlock` has no effect on the systemd-managed daemon
+(gnome-keyring 48). After a reboot run it again, or let `run` ask for the
+credential.
 
 ## 5. Run
 
