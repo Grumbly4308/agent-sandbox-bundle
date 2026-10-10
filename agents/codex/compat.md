@@ -30,12 +30,13 @@ It is an address, not a name: no container here is found by name.
 | `model_provider = "sidecar"` with `[model_providers.sidecar]` `name = "sidecar"`, `base_url = "$SANDBOX_SIDECAR_URL/backend-api/codex"`, `wire_api = "responses"` | `config.toml` | Codex's built-in `openai` provider takes its address from the vendor's own reply and insists on HTTPS; it cannot be pointed at the sidecar. A provider defined here can. | yes |
 | `requires_openai_auth = true` (same table) | `config.toml` | Makes Codex send its ChatGPT login to this provider, so the request has the shape the vendor expects once the sidecar swaps the token. | yes |
 | `chatgpt_base_url = "$SANDBOX_SIDECAR_URL/backend-api"` | `config.toml` | The account check the interactive interface makes at start (`/backend-api/wham/accounts/check`) goes to the sidecar, which forwards it. | yes, for the interactive interface |
-| `auth.json` with dummy tokens: `id_token` and `access_token` shaped like JWTs that expire in 2100, a `refresh_token`, a dummy `account_id`, `last_refresh` = now | `launch` writes `auth.json` | Codex will not start a subscription session without a login file whose tokens parse and are not expired. Every value is a placeholder; the sidecar replaces the token and the account id with the real ones. | yes (see the note below) |
+| `auth.json` with dummy tokens: `id_token` and `access_token` shaped like JWTs that expire in 2100, a `refresh_token`, your real `account_id` (in both tokens and in `tokens.account_id`), `last_refresh` = now | `launch` writes `auth.json`; `./sandbox` hands in the account id as `SANDBOX_CODEX_ACCOUNT_ID` | Codex will not start a subscription session without a login file whose tokens parse and are not expired. Every token is a placeholder; the sidecar replaces it with the real one. | yes (see the note below) |
+| The real account id in that login | `./sandbox` reads it from the stored login; `launch` writes it | At start the interactive interface looks the login's account up in the list `/backend-api/wham/accounts/check` returns for the real login, and stops with "selected workspace missing from routing discovery" if it is not there. It did, with `acct-sandbox-dummy`, against the real vendor on 2026-10-10. The agent can read the id: it names the account, it is not a credential. Without a stored id `launch` falls back to `acct-sandbox-dummy`. | yes |
 | `CODEX_REFRESH_TOKEN_URL_OVERRIDE=$SANDBOX_SIDECAR_URL/oauth/token` | `launch` | A backstop. If Codex ever decides to refresh the dummy login, the attempt goes to the sidecar, which does not forward that path, instead of leaving for the vendor's login host. | no |
 
 Note on `auth.json`: the spike's dummy tokens carried more claims (an email
 address, a plan type, a user id). The ones written here carry only an expiry
-and a dummy account id. That the smaller token is enough has **not** been
+and the account id. That the smaller token is enough has **not** been
 run; if Codex refuses it, add the claims back in `launch`.
 
 ## API key (`--auth apikey`)

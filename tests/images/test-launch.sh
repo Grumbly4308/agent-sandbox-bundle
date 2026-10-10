@@ -34,7 +34,8 @@ run_launch() {
   fi
   status=0
   env -i PATH="$scratch/bin:/usr/local/bin:/usr/bin:/bin" HOME="$home" FAKE_OUT="$out" \
-    ${envs[@]+"${envs[@]}"} ${sidecar_url:+SANDBOX_SIDECAR_URL="$sidecar_url"} SANDBOX_AUTH="$auth" \
+    ${envs[@]+"${envs[@]}"} ${envs_extra[@]+"${envs_extra[@]}"} \
+    ${sidecar_url:+SANDBOX_SIDECAR_URL="$sidecar_url"} SANDBOX_AUTH="$auth" \
     "$root/agents/$agent/launch" "$@" >"$out/stdout" 2>"$out/stderr" || status=$?
 }
 
@@ -230,6 +231,32 @@ env_has "codex oauth: refresh backstop points at the sidecar" "CODEX_REFRESH_TOK
 env_lacks "codex oauth: no API key variable" OPENAI_API_KEY
 env_lacks "codex oauth: no Codex API key variable" CODEX_API_KEY
 all_dummy "codex oauth: credentials are dummies"
+
+# With the real account id handed in, the login names it in both places Codex
+# reads it, and the tokens stay dummies.
+real_account="0f3c9a52-7d1e-4b6a-9c2f-5e8d1a7b3c40"
+envs_extra=(SANDBOX_CODEX_ACCOUNT_ID="$real_account")
+run_launch codex oauth
+envs_extra=()
+started "codex oauth with an account id: launch succeeds"
+# shellcheck disable=SC2016  # $a is jq's variable, not this script's
+check "codex oauth with an account id: auth.json names it" \
+  jq -e --arg a "$real_account" '.tokens.account_id == $a and .tokens.refresh_token == "rt-sandbox-dummy-not-a-credential"' "$home/.codex/auth.json"
+for token in id_token access_token; do
+  IFS=. read -r h p s <<<"$(jq -r ".tokens.$token" "$home/.codex/auth.json")"
+  payload="$(node -e 'process.stdout.write(Buffer.from(process.argv[1], "base64url").toString())' "$p")"
+  if [ "$(jq -r '."https://api.openai.com/auth".chatgpt_account_id' <<<"$payload")" = "$real_account" ]; then
+    pass "codex oauth with an account id: $token names it"
+  else
+    fail "codex oauth with an account id: $token payload: $payload"
+  fi
+done
+all_dummy "codex oauth with an account id: credentials are still dummies"
+
+envs_extra=(SANDBOX_CODEX_ACCOUNT_ID='x","exp":1,"y":"')
+run_launch codex oauth
+envs_extra=()
+refused "codex oauth: an account id that could break out of the JSON is refused"
 
 run_launch codex oauth --auto exec "fix it"
 argv_is "codex oauth --auto: adds the bypass flag, keeps the arguments" \

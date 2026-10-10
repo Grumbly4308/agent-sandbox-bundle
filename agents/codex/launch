@@ -91,10 +91,19 @@ EOF
     # A DUMMY login in the shape Codex expects: two tokens that parse as JWTs
     # (header.payload.signature) and do not look expired. The header and the
     # payload are real JSON; the signature is not a signature at all. The
-    # payload says only "expires in the year 2100" and names a dummy account.
+    # payload says only "expires in the year 2100" and names the account.
+    #
+    # The account is the real one when ./sandbox hands it in: at start Codex
+    # looks its account up in the vendor's list (/wham/accounts/check), and
+    # stops with "selected workspace missing" if it is not there. An account
+    # id names the account; it is not a credential.
     unset CODEX_API_KEY OPENAI_API_KEY
+    account="${SANDBOX_CODEX_ACCOUNT_ID:-acct-sandbox-dummy}"
+    case "$account" in
+      *[!A-Za-z0-9._:-]*) echo "launch(codex): SANDBOX_CODEX_ACCOUNT_ID has characters an account id cannot have" >&2; exit 1 ;;
+    esac
     jwt_header='{"alg":"RS256","typ":"JWT"}'
-    jwt_payload='{"exp":4102444800,"https://api.openai.com/auth":{"chatgpt_account_id":"acct-sandbox-dummy"}}'
+    jwt_payload='{"exp":4102444800,"https://api.openai.com/auth":{"chatgpt_account_id":"'"$account"'"}}'
     dummy_jwt="$(base64url "$jwt_header").$(base64url "$jwt_payload").sandbox-dummy-not-a-credential"
     cat >"$codex_home/auth.json" <<EOF
 {
@@ -104,7 +113,7 @@ EOF
     "id_token": "$dummy_jwt",
     "access_token": "$dummy_jwt",
     "refresh_token": "rt-sandbox-dummy-not-a-credential",
-    "account_id": "acct-sandbox-dummy"
+    "account_id": "$account"
   },
   "last_refresh": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }

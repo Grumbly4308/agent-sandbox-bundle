@@ -1012,12 +1012,21 @@ wait_for() {
 }
 
 # What the CLI is handed when it is started: your git identity, the
-# credential mode, and the connection strings of sibling services. EXEC_ENV
-# is filled for `podman exec`.
+# credential mode, the Codex account id, and the connection strings of
+# sibling services. EXEC_ENV is filled for `podman exec`.
 EXEC_ENV=()
 exec_environment() {
-  local name email service count=0
+  local name email service count=0 account
   EXEC_ENV=(--env "SANDBOX_AUTH=$AUTH")
+  # Codex will not start unless the account in its (dummy) login is one the
+  # vendor lists for the real login. Only the id goes in, never a token.
+  if [ "$AGENT" = codex ] && [ "$AUTH" = oauth ]; then
+    account="$(keyring_get codex oauth 2>/dev/null | jq -r '.tokens.account_id // empty' 2>/dev/null || true)"
+    case "$account" in
+      ''|*[!A-Za-z0-9._:-]*) ;;
+      *) EXEC_ENV+=(--env "SANDBOX_CODEX_ACCOUNT_ID=$account") ;;
+    esac
+  fi
   # Commits made inside carry your name, as they would on your own machine.
   name="$(git config user.name || true)"
   email="$(git config user.email || true)"
