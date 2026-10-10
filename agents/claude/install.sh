@@ -10,10 +10,10 @@
 #   * the sha512 of each tarball, as npm's registry published it
 #     (`dist.integrity`). A different tarball under the same version number
 #     fails the build.
-# Values read on 2026-10-02 with
-#   npm view @anthropic-ai/claude-code@2.1.283 dist.integrity
-#   npm view @anthropic-ai/claude-code@2.1.283 optionalDependencies dependencies --json
-#   npm view @anthropic-ai/claude-code-linux-<arch>@2.1.283 dist.integrity
+# Values read on 2026-10-10 with
+#   npm view @anthropic-ai/claude-code@2.1.296 dist.integrity
+#   npm view @anthropic-ai/claude-code@2.1.296 optionalDependencies dependencies --json
+#   npm view @anthropic-ai/claude-code-linux-<arch>@2.1.296 dist.integrity
 # The package has no ordinary `dependencies` ({}), so nothing else would be
 # fetched. Its optionalDependencies are eight per-platform packages, each
 # holding one native program; the two for Debian (glibc) Linux are pinned
@@ -36,16 +36,16 @@
 # above for it, replace the three hashes, rebuild.
 set -euo pipefail
 
-VERSION="2.1.283"
+VERSION="2.1.296"
 
 WRAPPER_SPEC="@anthropic-ai/claude-code@${VERSION}"
-WRAPPER_INTEGRITY="sha512-/8Y1pe7M15qMOU7RwUEjpFcM8XGVXNzWrWRXXp/0HlGm1k8FcOCxYMA9VR237JUUzzx5DkcQaGvELAo4si7TwA=="
+WRAPPER_INTEGRITY="sha512-OX/k/rpcthMqnFKOWcpNcbiLsMKtAjLOpQNJHlYiDCFUznWCIwdRTyl/p9SdHVrsrzZuPMCNqZjnpakIni6upw=="
 
 X64_SPEC="@anthropic-ai/claude-code-linux-x64@${VERSION}"
-X64_INTEGRITY="sha512-q9+Ke42t/I6oLb/bTmh6sI24jMw4KNwz3QbQLp9dVQ8ipQChfAW5L11SX8jcDzVCW/P2tId7ftI+lgBURvz9uQ=="
+X64_INTEGRITY="sha512-+m01urgelnI+VJxPaKPEK0wixgq42uZ8PeCaUk5tX/8YoDBvSmC/REVQG2jQfJAr8dxunpjJ600FvLrcj1WWTw=="
 
 ARM64_SPEC="@anthropic-ai/claude-code-linux-arm64@${VERSION}"
-ARM64_INTEGRITY="sha512-1hGh4eQHoxNJSfA/0/id5lXFdO5yRScwtUlBNMu1fPxUSwiFosLQjPDv/KdgfVZ3xjVtqJWPbjtKQ1TsxfpcDg=="
+ARM64_INTEGRITY="sha512-Q6Qh6qFmwuBG9rQFiDR6bY3XkFnwTN9AAPrnnDgBvr9sbg1Ql5wrf0lfoCDiV369EUHOzxI4i5OdHW9Vf2/oeA=="
 
 # Where things go. SANDBOX_INSTALL_PREFIX exists only so tests/images/ can
 # exercise this script without being root. Nothing else sets it.

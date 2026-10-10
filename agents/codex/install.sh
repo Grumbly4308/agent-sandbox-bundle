@@ -10,14 +10,14 @@
 #   * the sha512 of each tarball, as npm's registry published it
 #     (`dist.integrity`). A different tarball under the same version number
 #     fails the build.
-# Values read on 2026-10-02 with
-#   npm view @openai/codex@0.159.3 dist.integrity
-#   npm view @openai/codex@0.159.3 optionalDependencies dependencies --json
-#   npm view @openai/codex@0.159.3-linux-<arch> dist.integrity
+# Values read on 2026-10-10 with
+#   npm view @openai/codex@0.162.1 dist.integrity
+#   npm view @openai/codex@0.162.1 optionalDependencies dependencies --json
+#   npm view @openai/codex@0.162.1-linux-<arch> dist.integrity
 # The package has no ordinary `dependencies` and no lifecycle scripts. Its
 # optionalDependencies are six per-platform packages, each holding the native
 # program. They are published as *versions of the same package*
-# (`@openai/codex@0.159.3-linux-x64`) and installed under another name
+# (`@openai/codex@0.162.1-linux-x64`) and installed under another name
 # (`@openai/codex-linux-x64`) through an npm alias. The two Linux ones are
 # pinned here and the other four are never downloaded.
 #
@@ -40,16 +40,16 @@
 # above for it, replace the three hashes, rebuild.
 set -euo pipefail
 
-VERSION="0.159.3"
+VERSION="0.162.1"
 
 WRAPPER_SPEC="@openai/codex@${VERSION}"
-WRAPPER_INTEGRITY="sha512-hg4nlqCwRb87GocxNnHvz4sadOrdJ71mO0a4CUYWXjAozJe2gtuAdRFldKGSQXw9m7SgR4ydis12KDVVPgzDkQ=="
+WRAPPER_INTEGRITY="sha512-NWZdi/kxyjv/8EUGFupziGU38YyleugZRM4JXgY5XFH7FUmaFA33NZS2Bmq0HPazf7S3jJQQWsZ/jAK9jsrV3Q=="
 
 X64_SPEC="@openai/codex@${VERSION}-linux-x64"
-X64_INTEGRITY="sha512-xlHydfOksnNt/qz4BEVFvjMWunweaVSNtha/DkVUwWZnVZxbqiJwsXSl2iZDk04b6k/g0OI7jU06XqzHB2s5og=="
+X64_INTEGRITY="sha512-cjK2mdHIfEepZ1lQ1MX3aTQC+8ncIsvnacl/6vI2dIIcfP8/MrhTQ2+qRlkXFNDzJSj1d36quIszP+3/4CUJWQ=="
 
 ARM64_SPEC="@openai/codex@${VERSION}-linux-arm64"
-ARM64_INTEGRITY="sha512-84C1yhAI+i0hqh77Akp/Ma09Z4d5oLKcZKqW1WZpEDh8bKbNvvbNEd6pE+GMUe2Kwg7jCbuvkRNH1zgK+SCM3Q=="
+ARM64_INTEGRITY="sha512-Ss7W/SrKtQFNaMtSojNoiykJgX+iDC8daM+YrcvgmJADtQPk0cd3w6Dna4CYH2CYvf9nQranj69fpcTzZ3sQIQ=="
 
 # Where things go. SANDBOX_INSTALL_PREFIX exists only so tests/images/ can
 # exercise this script without being root. Nothing else sets it.

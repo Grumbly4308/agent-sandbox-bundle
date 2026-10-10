@@ -10,8 +10,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # The versions the build contract pins.
 expected_version() {
   case "$1" in
-    claude) echo 2.1.283 ;;
-    codex) echo 0.159.3 ;;
+    claude) echo 2.1.296 ;;
+    codex) echo 0.162.1 ;;
     opencode) echo 1.18.34 ;;
   esac
 }

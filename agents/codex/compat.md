@@ -1,6 +1,6 @@
 # Codex CLI: compatibility settings
 
-Codex CLI 0.159.3 (`@openai/codex`, pinned in `install.sh`).
+Codex CLI 0.162.1 (`@openai/codex`, pinned in `install.sh`).
 
 **Nothing on this page is a control.** Every setting below is applied by, or
 readable and changeable by, the agent's own process. They exist so that the
