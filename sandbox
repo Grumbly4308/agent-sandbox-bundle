@@ -1106,7 +1106,7 @@ new_session_name() {
 # never sees a git credential. Sets BASE_COMMIT and ORIGIN_URL.
 RUN_IMPORT_DIR=""
 import_repository() {
-  local source="$1" clone authority
+  local source="$1" clone authority heads
   RUN_IMPORT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-sandbox-import.XXXXXX")"
   clone="$RUN_IMPORT_DIR/repo.git"
   if [ -d "$source" ]; then
@@ -1141,8 +1141,13 @@ import_repository() {
   # An existing branch of that name is continued; otherwise the session
   # branch starts at the repository's current commit.
   if ! BASE_COMMIT="$(git --git-dir="$clone" rev-parse --verify --quiet "refs/heads/$BRANCH^{commit}")"; then
-    BASE_COMMIT="$(git --git-dir="$clone" rev-parse --verify --quiet 'HEAD^{commit}')" \
-      || die "the repository has no commits yet"
+    if ! BASE_COMMIT="$(git --git-dir="$clone" rev-parse --verify --quiet 'HEAD^{commit}')"; then
+      # A bare repository that was pushed to has branches, but HEAD still
+      # points where `git init` left it; nothing moves it on a push.
+      heads="$(git --git-dir="$clone" for-each-ref --format='%(refname:short)' refs/heads/ | filter_control | tr '\n' ' ' | sed 's/ $//')"
+      [ -n "$heads" ] || die "the repository has no commits yet"
+      die "the repository's HEAD points at no commit, but it has branches: $heads. Either run with --branch <one of them>, or point HEAD at it: git -C $source symbolic-ref HEAD refs/heads/<branch>"
+    fi
     git --git-dir="$clone" update-ref "refs/heads/$BRANCH" "$BASE_COMMIT"
   fi
   git --git-dir="$clone" symbolic-ref HEAD "refs/heads/$BRANCH"

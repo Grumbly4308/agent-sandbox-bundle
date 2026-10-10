@@ -182,7 +182,7 @@ it from the path. GitHub never hears from the sandbox host.
 ```bash
 # on your workstation
 git clone git@github.com:you/private.git
-ssh you@sandbox-host 'git init --quiet --bare repos/private.git'
+ssh you@sandbox-host 'git init --quiet --bare --initial-branch=main repos/private.git'
 git -C private push you@sandbox-host:repos/private.git main
 
 # on the sandbox host
