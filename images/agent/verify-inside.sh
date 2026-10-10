@@ -334,7 +334,9 @@ function request(host, port, method, path, payload, dummy, ms) {
     const req = http.request({ host, port: Number(port), method, path, headers, agent: false }, (res) => {
       status = res.statusCode;
       res.on("data", (d) => { if (text.length < 200) text += d.toString("latin1"); });
-      res.on("end", () => fin("http " + status + " " + text.slice(0, 160)));
+      // One line, whatever the body: a streamed reply has line breaks in
+      // it, and the host reads the last line the probe prints as the answer.
+      res.on("end", () => fin("http " + status + " " + text.slice(0, 160).replace(/[\r\n]+/g, " ")));
       res.on("error", () => fin("http " + status));
     });
     req.setTimeout(Number(ms), () => { req.destroy(); fin(status ? "http " + status : "timeout"); });
