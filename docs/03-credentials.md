@@ -122,15 +122,59 @@ password you choose, and `login` and `doctor` point at it when needed. The
 keyring then stays open until the daemon stops (a reboot); run the script again
 to reopen it.
 
+Be clear about what the keyring buys. It keeps the token out of files,
+environments, command lines and shell history, and encrypted at rest (a VM
+snapshot or a copied disk image gets nothing). It is **not** a barrier against
+a breakout: the daemon runs as your user, unlocked, because `run` needs it;
+and at `run` the token is in the launcher's memory and in the sidecar
+container regardless. What limits the damage there is the token itself, which
+can only make model requests, on an account you chose for the purpose. On a
+headless host where the per-boot unlock is a nuisance, skipping the keyring
+and typing the token at each `run` is an equally sound choice, not a
+degraded one; `login` is then simply not used.
+
 A keyring is only as safe as the account it belongs to. That is one more reason
 for the ordinary, no-`sudo` account in the [quickstart](01-quickstart.md).
 
 ## Git credentials
 
-None inside. Your repository is cloned on the host with your credentials and
-handed to the sandbox as a file; the work comes back out the same way, and
-`./sandbox push` pushes it from the host. See
+None inside. Your repository is cloned on the host and handed to the sandbox
+as a file; the work comes back out the same way, and `./sandbox push` pushes
+it from the host. See
 [How code gets in and out](00-threat-model.md#how-code-gets-in-and-out).
+
+That keeps the git credential from the agent. It does not keep it from a
+kernel-bug breakout, which lands in the account that runs the sandbox and finds
+whatever that account holds (the [prerequisite](00-threat-model.md#the-prerequisite-that-voids-everything-else)).
+Weigh what it would find. The model token is a one-year, inference-only token
+on a dedicated account: a breakout costs you the rest of a plan and a revoke.
+A personal SSH key or a classic token on the same host can read and push
+**every repository you have access to, for as long as it lives**. That is the
+larger asset by far, and the architecture gains nothing from isolating the
+small one if the large one sits in `~/.ssh`.
+
+So: **never put a personal SSH key or a broad token on the host that runs
+sandboxes.** The choices, from strongest to weakest:
+
+| | Scope | Lifetime | A breakout gets | Cost |
+|---|---|---|---|---|
+| **No git credential on the host.** Clone on your workstation, send the code over the SSH link you already have, `run` it from the path, pull the exported branch back and push from the workstation. | none | — | nothing | `push` and `pr` are done from the workstation |
+| **`run --git-token`.** A token for one repository with a short expiry, typed at `run`, held in memory, gone at `destroy`. | one repository | the session | one repository, for the session | a token per session or per day |
+| **A deploy key** on the one repository, in `~/.ssh` of the sandbox host. | one repository | until you rotate it | one repository | one setup per repository |
+| A personal key, a classic token, `gh auth login` with its default scopes. | everything | years | everything | none, which is the problem |
+
+The first two are described in the [quickstart](01-quickstart.md#a-private-repository).
+For the second, a GitHub fine-grained token with *Contents: read and write* on
+the one repository (and *Pull requests: read and write* if `pr` is to open
+one) and the shortest expiry the form allows is right. Short expiry is the
+control; `destroy` forgetting the token is hygiene. If the agent got out
+during the session, the token was already exposed, and only the server
+refusing it afterwards limits the damage.
+
+The order of trust is workstation to sandbox host, never back. The host has
+your key in `authorized_keys`; it holds no key to the workstation. **Do not
+forward your SSH agent** (`ssh -A`) into the sandbox host: that puts your
+workstation's key within reach of everything running as your user there.
 
 ### If the agent has to push by itself
 

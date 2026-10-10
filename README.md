@@ -31,6 +31,27 @@ scripts/pin-images.sh                    # first time: pin the base images
 You need rootless Podman, git and bash, on Linux or macOS, and an account that
 cannot become root.
 
+## What the host holds
+
+The container holds no credential of yours. The host account that runs it is
+another matter: a kernel-bug breakout lands there and takes what it finds, so
+the less that account holds, the less a breakout is worth.
+
+- **The model token** is a one-year, inference-only token on an account you
+  dedicate to sandboxes. Stored in the OS keyring, or typed at each `run`.
+- **A git credential** is needed only for a private repository, and only on
+  the host. Do not put a personal SSH key or a broad token there. Either clone
+  on your workstation and send the code over SSH (`run` takes a path), or give
+  `run --git-token` a token for that one repository, held in memory for the
+  session and forgotten at `destroy`.
+
+```bash
+./sandbox run https://github.com/you/private.git --git-token
+```
+
+[03 — Credentials](docs/03-credentials.md#git-credentials) weighs the choices;
+the [quickstart](docs/01-quickstart.md#a-private-repository) shows both.
+
 ## Read these
 
 | | |
