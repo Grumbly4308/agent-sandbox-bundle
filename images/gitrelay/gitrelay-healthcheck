@@ -1,0 +1,21 @@
+#!/usr/bin/env node
+// gitrelay-healthcheck — exits 0 when the relay's listener answers.
+//
+// ./sandbox runs this inside the relay container (`podman exec`) while it
+// waits for the session to come up. Any HTTP answer counts: the relay has no
+// status page and answers 404 to "/", which is enough to know it is
+// listening. The image has no curl, so this is a few lines of node.
+'use strict';
+
+const http = require('node:http');
+
+// RELAY_LISTEN is set by tests only; the relay itself reads the same variable.
+const listen = /:(\d{1,5})$/.exec(process.env.RELAY_LISTEN || '0.0.0.0:8081');
+const port = listen ? Number(listen[1]) : 8081;
+
+const request = http.get({ host: '127.0.0.1', port, path: '/', timeout: 2000 }, (response) => {
+  response.resume();
+  process.exit(0);
+});
+request.on('timeout', () => process.exit(1));
+request.on('error', () => process.exit(1));

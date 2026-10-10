@@ -1,0 +1,32 @@
+++ ./sandbox logs proxy
+++ tail -n 20
+2026/10/10 05:13:03| WARNING: (A) '10.202.0.0/24' is a subnetwork of (B) '10.0.0.0/8'
+2026/10/10 05:13:03| WARNING: because of this '10.202.0.0/24' is ignored to keep splay tree searching predictable
+2026/10/10 05:13:03| WARNING: You should probably remove '10.202.0.0/24' from the ACL named 'to_private'
+2026/10/10 05:13:03| Processing Configuration File: /etc/squid/session/extra.conf (depth 1)
+2026/10/10 05:13:03| WARNING: HTTP requires the use of Via
+2026/10/10 05:13:03| Logfile: opening log stdio:/dev/stdout
+2026/10/10 05:13:03| Squid plugin modules loaded: 0
+2026/10/10 05:13:03| Adaptation support is off.
+2026/10/10 05:13:03| Store logging disabled
+2026/10/10 05:13:03| DNS IPv6 socket created at [::], FD 9
+2026/10/10 05:13:03| DNS IPv4 socket created at 0.0.0.0, FD 10
+2026/10/10 05:13:03| Adding nameserver 169.254.1.1 from /etc/resolv.conf
+2026/10/10 05:13:03| Adding nameserver 10.160.2.2 from /etc/resolv.conf
+2026/10/10 05:13:03| Adding nameserver 10.160.160.1 from /etc/resolv.conf
+2026/10/10 05:13:03| HTCP Disabled.
+2026/10/10 05:13:03| Finished loading MIME types and icons.
+2026/10/10 05:13:03| Accepting HTTP Socket connections at conn85 local=[::]:3128 remote=[::] FD 11 flags=9
+    listening port: 3128
+[10/Oct/2026:05:13:04] src=10.201.0.10 TCP_TUNNEL/200 up=945 down=5603 ms=158 dst=185.199.111.133 CONNECT raw.githubusercontent.com:443
+[10/Oct/2026:05:13:04] src=10.201.0.10 TCP_DENIED/403 up=112 down=3773 ms=0 dst=- CONNECT github.com:443
+++ ./sandbox logs sidecar
+++ tail -n 5
+{"t":"2026-10-10T05:12:16.048Z","event":"start","agent":"claude","auth":"apikey","upstream":"api.anthropic.com","routes":["POST /v1/messages","POST /v1/messages/count_tokens"],"budget":500,"listen":"0.0.0.0:8080"}
+{"t":"2026-10-10T05:12:32.818Z","event":"request","method":"GET","path":"/verify-not-forwarded","refused":"sandbox_route_not_forwarded","detail":"the sandbox does not forward GET /verify-not-forwarded","status":404,"ms":1,"budget_left":500}
+{"t":"2026-10-10T05:12:35.227Z","event":"credential","state":"loaded","account_id":false}
+{"t":"2026-10-10T05:12:35.459Z","event":"request","method":"POST","path":"/v1/messages","model":"claude-opus-5-5","stream":true,"tools":["Agent","Bash","CronCreate","CronDelete","CronList","Edit","EnterWorktree","ExitWorktree","ListAgents","NotebookEdit","Read","ReportFindings","ScheduleWakeup","SendMessage","Skill","TaskStop","WebFetch","WebSearch","Workflow","Write"],"tool_types":["custom"],"tools_total":20,"upstream_status":401,"status":403,"ms":232,"budget_left":499}
+++ set +x
+0
+proxy log, key count: 0
+agent log, key count: 0

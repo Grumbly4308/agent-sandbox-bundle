@@ -1,0 +1,16 @@
++ scripts/make-seccomp.sh
+==> fetching the default seccomp profile (moby/profiles@836ae4d37ef2)
+==> stripping 25 syscalls
+==> wrote seccomp/agent-seccomp.json
+    sha256 742274fe51492c308ee2b5f58bafab372699f07797a4643598e346ab41f991f2
+
+topology.sh already applies it; the next ./sandbox run picks it up.
+Commit the new seccomp/agent-seccomp.json alongside the pin change.
+
+Note: removing unshare/setns breaks tools that create their own
+namespaces (some sandboxed test runners, nested containers, a browser's
+own sandbox). If a build starts failing with 'Operation not permitted'
+right after a profile change, that is why.
++ git diff --exit-code seccomp/agent-seccomp.json
++ sha256sum seccomp/agent-seccomp.json
+742274fe51492c308ee2b5f58bafab372699f07797a4643598e346ab41f991f2  seccomp/agent-seccomp.json

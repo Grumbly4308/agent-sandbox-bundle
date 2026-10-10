@@ -1,0 +1,63 @@
++ ./sandbox doctor
++ true
++ cat /home/sandboxer/.config/agent-sandbox/settings
+# agent-sandbox settings: the defaults for ./sandbox run.
+# NAME=value lines. A flag on the command line wins over a line here.
+# This file is read as text; nothing in it is ever executed.
+
+# Which agent run starts: a directory name under agents/.
+AGENT=claude
+
+# oauth (a subscription login) or apikey. See agents/<name>/auth.md.
+AUTH=oauth
+
+# Which image variant: node, python or full.
+TOOLCHAIN=node
+
+# Memory for the agent's processes.
+MEM=4g
+
+# Processor cores for the agent.
+CPUS=2
+
+# How many processes and threads the agent container may have.
+PIDS=512
+
+# The same ceiling per user id, shared by sessions that run side by side.
+NPROC=512
+
+# How long a session runs before Podman stops it.
+TTL=4h
+
+# How many model requests a session may make.
+BUDGET=500
+
+# Size of /tmp, held in memory.
+TMP_SIZE=1g
+
+# Size of the home directory, held in memory.
+HOME_SIZE=1g
+
+# Size of the workspace: one session's share of the disk store, or its cap when held in memory.
+WORKSPACE_SIZE=4g
+
+# auto (on the disk store when STORE is set, in memory when it is not), local or memory.
+WORKSPACE_DRIVER=auto
+
+# The disk store: a filesystem of fixed size that you own. doctor explains how to make one.
+STORE=/var/lib/agent-sandbox-store
+
+# That filesystem's block device; only needed for --io-limit.
+STORE_DEVICE=
+
+# Where export puts the repository it has reviewed.
+OUT_DIR=/home/sandboxer/agent-sandbox-out
+MEM=2g
+TMP_SIZE=512m
+HOME_SIZE=512m
+MEM=2g
+TMP_SIZE=512m
+HOME_SIZE=512m
+MEM=2g
+TMP_SIZE=512m
+HOME_SIZE=512m

@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# sandbox-import <branch> [relay-url] — put the repository into the workspace.
+#
+# ./sandbox clones the repository on the host, packs the branch into a git
+# bundle (one file holding commits) and pipes it into this script:
+#
+#   podman exec -i <agent> sandbox-import <branch> [relay-url]  < bundle
+#
+# So the repository arrives without any host folder being mounted and without
+# the sandbox ever seeing a credential or the repository's host name
+# [physical B09, B15]. This script only unpacks; it enforces nothing.
+#
+# Standard input:  the bundle.
+# Result:          /workspace/repo is a clone, with <branch> checked out. It
+#                  has no remote, unless the session has a git relay
+#                  (--git-relay): then "origin" is the relay's address.
+set -euo pipefail
+
+usage() { echo "usage: sandbox-import <branch> [relay-url]   (git bundle on standard input)" >&2; exit 2; }
+[ "$#" -eq 1 ] || [ "$#" -eq 2 ] || usage
+branch="$1"
+relay="${2:-}"
+
+# SANDBOX_WORKSPACE_FOR_TESTS exists only so tests/images/ can run this
+# script outside a container. Nothing else sets it.
+repo="${SANDBOX_WORKSPACE_FOR_TESTS:-/workspace}/repo"
+
+if ! git check-ref-format --branch "$branch" >/dev/null 2>&1; then
+  echo "sandbox-import: '$branch' is not a valid branch name" >&2
+  exit 2
+fi
+
+# Refuse to unpack over anything: a second import must not mix two trees.
+mkdir -p "$repo"
+if [ -n "$(ls -A "$repo")" ]; then
+  echo "sandbox-import: $repo is not empty; refusing to import over it" >&2
+  exit 1
+fi
+chmod 0700 "$repo"
+
+# The bundle has to be a file: git cannot clone from a pipe. It is deleted on
+# every way out of this script. It lives in /tmp, so a bundle larger than
+# /tmp's size cap fails here with "No space left on device".
+tmp="$(mktemp -d /tmp/sandbox-import.XXXXXX)"
+trap 'rm -rf "$tmp"' EXIT
+cat >"$tmp/repo.bundle"
+
+# Check the bundle is whole before using it. git needs a repository to do
+# that in, so it gets an empty throwaway one.
+git init --quiet --bare "$tmp/verify.git"
+if ! git -C "$tmp/verify.git" bundle verify --quiet "$tmp/repo.bundle"; then
+  echo "sandbox-import: the bundle is damaged or incomplete" >&2
+  exit 1
+fi
+
+# Which commit to start from: the branch asked for if the bundle names it,
+# else the bundle's HEAD, else its only entry. Never a guess among several.
+heads="$(git bundle list-heads "$tmp/repo.bundle")"
+start="" head=""
+while read -r sha name; do
+  case "$name" in
+    "refs/heads/$branch") start="$sha" ;;
+    HEAD) head="$sha" ;;
+  esac
+done <<<"$heads"
+if [ -z "$start" ]; then
+  if [ -n "$head" ]; then
+    start="$head"
+  elif [ "$(printf '%s\n' "$heads" | grep -c .)" -eq 1 ]; then
+    start="${heads%% *}"
+  fi
+fi
+if [ -z "$start" ]; then
+  echo "sandbox-import: the bundle holds several branches and neither $branch nor HEAD" >&2
+  exit 1
+fi
+
+# --no-checkout: the files are written by the checkout below, once, on the
+# branch we want.
+git clone --quiet --no-checkout "$tmp/repo.bundle" "$repo"
+git -C "$repo" checkout --quiet -B "$branch" "$start"
+# The clone's "origin" is the temporary file above; drop the pointer to it.
+git -C "$repo" remote remove origin
+# With a git relay, "origin" is the relay, so a plain `git push` works. The
+# relay decides what gets through; this line is a convenience, not a control.
+if [ -n "$relay" ]; then
+  git -C "$repo" remote add origin "$relay"
+fi
+
+# Commit identity: only what ./sandbox passed in (your host's git name and
+# email). Nothing is made up when it is absent.
+if [ -n "${GIT_AUTHOR_NAME:-}" ]; then
+  git -C "$repo" config user.name "$GIT_AUTHOR_NAME"
+fi
+if [ -n "${GIT_AUTHOR_EMAIL:-}" ]; then
+  git -C "$repo" config user.email "$GIT_AUTHOR_EMAIL"
+fi
+
+echo "sandbox-import: $branch at $(git -C "$repo" rev-parse HEAD)"

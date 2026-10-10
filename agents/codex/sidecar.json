@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "modes": {
+    "oauth": {
+      "upstream": "https://chatgpt.com",
+      "strip": ["authorization", "chatgpt-account-id", "x-api-key", "cookie"],
+      "inject": { "authorization": "Bearer {token}", "chatgpt-account-id": "{account_id}" },
+      "routes": [
+        { "method": "POST", "path": "/backend-api/codex/responses", "body": "openai-responses", "model": true },
+        { "method": "GET", "path": "/backend-api/codex/models" },
+        { "method": "GET", "path": "/backend-api/wham/accounts/check" },
+        { "method": "GET", "path": "/backend-api/wham/usage" },
+        { "method": "GET", "path": "/backend-api/wham/rate-limit-reset-credits" }
+      ]
+    },
+    "apikey": {
+      "upstream": "https://api.openai.com",
+      "strip": ["authorization", "chatgpt-account-id", "x-api-key", "cookie"],
+      "inject": { "authorization": "Bearer {token}" },
+      "routes": [
+        { "method": "POST", "path": "/v1/responses", "body": "openai-responses", "model": true },
+        { "method": "POST", "path": "/v1/chat/completions", "body": "openai-chat", "model": true },
+        { "method": "GET", "path": "/v1/models" }
+      ]
+    }
+  },
+  "bodies": {
+    "openai-responses": {
+      "dialect": "openai-responses",
+      "deny_keys": [],
+      "tools_untyped": false,
+      "tools_allow": ["function", "custom", "web_search", "web_search_preview", "local_shell", "apply_patch", "tool_search", "namespace", "image_generation"],
+      "tools_deny": ["mcp", "file_search", "code_interpreter", "computer_use_preview"],
+      "web_search": ["web_search", "web_search_preview"]
+    },
+    "openai-chat": {
+      "dialect": "openai-chat",
+      "deny_keys": [],
+      "tools_untyped": false,
+      "tools_allow": ["function", "custom"],
+      "tools_deny": [],
+      "web_search": []
+    }
+  }
+}

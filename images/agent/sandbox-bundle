@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# sandbox-bundle <branch> — write one git bundle of <branch> to standard
+# output. Nothing else is written to standard output; messages go to
+# standard error.
+#
+# This is the "out" half of how code leaves the sandbox [logical B27]. It is
+# run by ./sandbox in a fresh container that has no network, a read-only
+# view of the workspace, and none of the agent's processes in it:
+#
+#   podman run ... sandbox-bundle <branch>  > bundle
+#
+# The repository it reads was written by the agent, including .git/config.
+# That is why git runs HERE and not on your host, and why ./sandbox treats
+# what comes out as hostile: it caps the size, verifies the bundle, and
+# fetches one branch into a repository the host created.
+#
+# The switches below stop the obvious ways a repository's own configuration
+# can make git run a program: hooks, the file-system monitor, the pager. They
+# are tidiness, not the barrier. The barrier is the container this runs in
+# and the checks the host makes afterwards. A bundle carries commits only: no
+# .git/config and no hooks travel in it.
+set -euo pipefail
+
+usage() { echo "usage: sandbox-bundle <branch>   (bundle on standard output)" >&2; exit 2; }
+[ "$#" -eq 1 ] || usage
+branch="$1"
+
+# SANDBOX_WORKSPACE_FOR_TESTS exists only so tests/images/ can run this
+# script outside a container. Nothing else sets it.
+repo="${SANDBOX_WORKSPACE_FOR_TESTS:-/workspace}/repo"
+
+if ! git check-ref-format --branch "$branch" >/dev/null 2>&1; then
+  echo "sandbox-bundle: '$branch' is not a valid branch name" >&2
+  exit 2
+fi
+
+# Read no per-user git configuration (there is no home directory here), never
+# prompt, and take no lock files: the workspace is read-only in this
+# container.
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_TERMINAL_PROMPT=0
+export GIT_OPTIONAL_LOCKS=0
+
+# git, pointed at the repository, with the switches described above.
+g=(git -C "$repo" --no-pager
+  -c core.hooksPath=/dev/null   # no hooks, whatever the repository's config says
+  -c core.fsmonitor=false       # no file-system monitor program
+  -c core.pager=cat)            # no pager program
+
+if ! "${g[@]}" rev-parse --quiet --verify "refs/heads/$branch^{commit}" >/dev/null 2>&1; then
+  echo "sandbox-bundle: no branch '$branch' in the workspace repository" >&2
+  exit 1
+fi
+
+exec "${g[@]}" bundle create --quiet - "refs/heads/$branch"

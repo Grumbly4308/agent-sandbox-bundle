@@ -1,0 +1,7 @@
+PASS B33-share-watch — gave a session 64 MB of the disk store and wrote 96 MB: the host's watch stopped the session after about 35 seconds and recorded why
+Filling the disk store (19968 MB free); other sessions on it will see it full until this ends...
+FAIL B33-store-full — wrote to the disk-backed workspace without a watch and it did not end with 'No space left on device' (status 0): 513+0 records in 512+0 records out 537182208 bytes (537 MB, 512 MiB) copied, 11.5324 s, 46.6 MB/s
+  fix: the store must be a filesystem of fixed size of its own, not a directory on your disk (./sandbox doctor explains how to make one)
+
+1 passed, 1 failed, 0 skipped for a stated reason.
+A barrier is missing or could not be tested. Do not let an agent loose in this session.

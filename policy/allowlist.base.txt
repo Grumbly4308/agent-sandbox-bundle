@@ -1,0 +1,20 @@
+# The hosts every session's agent may reach through the egress proxy,
+# whichever agent it is.  [logical B20]
+#
+# One host per line, then `#` and the reason it is here. A leading dot would
+# mean "this domain and everything beneath it"; nothing here needs one.
+#
+# This list holds only what the default toolchains cannot work without.
+# Every entry is a way out for data: the proxy checks the host name and
+# nothing else, so a host that accepts uploads is a way out for the whole
+# workspace to anyone who brings an account of their own.
+#
+# github.com is deliberately absent: the repository arrives as a git bundle,
+# and github.com accepts pushes. GitHub's download-only hosts are the preset
+# policy/presets/github-downloads.txt (`./sandbox allow --preset
+# github-downloads`). Your own additions go in allowlist.local through
+# `./sandbox allow`, not in this file.
+
+registry.npmjs.org       # npm install: package metadata and tarballs. It also accepts publishes, so it is an upload route.
+pypi.org                 # pip install: the package index. Uploads go to upload.pypi.org, which is not listed.
+files.pythonhosted.org   # pip install: the package files the index points to. Download only.

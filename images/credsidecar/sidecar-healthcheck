@@ -1,0 +1,38 @@
+#!/usr/bin/env node
+'use strict';
+// sidecar-healthcheck — exit 0 when the sidecar's listener answers.
+//
+// ./sandbox runs this inside the sidecar container (`podman exec`) while it
+// waits for the session to come up. It asks the server on this container's
+// own loopback address for /healthz, which the server answers itself and
+// never forwards. It says nothing about the credential: a sidecar with no
+// credential yet is healthy, and answers model requests with 503.
+//
+// SANDBOX_SIDECAR_LISTEN is set by the tests only; the port is 8080.
+//
+// With SANDBOX_SIDECAR_TLS=1 the server speaks only HTTPS, and only once
+// `sidecar-load --tls` has given it a key: until then this fails, which is
+// what ./sandbox waits on. The certificate names the session address, not
+// loopback, and this asks only whether the listener is up, so it is not
+// checked here; the agent checks it.
+
+const http = require('node:http');
+const https = require('node:https');
+
+const listen = process.env.SANDBOX_SIDECAR_LISTEN || '0.0.0.0:8080';
+const port = Number(listen.slice(listen.lastIndexOf(':') + 1));
+
+function unhealthy(why) {
+  process.stderr.write(`sidecar-healthcheck: ${why}\n`);
+  process.exit(1);
+}
+
+const tls = process.env.SANDBOX_SIDECAR_TLS === '1';
+const options = { host: '127.0.0.1', port, path: '/healthz', agent: false, timeout: 2000 };
+const request = (tls ? https : http).get(tls ? { ...options, rejectUnauthorized: false } : options, (res) => {
+  res.resume();
+  if (res.statusCode === 200) process.exit(0);
+  unhealthy(`the sidecar answered ${res.statusCode}`);
+});
+request.on('timeout', () => unhealthy('the sidecar did not answer within two seconds'));
+request.on('error', (err) => unhealthy(`the sidecar is not listening on port ${port} (${err.code})`));

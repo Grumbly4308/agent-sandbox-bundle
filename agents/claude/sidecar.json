@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "modes": {
+    "oauth": {
+      "upstream": "https://api.anthropic.com",
+      "strip": ["authorization", "x-api-key", "cookie"],
+      "inject": { "authorization": "Bearer {token}" },
+      "routes": [
+        { "method": "POST", "path": "/v1/messages", "body": "anthropic-messages", "model": true },
+        { "method": "POST", "path": "/v1/messages/count_tokens", "body": "anthropic-messages" }
+      ]
+    },
+    "apikey": {
+      "upstream": "https://api.anthropic.com",
+      "strip": ["authorization", "x-api-key", "cookie"],
+      "inject": { "x-api-key": "{token}" },
+      "routes": [
+        { "method": "POST", "path": "/v1/messages", "body": "anthropic-messages", "model": true },
+        { "method": "POST", "path": "/v1/messages/count_tokens", "body": "anthropic-messages" }
+      ]
+    }
+  },
+  "bodies": {
+    "anthropic-messages": {
+      "dialect": "anthropic-messages",
+      "deny_keys": ["mcp_servers"],
+      "tools_untyped": true,
+      "tools_allow": ["custom", "bash_*", "text_editor_*", "computer_*", "memory_*", "web_search_*"],
+      "tools_deny": ["web_fetch*", "code_execution*", "mcp*"],
+      "web_search": ["web_search_*"]
+    }
+  }
+}

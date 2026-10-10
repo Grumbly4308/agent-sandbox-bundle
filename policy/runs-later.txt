@@ -1,0 +1,102 @@
+# runs-later.txt — files that run, or decide what runs, AFTER you merge.
+#
+# Read by scripts/export.sh [logical B27]. Every changed path that matches a
+# pattern here is taken out of the code diff and shown in its own section,
+# "RUNS LATER — read this first". Nothing in the sandbox executes these files
+# for you; they execute on your machine, in CI, or in the next agent session,
+# once the change has left the sandbox. Reading them is the only barrier.
+#
+# This list is patterns. It cannot be complete: any source file can run later
+# too. It exists so the files that run WITHOUT anyone calling them are never
+# buried in the middle of a long diff.
+#
+# Format
+#   [id] Title          starts a group; groups are printed in this order
+#   pattern   # why     one pattern per line, with the reason it is here
+#
+# How a pattern matches (git does the matching, as a glob pathspec):
+#   - in any directory:  `package.json` also matches `web/package.json`
+#   - `*` stays inside one path component:  `Dockerfile*`, `*.gradle`
+#   - `dir/**` is everything below a directory of that name, at any depth
+#   - upper and lower case are the same (a Mac's disk treats them the same)
+# Allowed characters: letters, digits, `.`, `_`, `-`, `*`, `/`.
+#
+# The group id `lockfiles` is special: its files are summarised (entries
+# added, removed, changed, new download hosts, new install scripts) instead of
+# printed line by line.
+
+[lockfiles] Lockfiles
+package-lock.json     # npm installs exactly the versions and download URLs written here
+npm-shrinkwrap.json   # the same as package-lock.json, and it is published with the package
+yarn.lock             # Yarn installs exactly what this file resolves to
+pnpm-lock.yaml        # pnpm installs exactly what this file resolves to
+bun.lockb             # Bun's lockfile, binary form: cannot be read in a diff at all
+bun.lock              # Bun's lockfile, text form
+poetry.lock           # Poetry installs the files and hashes listed here
+Pipfile.lock          # pipenv installs the versions and hashes listed here
+uv.lock               # uv installs the versions and download URLs listed here
+Cargo.lock            # Cargo builds exactly these crate versions, from these sources
+go.sum                # the checksums Go accepts for each module; a changed line is a changed module
+Gemfile.lock          # Bundler installs these gems from the remotes named here
+composer.lock         # Composer installs these packages from the URLs written here
+
+[manifests] Dependency manifests
+package.json          # names dependencies, and `scripts` that npm runs on install, test and publish
+pyproject.toml        # names dependencies and the build backend that pip executes
+requirements*.txt     # pip installs every line; a line can name a URL or another index
+Pipfile               # names dependencies and package sources for pipenv
+setup.py              # arbitrary Python that pip runs at install time
+setup.cfg             # names dependencies and entry points for setuptools
+go.mod                # names modules and `replace` lines that redirect them
+Cargo.toml            # names crates, git sources and the build script
+Gemfile               # Ruby code that Bundler evaluates; names gems and their sources
+composer.json         # names packages, repositories and scripts Composer runs
+
+[ci] CI pipelines
+.github/workflows/**  # GitHub Actions: runs on push and pull request, with the repository's secrets
+.github/actions/**    # local actions called by those workflows
+.gitlab-ci.yml        # GitLab CI: runs on push
+.circleci/**          # CircleCI: runs on push
+azure-pipelines.yml   # Azure Pipelines: runs on push
+Jenkinsfile           # Jenkins: Groovy executed on the build server
+.buildkite/**         # Buildkite: pipeline and hook scripts run on the build agents
+
+[build] Build and task files
+Makefile              # `make` runs whatever is written here
+makefile              # the same, lower-case spelling
+GNUmakefile           # the same; GNU make reads this one first
+justfile              # `just` runs the recipes
+Taskfile.yml          # `task` runs the commands
+Taskfile.yaml         # the same, other spelling
+Dockerfile*           # every RUN line executes when the image is built
+Containerfile*        # the same, Podman's name for it
+docker-compose*.yml   # decides which images run, with which mounts and privileges
+docker-compose*.yaml  # the same, other spelling
+compose*.yml          # the same, current file name
+compose*.yaml         # the same, other spelling
+*.gradle              # Gradle build scripts are Groovy programs
+*.gradle.kts          # Gradle build scripts are Kotlin programs
+pom.xml               # Maven: names plugins that execute during the build
+
+[hooks] Hooks and tool configuration that executes
+.husky/**             # git hooks that npm installs into your clone
+.pre-commit-config.yaml  # hooks that pre-commit downloads and runs on every commit
+.githooks/**          # hook scripts, live once core.hooksPath points here
+.envrc                # direnv runs this shell script when you enter the directory
+.npmrc                # can point npm at another registry or switch install scripts on
+.yarnrc*              # can point Yarn at another registry or at a program to run as Yarn itself
+.pnpmfile.cjs         # JavaScript that pnpm runs during every install
+.vscode/tasks.json    # tasks an editor can run when the folder is opened
+.vscode/launch.json   # commands an editor runs when you press "debug"
+.devcontainer/**      # builds and starts a container, with commands, when the folder is opened
+.claude/**            # settings, hooks and commands Claude Code loads in the next session
+.mcp.json             # helper programs an agent starts in the next session
+AGENTS.md             # instructions the next agent session reads and follows
+CLAUDE.md             # instructions the next agent session reads and follows
+.codex/**             # configuration the Codex CLI loads in the next session
+opencode.json         # configuration OpenCode loads in the next session
+.opencode/**          # configuration, agents and commands OpenCode loads in the next session
+
+[git] Git plumbing in the tree
+.gitattributes        # can hide a file from diffs and name filter programs to run on checkout
+.gitmodules           # names other repositories for git to clone, from any URL

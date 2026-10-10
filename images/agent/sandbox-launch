@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# sandbox-launch [--auto] [args...] — start the agent's CLI in the
+# repository.
+#
+#   podman exec -it <agent> sandbox-launch [--auto] [args...]
+#
+# Which CLI, and how it is told where the credential sidecar is, is the
+# business of the agent plug-in (agents/<name>/launch in the source tree,
+# copied to /usr/share/sandbox/agent/ when the image is built). This script
+# only goes to the repository and hands over, so a new agent needs no change
+# here.
+#
+# --auto asks the plug-in to start the CLI with its permission prompts off.
+# Prompts are for a person who is watching; the container is the boundary
+# either way.
+set -euo pipefail
+
+cd /workspace/repo
+exec /usr/share/sandbox/agent/launch "$@"

@@ -1,0 +1,21 @@
+# Codex CLI: the hosts this agent's session adds to the egress proxy's
+# lists.  [logical B20, B21]
+#
+# Two sections. `[agent]` hosts are reachable from the agent container.
+# `[sidecar]` hosts are reachable from the credential sidecar's address and
+# from nowhere else: the agent cannot reach the model vendor directly, so it
+# cannot send your code there under an account of the attacker's.
+# One host per line, then `#` and the reason.
+
+[agent]
+# Nothing, on purpose. Codex is configured with a model provider that points
+# at the sidecar, which is on the session's own network and not behind the
+# proxy, and every model call goes there (Codex 0.159.3, spike of
+# 2026-10-01). `codex cloud` cannot be pointed at the sidecar and does not
+# work in the sandbox.
+
+[sidecar]
+chatgpt.com      # the model API when you sign in with a ChatGPT subscription (--auth oauth)
+api.openai.com   # the model API when you use an API key (--auth apikey)
+# auth.openai.com is deliberately absent: the short-lived token is renewed on
+# your host and piped in; the sidecar never refreshes a login.

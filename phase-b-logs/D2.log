@@ -1,0 +1,899 @@
+Workspaces: on the disk store at /var/lib/agent-sandbox-store.
+
+==== doctor
+  ok    not root (sandboxer)
+  ok    this account cannot become root with sudo
+  ok    Podman 5.4.2, rootless, on this machine
+  ok    Podman is 4.4 or newer
+  ok    network backend is netavark
+  ok    cgroup v2 with cpu, memory and pids delegated
+  ok    subordinate UIDs cover the container users (61000-61003)
+  ok    subordinate GIDs cover the container users (61000-61003)
+  warn  no SELinux on this host, and rootless Podman applies no AppArmor profile: barrier B05 is absent here
+  ok    seccomp/agent-seccomp.json is present
+  ok    git is installed
+  ok    base images are pinned by digest
+  ok    gitleaks is installed
+  ok    keyring tool (secret-tool) is present
+  ok    no crash handler is started on the host (core_pattern is a file name)
+  ok    disk store /var/lib/agent-sandbox-store is a separate filesystem that you own
+  ok    memory: the session may use up to 3.5 GB; 6.1 GB is available
+  ok    no session is past its time limit
+
+This host is ready.
+
+==== path mode: run
+This session may use up to 3.5 GB of this host's memory:
+  agent 3.0 GB = 2g for processes + 512m /tmp + 512m home + 64m shared memory
+  proxy, sidecar, keeper and services 0.5 GB
+Its workspace is on disk: up to 1g of the store at /var/lib/agent-sandbox-store.
+Only committed work goes in: uncommitted changes in /tmp/tmp.bIb8iCSxAZ/mini-node stay where they are.
+==> cloning /tmp/tmp.bIb8iCSxAZ/mini-node on this host
+==> building localhost/agent-sandbox/agent-claude:node-2.0.0
+time="2026-10-09T23:59:08-05:00" level=warning msg="missing \"VERSION\" build argument. Try adding \"--build-arg VERSION=<VALUE>\" to the command line"
+[1/2] STEP 1/2: FROM docker.io/library/node:22-bookworm-slim@sha256:efd0ab5780c2d9ab1f0f869571a00d5edb17793bff4cce4a2792e3eb0ffc7562 AS empty
+[1/2] STEP 2/2: RUN mkdir /out && : > /out/resolv.conf
+--> Using cache 63f9e520cb4d29a7b1d62a1d8bde1eac6649bd7d9044d317d59e20e444879f7b
+--> 63f9e520cb4d
+[2/2] STEP 1/28: FROM docker.io/library/node:22-bookworm-slim@sha256:efd0ab5780c2d9ab1f0f869571a00d5edb17793bff4cce4a2792e3eb0ffc7562
+[2/2] STEP 2/28: ARG NODE_BASE
+--> Using cache 3b30b2d5a3e71bae6c3c73272e039a1bc77d508478a62ab97f687bcb2fd8d615
+--> 3b30b2d5a3e7
+[2/2] STEP 3/28: ARG AGENT
+--> Using cache 78026c28058f65b5c0c8f7cd8afde27deb224b5d714a6637a9a08a3d545484bc
+--> 78026c28058f
+[2/2] STEP 4/28: ARG TOOLCHAIN=node
+--> Using cache a982ad27008a3c8606080da8abe59d5a3dabcde7ef58fd3aff3e0e9070b68930
+--> a982ad27008a
+[2/2] STEP 5/28: ARG VERSION
+--> Using cache b4ef3872710d8be6d022b605bd2381e02848df2f4f8066d60321d2e8ed2706cc
+--> b4ef3872710d
+[2/2] STEP 6/28: ARG SANDBOX_VERSION
+--> Using cache d3397c8db0a8f77de000c63d9a5d74c53643571597ae7cf13f36dda59bf3c280
+--> d3397c8db0a8
+[2/2] STEP 7/28: RUN case "${NODE_BASE}" in *@sha256:*) ;; *) echo "agent image: NODE_BASE must be pinned by digest (registry/repo:tag@sha256:...), got '${NODE_BASE}'. Run scripts/pin-images.sh." >&2; exit 1 ;; esac
+--> 133e41a1956b
+[2/2] STEP 8/28: RUN set -eu;     [ -n "${AGENT:-}" ] || { echo "agent image: --build-arg AGENT=<name> is required" >&2; exit 1; };     [ -n "${VERSION:-${SANDBOX_VERSION:-}}" ] || { echo "agent image: --build-arg VERSION=<version> is required" >&2; exit 1; };     case "${TOOLCHAIN}" in node|python|full) ;; *) echo "agent image: TOOLCHAIN must be node, python or full" >&2; exit 1 ;; esac;     find / -xdev -type f -perm /6000 | sort > /tmp/setuid.base
+--> fe8a0b0dc583
+[2/2] STEP 9/28: ENV LANG=C.UTF-8     NPM_CONFIG_UPDATE_NOTIFIER=false     PIP_DISABLE_PIP_VERSION_CHECK=1
+--> ff02f1e0509b
+[2/2] STEP 10/28: RUN rm -rf /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg            /usr/local/bin/corepack /usr/local/lib/node_modules/corepack
+--> efd0edb1b179
+[2/2] STEP 11/28: RUN apt-get update  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends       ca-certificates       catatonit       curl       git       jq       less       patch       procps       ripgrep  && rm -rf /var/lib/apt/lists/*
+Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
+Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]
+Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [34.8 kB]
+Get:4 http://deb.debian.org/debian bookworm/main amd64 Packages [8790 kB]
+Get:5 http://deb.debian.org/debian bookworm-updates/main amd64 Packages [6924 B]
+Get:6 http://deb.debian.org/debian-security bookworm-security/main amd64 Packages [349 kB]
+Fetched 9388 kB in 1s (9411 kB/s)
+Reading package lists...
+Reading package lists...
+Building dependency tree...
+Reading state information...
+The following additional packages will be installed:
+  git-man libbrotli1 libcurl3-gnutls libcurl4 liberror-perl libexpat1
+  libgdbm-compat4 libgdbm6 libgssapi-krb5-2 libjq1 libk5crypto3 libkeyutils1
+  libkrb5-3 libkrb5support0 libldap-2.5-0 libncursesw6 libnghttp2-14 libonig5
+  libperl5.36 libproc2-0 libpsl5 librtmp1 libsasl2-2 libsasl2-modules-db
+  libssh2-1 libssl3 openssl perl perl-base perl-modules-5.36
+Suggested packages:
+  gettext-base git-daemon-run | git-daemon-sysvinit git-doc git-email git-gui
+  gitk gitweb git-cvs git-mediawiki git-svn gdbm-l10n krb5-doc krb5-user
+  sensible-utils ed diffutils-doc perl-doc libterm-readline-gnu-perl
+  | libterm-readline-perl-perl make libtap-harness-archive-perl
+Recommended packages:
+  ssh-client krb5-locales libldap-common libgpm2 publicsuffix libsasl2-modules
+  netbase psmisc
+The following NEW packages will be installed:
+  ca-certificates catatonit curl git git-man jq less libbrotli1
+  libcurl3-gnutls libcurl4 liberror-perl libexpat1 libgdbm-compat4 libgdbm6
+  libgssapi-krb5-2 libjq1 libk5crypto3 libkeyutils1 libkrb5-3 libkrb5support0
+  libldap-2.5-0 libncursesw6 libnghttp2-14 libonig5 libperl5.36 libproc2-0
+  libpsl5 librtmp1 libsasl2-2 libsasl2-modules-db libssh2-1 libssl3 openssl
+  patch perl perl-modules-5.36 procps ripgrep
+The following packages will be upgraded:
+  perl-base
+1 upgraded, 38 newly installed, 0 to remove and 0 not upgraded.
+Need to get 27.7 MB of archives.
+After this operation, 123 MB of additional disk space will be used.
+Get:1 http://deb.debian.org/debian-security bookworm-security/main amd64 perl-base amd64 5.36.0-7+deb12u4 [1610 kB]
+Get:2 http://deb.debian.org/debian-security bookworm-security/main amd64 perl-modules-5.36 all 5.36.0-7+deb12u4 [2817 kB]
+Get:3 http://deb.debian.org/debian bookworm/main amd64 libgdbm6 amd64 1.23-3 [72.2 kB]
+Get:4 http://deb.debian.org/debian bookworm/main amd64 libgdbm-compat4 amd64 1.23-3 [48.2 kB]
+Get:5 http://deb.debian.org/debian-security bookworm-security/main amd64 libperl5.36 amd64 5.36.0-7+deb12u4 [4208 kB]
+Get:6 http://deb.debian.org/debian-security bookworm-security/main amd64 perl amd64 5.36.0-7+deb12u4 [239 kB]
+Get:7 http://deb.debian.org/debian bookworm/main amd64 less amd64 590-2.1~deb12u2 [132 kB]
+Get:8 http://deb.debian.org/debian bookworm/main amd64 libncursesw6 amd64 6.4-4 [134 kB]
+Get:9 http://deb.debian.org/debian bookworm/main amd64 libproc2-0 amd64 2:4.0.2-3 [62.8 kB]
+Get:10 http://deb.debian.org/debian bookworm/main amd64 procps amd64 2:4.0.2-3 [709 kB]
+Get:11 http://deb.debian.org/debian-security bookworm-security/main amd64 libssl3 amd64 3.0.22-1~deb12u1 [2039 kB]
+Get:12 http://deb.debian.org/debian-security bookworm-security/main amd64 openssl amd64 3.0.22-1~deb12u1 [1442 kB]
+Get:13 http://deb.debian.org/debian-security bookworm-security/main amd64 ca-certificates all 20250419~deb12u1 [162 kB]
+Get:14 http://deb.debian.org/debian bookworm/main amd64 catatonit amd64 0.1.7-1+b2 [261 kB]
+Get:15 http://deb.debian.org/debian bookworm/main amd64 libbrotli1 amd64 1.0.9-2+b6 [275 kB]
+Get:16 http://deb.debian.org/debian bookworm/main amd64 libkrb5support0 amd64 1.20.1-2+deb12u5 [33.2 kB]
+Get:17 http://deb.debian.org/debian bookworm/main amd64 libk5crypto3 amd64 1.20.1-2+deb12u5 [79.7 kB]
+Get:18 http://deb.debian.org/debian bookworm/main amd64 libkeyutils1 amd64 1.6.3-2 [8808 B]
+Get:19 http://deb.debian.org/debian bookworm/main amd64 libkrb5-3 amd64 1.20.1-2+deb12u5 [332 kB]
+Get:20 http://deb.debian.org/debian bookworm/main amd64 libgssapi-krb5-2 amd64 1.20.1-2+deb12u5 [135 kB]
+Get:21 http://deb.debian.org/debian bookworm/main amd64 libsasl2-modules-db amd64 2.1.28+dfsg-10 [20.3 kB]
+Get:22 http://deb.debian.org/debian bookworm/main amd64 libsasl2-2 amd64 2.1.28+dfsg-10 [59.7 kB]
+Get:23 http://deb.debian.org/debian bookworm/main amd64 libldap-2.5-0 amd64 2.5.13+dfsg-5 [183 kB]
+Get:24 http://deb.debian.org/debian bookworm/main amd64 libnghttp2-14 amd64 1.52.0-1+deb12u3 [72.4 kB]
+Get:25 http://deb.debian.org/debian bookworm/main amd64 libpsl5 amd64 0.21.2-1 [58.7 kB]
+Get:26 http://deb.debian.org/debian bookworm/main amd64 librtmp1 amd64 2.4+20151223.gitfa8646d.1-2+b2 [60.8 kB]
+Get:27 http://deb.debian.org/debian-security bookworm-security/main amd64 libssh2-1 amd64 1.10.0-3+deb12u1 [176 kB]
+Get:28 http://deb.debian.org/debian bookworm/main amd64 libcurl4 amd64 7.88.1-10+deb12u15 [392 kB]
+Get:29 http://deb.debian.org/debian bookworm/main amd64 curl amd64 7.88.1-10+deb12u15 [316 kB]
+Get:30 http://deb.debian.org/debian bookworm/main amd64 libcurl3-gnutls amd64 7.88.1-10+deb12u15 [386 kB]
+Get:31 http://deb.debian.org/debian-security bookworm-security/main amd64 libexpat1 amd64 2.5.0-1+deb12u4 [106 kB]
+Get:32 http://deb.debian.org/debian bookworm/main amd64 liberror-perl all 0.17029-2 [29.0 kB]
+Get:33 http://deb.debian.org/debian bookworm/main amd64 git-man all 1:2.39.5-0+deb12u3 [2053 kB]
+Get:34 http://deb.debian.org/debian bookworm/main amd64 git amd64 1:2.39.5-0+deb12u3 [7264 kB]
+Get:35 http://deb.debian.org/debian bookworm/main amd64 libonig5 amd64 6.9.8-1 [188 kB]
+Get:36 http://deb.debian.org/debian bookworm/main amd64 libjq1 amd64 1.6-2.1+deb12u2 [136 kB]
+Get:37 http://deb.debian.org/debian bookworm/main amd64 jq amd64 1.6-2.1+deb12u2 [64.0 kB]
+Get:38 http://deb.debian.org/debian bookworm/main amd64 patch amd64 2.7.6-7 [128 kB]
+Get:39 http://deb.debian.org/debian bookworm/main amd64 ripgrep amd64 13.0.0-4+b2 [1253 kB]
+debconf: delaying package configuration, since apt-utils is not installed
+Fetched 27.7 MB in 1s (29.8 MB/s)
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6096 files and directories currently installed.)
+Preparing to unpack .../perl-base_5.36.0-7+deb12u4_amd64.deb ...
+Unpacking perl-base (5.36.0-7+deb12u4) over (5.36.0-7+deb12u3) ...
+Setting up perl-base (5.36.0-7+deb12u4) ...
+Selecting previously unselected package perl-modules-5.36.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6096 files and directories currently installed.)
+Preparing to unpack .../00-perl-modules-5.36_5.36.0-7+deb12u4_all.deb ...
+Unpacking perl-modules-5.36 (5.36.0-7+deb12u4) ...
+Selecting previously unselected package libgdbm6:amd64.
+Preparing to unpack .../01-libgdbm6_1.23-3_amd64.deb ...
+Unpacking libgdbm6:amd64 (1.23-3) ...
+Selecting previously unselected package libgdbm-compat4:amd64.
+Preparing to unpack .../02-libgdbm-compat4_1.23-3_amd64.deb ...
+Unpacking libgdbm-compat4:amd64 (1.23-3) ...
+Selecting previously unselected package libperl5.36:amd64.
+Preparing to unpack .../03-libperl5.36_5.36.0-7+deb12u4_amd64.deb ...
+Unpacking libperl5.36:amd64 (5.36.0-7+deb12u4) ...
+Selecting previously unselected package perl.
+Preparing to unpack .../04-perl_5.36.0-7+deb12u4_amd64.deb ...
+Unpacking perl (5.36.0-7+deb12u4) ...
+Selecting previously unselected package less.
+Preparing to unpack .../05-less_590-2.1~deb12u2_amd64.deb ...
+Unpacking less (590-2.1~deb12u2) ...
+Selecting previously unselected package libncursesw6:amd64.
+Preparing to unpack .../06-libncursesw6_6.4-4_amd64.deb ...
+Unpacking libncursesw6:amd64 (6.4-4) ...
+Selecting previously unselected package libproc2-0:amd64.
+Preparing to unpack .../07-libproc2-0_2%3a4.0.2-3_amd64.deb ...
+Unpacking libproc2-0:amd64 (2:4.0.2-3) ...
+Selecting previously unselected package procps.
+Preparing to unpack .../08-procps_2%3a4.0.2-3_amd64.deb ...
+Unpacking procps (2:4.0.2-3) ...
+Selecting previously unselected package libssl3:amd64.
+Preparing to unpack .../09-libssl3_3.0.22-1~deb12u1_amd64.deb ...
+Unpacking libssl3:amd64 (3.0.22-1~deb12u1) ...
+Selecting previously unselected package openssl.
+Preparing to unpack .../10-openssl_3.0.22-1~deb12u1_amd64.deb ...
+Unpacking openssl (3.0.22-1~deb12u1) ...
+Selecting previously unselected package ca-certificates.
+Preparing to unpack .../11-ca-certificates_20250419~deb12u1_all.deb ...
+Unpacking ca-certificates (20250419~deb12u1) ...
+Selecting previously unselected package catatonit.
+Preparing to unpack .../12-catatonit_0.1.7-1+b2_amd64.deb ...
+Unpacking catatonit (0.1.7-1+b2) ...
+Selecting previously unselected package libbrotli1:amd64.
+Preparing to unpack .../13-libbrotli1_1.0.9-2+b6_amd64.deb ...
+Unpacking libbrotli1:amd64 (1.0.9-2+b6) ...
+Selecting previously unselected package libkrb5support0:amd64.
+Preparing to unpack .../14-libkrb5support0_1.20.1-2+deb12u5_amd64.deb ...
+Unpacking libkrb5support0:amd64 (1.20.1-2+deb12u5) ...
+Selecting previously unselected package libk5crypto3:amd64.
+Preparing to unpack .../15-libk5crypto3_1.20.1-2+deb12u5_amd64.deb ...
+Unpacking libk5crypto3:amd64 (1.20.1-2+deb12u5) ...
+Selecting previously unselected package libkeyutils1:amd64.
+Preparing to unpack .../16-libkeyutils1_1.6.3-2_amd64.deb ...
+Unpacking libkeyutils1:amd64 (1.6.3-2) ...
+Selecting previously unselected package libkrb5-3:amd64.
+Preparing to unpack .../17-libkrb5-3_1.20.1-2+deb12u5_amd64.deb ...
+Unpacking libkrb5-3:amd64 (1.20.1-2+deb12u5) ...
+Selecting previously unselected package libgssapi-krb5-2:amd64.
+Preparing to unpack .../18-libgssapi-krb5-2_1.20.1-2+deb12u5_amd64.deb ...
+Unpacking libgssapi-krb5-2:amd64 (1.20.1-2+deb12u5) ...
+Selecting previously unselected package libsasl2-modules-db:amd64.
+Preparing to unpack .../19-libsasl2-modules-db_2.1.28+dfsg-10_amd64.deb ...
+Unpacking libsasl2-modules-db:amd64 (2.1.28+dfsg-10) ...
+Selecting previously unselected package libsasl2-2:amd64.
+Preparing to unpack .../20-libsasl2-2_2.1.28+dfsg-10_amd64.deb ...
+Unpacking libsasl2-2:amd64 (2.1.28+dfsg-10) ...
+Selecting previously unselected package libldap-2.5-0:amd64.
+Preparing to unpack .../21-libldap-2.5-0_2.5.13+dfsg-5_amd64.deb ...
+Unpacking libldap-2.5-0:amd64 (2.5.13+dfsg-5) ...
+Selecting previously unselected package libnghttp2-14:amd64.
+Preparing to unpack .../22-libnghttp2-14_1.52.0-1+deb12u3_amd64.deb ...
+Unpacking libnghttp2-14:amd64 (1.52.0-1+deb12u3) ...
+Selecting previously unselected package libpsl5:amd64.
+Preparing to unpack .../23-libpsl5_0.21.2-1_amd64.deb ...
+Unpacking libpsl5:amd64 (0.21.2-1) ...
+Selecting previously unselected package librtmp1:amd64.
+Preparing to unpack .../24-librtmp1_2.4+20151223.gitfa8646d.1-2+b2_amd64.deb ...
+Unpacking librtmp1:amd64 (2.4+20151223.gitfa8646d.1-2+b2) ...
+Selecting previously unselected package libssh2-1:amd64.
+Preparing to unpack .../25-libssh2-1_1.10.0-3+deb12u1_amd64.deb ...
+Unpacking libssh2-1:amd64 (1.10.0-3+deb12u1) ...
+Selecting previously unselected package libcurl4:amd64.
+Preparing to unpack .../26-libcurl4_7.88.1-10+deb12u15_amd64.deb ...
+Unpacking libcurl4:amd64 (7.88.1-10+deb12u15) ...
+Selecting previously unselected package curl.
+Preparing to unpack .../27-curl_7.88.1-10+deb12u15_amd64.deb ...
+Unpacking curl (7.88.1-10+deb12u15) ...
+Selecting previously unselected package libcurl3-gnutls:amd64.
+Preparing to unpack .../28-libcurl3-gnutls_7.88.1-10+deb12u15_amd64.deb ...
+Unpacking libcurl3-gnutls:amd64 (7.88.1-10+deb12u15) ...
+Selecting previously unselected package libexpat1:amd64.
+Preparing to unpack .../29-libexpat1_2.5.0-1+deb12u4_amd64.deb ...
+Unpacking libexpat1:amd64 (2.5.0-1+deb12u4) ...
+Selecting previously unselected package liberror-perl.
+Preparing to unpack .../30-liberror-perl_0.17029-2_all.deb ...
+Unpacking liberror-perl (0.17029-2) ...
+Selecting previously unselected package git-man.
+Preparing to unpack .../31-git-man_1%3a2.39.5-0+deb12u3_all.deb ...
+Unpacking git-man (1:2.39.5-0+deb12u3) ...
+Selecting previously unselected package git.
+Preparing to unpack .../32-git_1%3a2.39.5-0+deb12u3_amd64.deb ...
+Unpacking git (1:2.39.5-0+deb12u3) ...
+Selecting previously unselected package libonig5:amd64.
+Preparing to unpack .../33-libonig5_6.9.8-1_amd64.deb ...
+Unpacking libonig5:amd64 (6.9.8-1) ...
+Selecting previously unselected package libjq1:amd64.
+Preparing to unpack .../34-libjq1_1.6-2.1+deb12u2_amd64.deb ...
+Unpacking libjq1:amd64 (1.6-2.1+deb12u2) ...
+Selecting previously unselected package jq.
+Preparing to unpack .../35-jq_1.6-2.1+deb12u2_amd64.deb ...
+Unpacking jq (1.6-2.1+deb12u2) ...
+Selecting previously unselected package patch.
+Preparing to unpack .../36-patch_2.7.6-7_amd64.deb ...
+Unpacking patch (2.7.6-7) ...
+Selecting previously unselected package ripgrep.
+Preparing to unpack .../37-ripgrep_13.0.0-4+b2_amd64.deb ...
+Unpacking ripgrep (13.0.0-4+b2) ...
+Setting up libexpat1:amd64 (2.5.0-1+deb12u4) ...
+Setting up libkeyutils1:amd64 (1.6.3-2) ...
+Setting up libpsl5:amd64 (0.21.2-1) ...
+Setting up libbrotli1:amd64 (1.0.9-2+b6) ...
+Setting up libssl3:amd64 (3.0.22-1~deb12u1) ...
+Setting up libnghttp2-14:amd64 (1.52.0-1+deb12u3) ...
+Setting up less (590-2.1~deb12u2) ...
+Setting up libkrb5support0:amd64 (1.20.1-2+deb12u5) ...
+Setting up libsasl2-modules-db:amd64 (2.1.28+dfsg-10) ...
+Setting up perl-modules-5.36 (5.36.0-7+deb12u4) ...
+Setting up librtmp1:amd64 (2.4+20151223.gitfa8646d.1-2+b2) ...
+Setting up catatonit (0.1.7-1+b2) ...
+Setting up libproc2-0:amd64 (2:4.0.2-3) ...
+Setting up patch (2.7.6-7) ...
+Setting up libncursesw6:amd64 (6.4-4) ...
+Setting up libk5crypto3:amd64 (1.20.1-2+deb12u5) ...
+Setting up libsasl2-2:amd64 (2.1.28+dfsg-10) ...
+Setting up ripgrep (13.0.0-4+b2) ...
+Setting up procps (2:4.0.2-3) ...
+Setting up git-man (1:2.39.5-0+deb12u3) ...
+Setting up libssh2-1:amd64 (1.10.0-3+deb12u1) ...
+Setting up libkrb5-3:amd64 (1.20.1-2+deb12u5) ...
+Setting up openssl (3.0.22-1~deb12u1) ...
+Setting up libonig5:amd64 (6.9.8-1) ...
+Setting up libgdbm6:amd64 (1.23-3) ...
+Setting up libjq1:amd64 (1.6-2.1+deb12u2) ...
+Setting up libldap-2.5-0:amd64 (2.5.13+dfsg-5) ...
+Setting up ca-certificates (20250419~deb12u1) ...
+Updating certificates in /etc/ssl/certs...
+150 added, 0 removed; done.
+Setting up libgssapi-krb5-2:amd64 (1.20.1-2+deb12u5) ...
+Setting up libgdbm-compat4:amd64 (1.23-3) ...
+Setting up jq (1.6-2.1+deb12u2) ...
+Setting up libcurl4:amd64 (7.88.1-10+deb12u15) ...
+Setting up curl (7.88.1-10+deb12u15) ...
+Setting up libperl5.36:amd64 (5.36.0-7+deb12u4) ...
+Setting up libcurl3-gnutls:amd64 (7.88.1-10+deb12u15) ...
+Setting up perl (5.36.0-7+deb12u4) ...
+Setting up liberror-perl (0.17029-2) ...
+Setting up git (1:2.39.5-0+deb12u3) ...
+Processing triggers for libc-bin (2.36-9+deb12u14) ...
+Processing triggers for ca-certificates (20250419~deb12u1) ...
+Updating certificates in /etc/ssl/certs...
+0 added, 0 removed; done.
+Running hooks in /etc/ca-certificates/update.d...
+done.
+--> 0c04d183b618
+[2/2] STEP 12/28: RUN case "${TOOLCHAIN}" in python|full) ;; *) exit 0 ;; esac  && apt-get update  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends       python3       python3-pip       python3-venv  && rm -rf /var/lib/apt/lists/*
+--> 277a5374dc91
+[2/2] STEP 13/28: RUN case "${TOOLCHAIN}" in full) ;; *) exit 0 ;; esac  && apt-get update  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends       build-essential       python3-dev       chromium  && rm -rf /var/lib/apt/lists/*  && rm -f /usr/lib/dbus-1.0/dbus-daemon-launch-helper
+--> 9402ec2b88e2
+[2/2] STEP 14/28: RUN git config --system protocol.ext.allow never
+--> f8b3dda2d341
+[2/2] STEP 15/28: RUN if getent passwd node >/dev/null; then userdel --remove node; fi  && groupadd --gid 61000 agent  && useradd --uid 61000 --gid 61000 --no-log-init --no-create-home             --home-dir /home/agent --shell /bin/bash agent
+userdel: node mail spool (/var/mail/node) not found
+useradd warning: agent's uid 61000 outside of the UID_MIN 1000 and UID_MAX 60000 range.
+--> df0b09469373
+[2/2] STEP 16/28: RUN install -d -m 1777 /workspace
+--> 44c93ed94ea1
+[2/2] STEP 17/28: COPY agents/${AGENT}/ /usr/share/sandbox/agent/
+--> 5bfcfc4b167c
+[2/2] STEP 18/28: RUN bash /usr/share/sandbox/agent/install.sh > /tmp/cli.version  && chmod 0755 /usr/share/sandbox/agent/launch
+install(claude): verified @anthropic-ai/claude-code@2.1.283
+install(claude): verified @anthropic-ai/claude-code-linux-x64@2.1.283
+install(claude): installed: 2.1.283 (Claude Code)
+--> 2a71182c8380
+[2/2] STEP 19/28: COPY --chmod=0755 images/agent/sandbox-idle images/agent/sandbox-import      images/agent/sandbox-bundle images/agent/sandbox-launch /usr/local/bin/
+--> 375a3ea84acc
+[2/2] STEP 20/28: COPY --chmod=0755 images/agent/verify-inside.sh images/agent/make-sbom.sh /usr/share/sandbox/
+--> 92ee75c94418
+[2/2] STEP 21/28: RUN set -eu;     version="${VERSION:-${SANDBOX_VERSION:-}}";     {       echo "sandbox=${version}";       echo "${AGENT}=$(tail -n 1 /tmp/cli.version)";       echo "node=$(node --version | sed 's/^v//')";       echo "git=$(git --version | sed 's/^git version //')";       echo "toolchain=${TOOLCHAIN}";     } > /usr/share/sandbox/versions;     /usr/share/sandbox/make-sbom.sh "${NODE_BASE}"       "localhost/agent-sandbox/agent-${AGENT}" "${TOOLCHAIN}-${version}"       > /usr/share/sandbox/sbom.json;     rm -f /tmp/cli.version
+--> 21d011512dd0
+[2/2] STEP 22/28: RUN set -eu;     for required in catatonit git jq node npm rg curl; do       command -v "$required" >/dev/null 2>&1 || { echo "agent image: '$required' is missing" >&2; exit 1; };     done;     for forbidden in docker podman nerdctl buildah sudo ssh nc netcat ncat; do       if command -v "$forbidden" >/dev/null 2>&1; then         echo "agent image: '$forbidden' must not be in the image" >&2; exit 1;       fi;     done;     find / -xdev -type f -perm /6000 | sort > /tmp/setuid.now;     added="$(comm -13 /tmp/setuid.base /tmp/setuid.now)";     rm -f /tmp/setuid.base /tmp/setuid.now;     if [ -n "$added" ]; then       echo "agent image: the build added setuid/setgid programs:" >&2;       echo "$added" >&2; exit 1;     fi
+--> 9e0d99f6824b
+[2/2] STEP 23/28: COPY --from=empty /out/resolv.conf /etc/resolv.conf
+--> c71902058efc
+[2/2] STEP 24/28: COPY images/agent/hosts /etc/hosts
+--> 3413b3b5d93f
+[2/2] STEP 25/28: ENTRYPOINT []
+--> e42ccb50a97e
+[2/2] STEP 26/28: CMD ["sandbox-idle"]
+--> a6e97b813f63
+[2/2] STEP 27/28: USER 61000:61000
+--> 97c22046c387
+[2/2] STEP 28/28: WORKDIR /workspace
+[2/2] COMMIT localhost/agent-sandbox/agent-claude:node-2.0.0
+--> c9b80bec0ee7
+[Warning] one or more build args were not consumed: [ALPINE_BASE]
+Successfully tagged localhost/agent-sandbox/agent-claude:node-2.0.0
+c9b80bec0ee72d7bafc009dc0b872f7b71ac40a9cd22e514159470f913d62f23
+==> creating session asb-mini-node-777459
+==> importing branch agent/asb-mini-node-777459 (starting at f1e6dbe2947c)
+/tmp/sandbox-import.KYFxsx/repo.bundle is okay
+sandbox-import: agent/asb-mini-node-777459 at f1e6dbe2947c24f094bc95f5e3e0efb25c4920b9
+==> checking the barriers (verify --quick)
+PASS B01-user — read its own ids from the kernel: real, effective, saved and filesystem uid and gid are all 61000
+PASS B02-caps — read the five capability sets from the kernel: all empty (CapBnd, the ceiling for anything started here, included)
+PASS B02-raw-socket — opened a raw ICMP socket, which needs the NET_RAW capability: refused (1 Operation not permitted)
+PASS B02-caps-all — in each of [keeper proxy credsidecar agent]: Podman reports no capability added and empty effective and bounding sets, and a process started inside reads all five capability sets as empty from the kernel
+PASS B03-nnp-flag — the kernel reports NoNewPrivs: 1 for this process
+PASS B03-setuid-inert — found 11 setuid/setgid files on the root filesystem (/usr/bin/chfn /usr/bin/chsh /usr/bin/gpasswd /usr/bin/mount /usr/bin/newgrp /usr/bin/passwd ); ran /usr/bin/chfn: it started with effective uid 61000 and gid 61000, still the agent's
+PASS B03-nnp-all — in each of [keeper proxy credsidecar agent]: created with no-new-privileges, and a process started inside reads NoNewPrivs: 1 from the kernel
+PASS B04-seccomp-mode — the kernel reports Seccomp: 2 (a filter is attached to this process)
+PASS B04-ptrace — called ptrace(PTRACE_TRACEME), which the kernel and Podman's default filter both allow: refused (1 Operation not permitted)
+PASS B04-mount — called mount() to put a new filesystem on /tmp/.verify-mnt.143 (the system call itself, not the mount program, which gives up before asking): refused (1 Operation not permitted)
+PASS B04-unshare-user — ran 'unshare -U true' to create a user namespace: refused (unshare: unshare failed: Operation not permitted)
+PASS B04-clone-newuser — called clone() with CLONE_NEWUSER to start a process in a new user namespace: refused (1 Operation not permitted)
+PASS B04-clone3 — called clone3() with CLONE_NEWUSER: refused (38 Function not implemented)
+PASS B04-setns — called setns() on its own user namespace, which the kernel alone would answer with 'invalid argument': refused (1 Operation not permitted)
+PASS B04-process-vm-readv — called process_vm_readv() on its own process, which the kernel alone always allows: refused (1 Operation not permitted)
+PASS B04-bpf — called bpf() to create a map: refused (1 Operation not permitted)
+SKIP B05-lsm-label — (no-selinux) this host does not run SELinux, so there is no label to compare (the kernel reports 'runc (unconfined)'). Rootless Podman applies no AppArmor profile either: this barrier is absent on this host
+PASS B06-runtime-sockets — looked for the Docker, Podman, containerd and CRI-O sockets by path and by environment variable, and searched every mount for socket files outside the writable places: none
+PASS B06-runtime-binaries — looked on PATH for docker, podman, nerdctl and buildah, and searched the whole root filesystem for those programs and for dockerd, containerd, runc and crun: none
+PASS B06-pid1 — listed every process visible here: 2, all owned by uid 61000; process 1 is 'catatonit', the container's own first process, not the host's
+PASS B06-cgroupns — /proc/self/cgroup reads '0::/': this process sees the root of its own cgroup tree and nothing of the host's
+PASS B06-private-modes — in each of [keeper proxy credsidecar agent]: Podman reports not privileged, private process, shared-memory and cgroup namespaces, not the host's network, and no device passed in
+SKIP B06-runtime-class — (no-runtime-class) SANDBOX_RUNTIME_CLASS is not set, so the containers run on Podman's default runtime (runc), not gVisor
+PASS B07-readonly-root — tried to create a file and a directory in each of / /usr /etc: every attempt answered 'Read-only file system'
+PASS B07-readonly-all — in each of [keeper proxy credsidecar agent]: created with a read-only root, and creating a file in / from inside answered 'Read-only file system'
+PASS B08-writable-set — tried to create a file in each of the 29 mounts; it worked only in: /tmp /home /workspace /dev/shm /dev/mqueue. /dev/mqueue also accepts entries: they are message queues, not files, capped at 819200 bytes per user by ulimit.
+PASS B08-mount-flags — read the kernel's mount table: /tmp /home /dev/shm /workspace are each nosuid,nodev, capped at the size asked for, /dev/shm also noexec; the home directory and /workspace/repo are mode 700
+PASS B08-workspace-volume — podman volume inspect: the workspace is the directory /var/lib/agent-sandbox-store/asb-mini-node-777459 on the disk store, nosuid and nodev, and is a volume made for this session, not a folder of yours
+SKIP B08-fill — (quick) filling every memory-backed place to the brim is left out of --quick
+PASS B09-mounts — went through all 29 mounts in the kernel's table: the only host files are the ones Podman generates, read-only ( /run/.containerenv /etc/hostname), and the workspace on the disk store
+PASS B09-host-mounts — listed every mount Podman reports for [keeper proxy credsidecar agent]: the agent has the workspace volume and nothing else, no host path is writable anywhere, and the only host path at all is the proxy's read-only allowlists ( keeper:/workspace(volume,read-only) proxy:/etc/squid/session(bind,read-only) agent:/workspace(volume,writable) )
+PASS B10-pids-max — /sys/fs/cgroup/pids.max reads 512, the --pids-limit asked for
+PASS B10-memory-max — /sys/fs/cgroup/memory.max reads 3288334336 bytes, the --memory asked for (3288334336)
+PASS B10-swap-max — /sys/fs/cgroup/memory.swap.max reads 0: nothing of this container can be pushed to swap
+PASS B10-cpu-max — /sys/fs/cgroup/cpu.max reads '200000 100000': 200000/100000 = 2.000 processors, the --cpus asked for
+PASS B10-limits-all — Podman reports, for each of [keeper proxy credsidecar agent]: a memory limit, a memory+swap limit equal to it, a process limit and a CPU limit (the agent's are compared with the kernel's own numbers in B10-*-max)
+SKIP B10-fork-limit — (quick) forking up to the process limit is left out of --quick
+PASS B11-ulimits — read /proc/self/limits: open files 65536, processes 512, largest file 1073741824 bytes, core dumps 0, each as asked for, soft and hard
+PASS B11-fsize — wrote one byte at offset 1073741824, just past the largest-file limit: refused (the writer got the file-size signal)
+PASS B11-core-all — in each of [keeper proxy credsidecar agent]: a process started inside reads a core-dump limit of 0 (soft and hard) from the kernel
+PASS B12-no-route — connected straight to public addresses, ignoring the proxy: 1.1.1.1 [443 ENETUNREACH 80 ENETUNREACH 53 ENETUNREACH ] 2606:4700:4700::1111 [443 ENETUNREACH ] datagram to 8.8.8.8 [error ENETUNREACH]; the routing table has no default route and the only interface besides loopback is eth0 
+PASS B12-network-attach — Podman reports the agent on one network, asb-mini-node-777459-sandbox, which is marked internal; the proxy is the only container on asb-mini-node-777459-egress
+PASS B13-network-no-gateway — podman network inspect asb-mini-node-777459-sandbox: subnet 10.201.0.0/24, no gateway address, name service off (B13-gateway-ports probes the address from inside)
+PASS B13-hosts-all — in each of [keeper proxy credsidecar agent]: read /etc/hosts from inside. It is the image's own file, not one Podman wrote, and holds loopback addresses only
+PASS B13-gateway-ports — probed 10.201.0.1, the address a gateway would have, on 22 53 80 443 2375 2376 3000 5432 8080: nothing answered ( 22:EHOSTUNREACH 53:EHOSTUNREACH 80:EHOSTUNREACH 443:EHOSTUNREACH 2375:EHOSTUNREACH 2376:EHOSTUNREACH 3000:EHOSTUNREACH 5432:EHOSTUNREACH 8080:EHOSTUNREACH )
+PASS B13-etc-hosts — read all 2 entries of /etc/hosts: loopback only, and the file is the image's own, not one Podman wrote (which would name the host)
+PASS B14-no-resolver — /etc/resolv.conf names no resolver; 'getent hosts example.com' found nothing (and found localhost, so the tool works); a lookup from node failed with EAI_AGAIN
+PASS B14-dns-by-hand — sent a hand-made DNS question for example.com to 10.201.0.1 port 53, where a gateway's name service would be: no answer (timeout)
+PASS B15-token-absent — read the apikey credential from your keyring on this host, copied out and searched the agent's environment, /proc/*/environ, home, workspace, /tmp and /dev/shm for it: not there. Two canaries planted first were found, so the search works. The credential itself never entered the container
+PASS B15-key-files — searched every mount except the repository itself for SSH private keys, .git-credentials, .netrc and cloud, Docker, GitHub-CLI and Kubernetes credential files; looked for a git credential helper and for token variables in the environment: none
+SKIP B15-push — (no-remote) this session's repository was given as a local path, so there is no remote to push to
+PASS B16-add-address — tried to add 10.201.0.3 (the sidecar's address) to interface eth0, which needs the NET_ADMIN capability: refused (1 Operation not permitted)
+PASS B16-packet-socket — opened a packet socket, the kind used to forge another machine's address: refused (1 Operation not permitted)
+PASS B20-allowed-host — asked the proxy for a tunnel to files.pythonhosted.org:443, a host on the agent's list (the control: refusals mean nothing if nothing is ever allowed): the proxy answered 200 (allowed)
+PASS B20-denied-host — asked the proxy for a tunnel to vb004037ddf5db78a.example.com:443, a host on no list: the proxy answered 403 (refused)
+PASS B20-port-80 — asked the proxy for http://files.pythonhosted.org/ in plaintext on port 80 (an ALLOWED host, so only the port rule can refuse it): the proxy answered 403 (refused)
+PASS B20-connect-port — asked the proxy for a tunnel to files.pythonhosted.org:8443 (an ALLOWED host, so only the port rule can refuse it): the proxy answered 403 (refused)
+PASS B20-ip-literal-v4 — asked the proxy for a tunnel to the bare address 1.1.1.1:443: the proxy answered 403 (refused)
+PASS B20-ip-literal-v6 — asked the proxy for a tunnel to the bare address [2606:4700:4700::1111]:443: the proxy answered 403 (refused)
+PASS B20-never-allow — tried to allow storage.googleapis.com, a host on the never-allow list, twice: through the function './sandbox allow' uses, and by writing the entry into a copy of allowlist.local by hand and rendering the proxy's lists. Both were refused
+PASS B21-vendor-plain — asked the proxy, from the agent, for a tunnel to the model vendor's host api.anthropic.com:443 (B21-sidecar-allowed shows the same request is allowed from the sidecar): the proxy answered 403 (refused)
+PASS B21-vendor-forged — asked again for api.anthropic.com:443, this time claiming to be the sidecar with X-Forwarded-For: 10.201.0.3 and Forwarded: for=10.201.0.3: the proxy answered 403 (refused)
+PASS B21-sidecar-allowed — from the sidecar's address, asked the proxy for a tunnel to api.anthropic.com:443: allowed (200). The same request from the agent is refused (B21-vendor-plain), so the rule really is about the address
+PASS B22-credential-swap — sent a model request (POST /v1/messages) from the agent with a dummy credential to a second sidecar: the mock vendor received the sidecar's token and never saw the dummy
+PASS B22-credential-replace — piped a new token into the running sidecar and sent another request: the mock vendor received the new token, not the old one, with no restart
+PASS B23-mcp-servers — sent a model request naming a remote MCP server: refused with 400, and the mock vendor never received it
+PASS B23-web-fetch — sent a model request asking the vendor's servers to fetch a URL: refused with 400, and the mock vendor never received it
+PASS B24-oversized — sent a 33 MB model request: refused (http 413), and the mock vendor never received it
+PASS B25-search-logged — ran one web search through the second sidecar with the query 'verifysearch7c01a0b98db1fdb2' and found that query in the sidecar's log, as Podman collected it
+PASS B24-budget — with a budget of 3, the fourth model request was refused with 403 and the mock vendor received exactly 3 (the refused requests above cost nothing)
+PASS B23-unknown-path — asked this session's sidecar for /verify-not-forwarded, a path no CLI uses: 404, not forwarded
+PASS B25-proxy-log — the request B20-denied-host made is in the proxy's log, as Podman collected it: [10/Oct/2026:04:59:39] src=10.201.0.10 TCP_DENIED/403 up=95 down=3757 ms=0 dst=- CONNECT vb004037ddf5db78a.example.com:443
+PASS B26-deadline-set — Podman reports its own kill timer of 1800 seconds (this session's time limit) on every container of [keeper proxy credsidecar agent] except the keeper, which has none. Letting it pass is a test of its own: scripts/verify.sh --deadline-test
+PASS B26-keeper — Podman reports the keeper running with no network and as its own user 61003, so the agent can neither reach nor signal what holds the workspace (the agent's process list is checked in B06-pid1)
+SKIP B26-deadline — (separate) letting a time limit pass, with the launcher gone and the agent forking, needs a session of its own: scripts/verify.sh --deadline-test
+SKIP B27-export — (separate) the export attempts (hostile .git/config and hooks, attribution, a fake secret, a hidden lockfile change, a symlink, an endless stream) run in: scripts/verify.sh --deadline-test
+PASS B28-log-driver — Podman reports, for each of [keeper proxy credsidecar agent]: the k8s-file log driver (a file that belongs to the container and is deleted with it), and no log file lies inside anything mounted into a container
+PASS B29-rootless — this host: not root (uid 1002), and Podman reports that it runs rootless and on this machine
+SKIP B29-doctor — (quick) running doctor again is left out of --quick (./sandbox run has just run its checks)
+SKIP B30-other-branch — (no-git-relay) this session has no git relay (it is off unless you pass --git-relay)
+SKIP B30-tag — (no-git-relay) this session has no git relay (it is off unless you pass --git-relay)
+SKIP B30-force-push — (no-git-relay) this session has no git relay (it is off unless you pass --git-relay)
+SKIP B31-destroy — (separate) checking that destroy leaves nothing would destroy this session; it runs in: scripts/verify.sh --deadline-test
+PASS B32-logs-filter — wrote escape sequences (set-title, clear-screen, colour) into the agent's log and into a request line to the proxy. Podman's raw log holds them (5 control characters); './sandbox logs agent' and 'logs proxy' printed the same lines with none
+SKIP B33-store — (separate) writing past this session's share of the disk store would stop it; it runs in: scripts/verify.sh --store-test
+
+72 passed, 0 failed, 13 skipped for a stated reason.
+Session asb-mini-node-777459 runs until 2026-10-10 00:29, at most 40 model requests.
+From here on every byte on this screen is the agent's. Do not type a password into it.
+Failed to authenticate. API Error: 403 the model vendor rejected the sandbox's credential (it may have expired or been revoked). The agent cannot fix this; the operator can, with ./sandbox login
+
+The agent's CLI has exited with status 1. Session asb-mini-node-777459 is still there, holding its workspace.
+  bring the work out:   SANDBOX_SESSION=asb-mini-node-777459 ./sandbox export
+  remove the session:   SANDBOX_SESSION=asb-mini-node-777459 ./sandbox destroy
+PROBLEM: path mode: run exited 1
+
+==== path mode: verify (every check, on session asb-mini-node-777459)
+PASS B01-user — read its own ids from the kernel: real, effective, saved and filesystem uid and gid are all 61000
+PASS B02-caps — read the five capability sets from the kernel: all empty (CapBnd, the ceiling for anything started here, included)
+PASS B02-raw-socket — opened a raw ICMP socket, which needs the NET_RAW capability: refused (1 Operation not permitted)
+PASS B02-caps-all — in each of [keeper proxy credsidecar agent]: Podman reports no capability added and empty effective and bounding sets, and a process started inside reads all five capability sets as empty from the kernel
+PASS B03-nnp-flag — the kernel reports NoNewPrivs: 1 for this process
+PASS B03-setuid-inert — found 11 setuid/setgid files on the root filesystem (/usr/bin/chfn /usr/bin/chsh /usr/bin/gpasswd /usr/bin/mount /usr/bin/newgrp /usr/bin/passwd ); ran /usr/bin/chfn: it started with effective uid 61000 and gid 61000, still the agent's
+PASS B03-nnp-all — in each of [keeper proxy credsidecar agent]: created with no-new-privileges, and a process started inside reads NoNewPrivs: 1 from the kernel
+PASS B04-seccomp-mode — the kernel reports Seccomp: 2 (a filter is attached to this process)
+PASS B04-ptrace — called ptrace(PTRACE_TRACEME), which the kernel and Podman's default filter both allow: refused (1 Operation not permitted)
+PASS B04-mount — called mount() to put a new filesystem on /tmp/.verify-mnt.1391 (the system call itself, not the mount program, which gives up before asking): refused (1 Operation not permitted)
+PASS B04-unshare-user — ran 'unshare -U true' to create a user namespace: refused (unshare: unshare failed: Operation not permitted)
+PASS B04-clone-newuser — called clone() with CLONE_NEWUSER to start a process in a new user namespace: refused (1 Operation not permitted)
+PASS B04-clone3 — called clone3() with CLONE_NEWUSER: refused (38 Function not implemented)
+PASS B04-setns — called setns() on its own user namespace, which the kernel alone would answer with 'invalid argument': refused (1 Operation not permitted)
+PASS B04-process-vm-readv — called process_vm_readv() on its own process, which the kernel alone always allows: refused (1 Operation not permitted)
+PASS B04-bpf — called bpf() to create a map: refused (1 Operation not permitted)
+SKIP B05-lsm-label — (no-selinux) this host does not run SELinux, so there is no label to compare (the kernel reports 'runc (unconfined)'). Rootless Podman applies no AppArmor profile either: this barrier is absent on this host
+PASS B06-runtime-sockets — looked for the Docker, Podman, containerd and CRI-O sockets by path and by environment variable, and searched every mount for socket files outside the writable places: none
+PASS B06-runtime-binaries — looked on PATH for docker, podman, nerdctl and buildah, and searched the whole root filesystem for those programs and for dockerd, containerd, runc and crun: none
+PASS B06-pid1 — listed every process visible here: 3, all owned by uid 61000; process 1 is 'catatonit', the container's own first process, not the host's
+PASS B06-cgroupns — /proc/self/cgroup reads '0::/': this process sees the root of its own cgroup tree and nothing of the host's
+PASS B06-private-modes — in each of [keeper proxy credsidecar agent]: Podman reports not privileged, private process, shared-memory and cgroup namespaces, not the host's network, and no device passed in
+SKIP B06-runtime-class — (no-runtime-class) SANDBOX_RUNTIME_CLASS is not set, so the containers run on Podman's default runtime (runc), not gVisor
+PASS B07-readonly-root — tried to create a file and a directory in each of / /usr /etc: every attempt answered 'Read-only file system'
+PASS B07-readonly-all — in each of [keeper proxy credsidecar agent]: created with a read-only root, and creating a file in / from inside answered 'Read-only file system'
+PASS B08-writable-set — tried to create a file in each of the 29 mounts; it worked only in: /tmp /home /workspace /dev/shm /dev/mqueue. /dev/mqueue also accepts entries: they are message queues, not files, capped at 819200 bytes per user by ulimit.
+PASS B08-mount-flags — read the kernel's mount table: /tmp /home /dev/shm /workspace are each nosuid,nodev, capped at the size asked for, /dev/shm also noexec; the home directory and /workspace/repo are mode 700
+PASS B08-workspace-volume — podman volume inspect: the workspace is the directory /var/lib/agent-sandbox-store/asb-mini-node-777459 on the disk store, nosuid and nodev, and is a volume made for this session, not a folder of yours
+PASS B08-fill — filled /tmp /home /dev/shm to the brim, all at the same time (0 full gigabytes plus the remainders): each answered 'No space left on device' and no process was killed
+PASS B09-mounts — went through all 29 mounts in the kernel's table: the only host files are the ones Podman generates, read-only ( /run/.containerenv /etc/hostname), and the workspace on the disk store
+PASS B09-host-mounts — listed every mount Podman reports for [keeper proxy credsidecar agent]: the agent has the workspace volume and nothing else, no host path is writable anywhere, and the only host path at all is the proxy's read-only allowlists ( keeper:/workspace(volume,read-only) proxy:/etc/squid/session(bind,read-only) agent:/workspace(volume,writable) )
+PASS B10-pids-max — /sys/fs/cgroup/pids.max reads 512, the --pids-limit asked for
+PASS B10-memory-max — /sys/fs/cgroup/memory.max reads 3288334336 bytes, the --memory asked for (3288334336)
+PASS B10-swap-max — /sys/fs/cgroup/memory.swap.max reads 0: nothing of this container can be pushed to swap
+PASS B10-cpu-max — /sys/fs/cgroup/cpu.max reads '200000 100000': 200000/100000 = 2.000 processors, the --cpus asked for
+PASS B10-limits-all — Podman reports, for each of [keeper proxy credsidecar agent]: a memory limit, a memory+swap limit equal to it, a process limit and a CPU limit (the agent's are compared with the kernel's own numbers in B10-*-max)
+PASS B10-fork-limit — started processes until the kernel refused: 501 started, then 'resource temporarily unavailable' from the per-user process ulimit; the limit asked for is 512 (it also counts the processes already running)
+PASS B11-ulimits — read /proc/self/limits: open files 65536, processes 512, largest file 1073741824 bytes, core dumps 0, each as asked for, soft and hard
+PASS B11-fsize — wrote one byte at offset 1073741824, just past the largest-file limit: refused (the writer got the file-size signal)
+PASS B11-core-all — in each of [keeper proxy credsidecar agent]: a process started inside reads a core-dump limit of 0 (soft and hard) from the kernel
+PASS B12-no-route — connected straight to public addresses, ignoring the proxy: 1.1.1.1 [443 ENETUNREACH 80 ENETUNREACH 53 ENETUNREACH ] 2606:4700:4700::1111 [443 ENETUNREACH ] datagram to 8.8.8.8 [error ENETUNREACH]; the routing table has no default route and the only interface besides loopback is eth0 
+PASS B12-network-attach — Podman reports the agent on one network, asb-mini-node-777459-sandbox, which is marked internal; the proxy is the only container on asb-mini-node-777459-egress
+PASS B13-network-no-gateway — podman network inspect asb-mini-node-777459-sandbox: subnet 10.201.0.0/24, no gateway address, name service off (B13-gateway-ports probes the address from inside)
+PASS B13-hosts-all — in each of [keeper proxy credsidecar agent]: read /etc/hosts from inside. It is the image's own file, not one Podman wrote, and holds loopback addresses only
+PASS B13-gateway-ports — probed 10.201.0.1, the address a gateway would have, on 22 53 80 443 2375 2376 3000 5432 8080: nothing answered ( 22:EHOSTUNREACH 53:EHOSTUNREACH 80:EHOSTUNREACH 443:EHOSTUNREACH 2375:EHOSTUNREACH 2376:EHOSTUNREACH 3000:EHOSTUNREACH 5432:EHOSTUNREACH 8080:EHOSTUNREACH )
+PASS B13-etc-hosts — read all 2 entries of /etc/hosts: loopback only, and the file is the image's own, not one Podman wrote (which would name the host)
+PASS B14-no-resolver — /etc/resolv.conf names no resolver; 'getent hosts example.com' found nothing (and found localhost, so the tool works); a lookup from node failed with EAI_AGAIN
+PASS B14-dns-by-hand — sent a hand-made DNS question for example.com to 10.201.0.1 port 53, where a gateway's name service would be: no answer (timeout)
+PASS B15-token-absent — read the apikey credential from your keyring on this host, copied out and searched the agent's environment, /proc/*/environ, home, workspace, /tmp and /dev/shm for it: not there. Two canaries planted first were found, so the search works. The credential itself never entered the container
+PASS B15-key-files — searched every mount except the repository itself for SSH private keys, .git-credentials, .netrc and cloud, Docker, GitHub-CLI and Kubernetes credential files; looked for a git credential helper and for token variables in the environment: none
+SKIP B15-push — (no-remote) this session's repository was given as a local path, so there is no remote to push to
+PASS B16-add-address — tried to add 10.201.0.3 (the sidecar's address) to interface eth0, which needs the NET_ADMIN capability: refused (1 Operation not permitted)
+PASS B16-packet-socket — opened a packet socket, the kind used to forge another machine's address: refused (1 Operation not permitted)
+PASS B20-allowed-host — asked the proxy for a tunnel to files.pythonhosted.org:443, a host on the agent's list (the control: refusals mean nothing if nothing is ever allowed): the proxy answered 200 (allowed)
+PASS B20-denied-host — asked the proxy for a tunnel to vf292a555d3c7ecbc.example.com:443, a host on no list: the proxy answered 403 (refused)
+PASS B20-port-80 — asked the proxy for http://files.pythonhosted.org/ in plaintext on port 80 (an ALLOWED host, so only the port rule can refuse it): the proxy answered 403 (refused)
+PASS B20-connect-port — asked the proxy for a tunnel to files.pythonhosted.org:8443 (an ALLOWED host, so only the port rule can refuse it): the proxy answered 403 (refused)
+PASS B20-ip-literal-v4 — asked the proxy for a tunnel to the bare address 1.1.1.1:443: the proxy answered 403 (refused)
+PASS B20-ip-literal-v6 — asked the proxy for a tunnel to the bare address [2606:4700:4700::1111]:443: the proxy answered 403 (refused)
+PASS B20-never-allow — tried to allow storage.googleapis.com, a host on the never-allow list, twice: through the function './sandbox allow' uses, and by writing the entry into a copy of allowlist.local by hand and rendering the proxy's lists. Both were refused
+PASS B21-vendor-plain — asked the proxy, from the agent, for a tunnel to the model vendor's host api.anthropic.com:443 (B21-sidecar-allowed shows the same request is allowed from the sidecar): the proxy answered 403 (refused)
+PASS B21-vendor-forged — asked again for api.anthropic.com:443, this time claiming to be the sidecar with X-Forwarded-For: 10.201.0.3 and Forwarded: for=10.201.0.3: the proxy answered 403 (refused)
+PASS B21-sidecar-allowed — from the sidecar's address, asked the proxy for a tunnel to api.anthropic.com:443: allowed (200). The same request from the agent is refused (B21-vendor-plain), so the rule really is about the address
+PASS B22-credential-swap — sent a model request (POST /v1/messages) from the agent with a dummy credential to a second sidecar: the mock vendor received the sidecar's token and never saw the dummy
+PASS B22-credential-replace — piped a new token into the running sidecar and sent another request: the mock vendor received the new token, not the old one, with no restart
+PASS B23-mcp-servers — sent a model request naming a remote MCP server: refused with 400, and the mock vendor never received it
+PASS B23-web-fetch — sent a model request asking the vendor's servers to fetch a URL: refused with 400, and the mock vendor never received it
+PASS B24-oversized — sent a 33 MB model request: refused (http 413), and the mock vendor never received it
+PASS B25-search-logged — ran one web search through the second sidecar with the query 'verifysearchfda3a05e0bd93532' and found that query in the sidecar's log, as Podman collected it
+PASS B24-budget — with a budget of 3, the fourth model request was refused with 403 and the mock vendor received exactly 3 (the refused requests above cost nothing)
+PASS B23-unknown-path — asked this session's sidecar for /verify-not-forwarded, a path no CLI uses: 404, not forwarded
+PASS B25-proxy-log — the request B20-denied-host made is in the proxy's log, as Podman collected it: [10/Oct/2026:05:00:06] src=10.201.0.10 TCP_DENIED/403 up=95 down=3757 ms=0 dst=- CONNECT vf292a555d3c7ecbc.example.com:443
+PASS B26-deadline-set — Podman reports its own kill timer of 1800 seconds (this session's time limit) on every container of [keeper proxy credsidecar agent] except the keeper, which has none. Letting it pass is a test of its own: scripts/verify.sh --deadline-test
+PASS B26-keeper — Podman reports the keeper running with no network and as its own user 61003, so the agent can neither reach nor signal what holds the workspace (the agent's process list is checked in B06-pid1)
+SKIP B26-deadline — (separate) letting a time limit pass, with the launcher gone and the agent forking, needs a session of its own: scripts/verify.sh --deadline-test
+SKIP B27-export — (separate) the export attempts (hostile .git/config and hooks, attribution, a fake secret, a hidden lockfile change, a symlink, an endless stream) run in: scripts/verify.sh --deadline-test
+PASS B28-log-driver — Podman reports, for each of [keeper proxy credsidecar agent]: the k8s-file log driver (a file that belongs to the container and is deleted with it), and no log file lies inside anything mounted into a container
+PASS B29-rootless — this host: not root (uid 1002), and Podman reports that it runs rootless and on this machine
+PASS B29-doctor — ran scripts/doctor.sh, which checks each condition the launcher refuses on: it found nothing wrong
+SKIP B30-other-branch — (no-git-relay) this session has no git relay (it is off unless you pass --git-relay)
+SKIP B30-tag — (no-git-relay) this session has no git relay (it is off unless you pass --git-relay)
+SKIP B30-force-push — (no-git-relay) this session has no git relay (it is off unless you pass --git-relay)
+SKIP B31-destroy — (separate) checking that destroy leaves nothing would destroy this session; it runs in: scripts/verify.sh --deadline-test
+PASS B32-logs-filter — wrote escape sequences (set-title, clear-screen, colour) into the agent's log and into a request line to the proxy. Podman's raw log holds them (5 control characters); './sandbox logs agent' and 'logs proxy' printed the same lines with none
+SKIP B33-store — (separate) writing past this session's share of the disk store would stop it; it runs in: scripts/verify.sh --store-test
+
+75 passed, 0 failed, 10 skipped for a stated reason.
+
+==== path mode: export
+==> writing a bundle of branch agent/asb-mini-node-777459 in a container with no network
+
+==== agent-sandbox export: asb-mini-node-777459 ====
+bundle: 1235 bytes    branch: agent/asb-mini-node-777459    started from: f1e6dbe2947c24f094bc95f5e3e0efb25c4920b9
+
+==== Attribution ====
+No AI attribution in the commit messages.
+
+==== Commits (0) ====
+No new commits on this branch.
+
+==== Code diff (first 200 lines of each file) ====
+Files that run later are not in this diff. They have their own section below.
+(no changes outside the runs-later files)
+
+==== RUNS LATER — read this first ====
+Nothing in the sandbox ran these for you. They run on your machine, in CI, or in
+the next agent session, after you merge. Reading them is the only barrier.
+
+No changed path matches a runs-later pattern, and no symlink or submodule changed.
+
+This list is made from the path patterns in policy/runs-later.txt; any source file can run later too.
+
+==== Secret scan ====
+Running gitleaks process over the exported commits ...
+Error: unknown flag: --ignore-gitleaks-allow
+Usage:
+  gitleaks detect [flags]
+
+Flags:
+      --follow-symlinks                               scan files that are symlinks to other files
+  -h, --help                                          help for detect
+      --log-opts string                               git log options
+      --no-git                                        treat git repo as a regular directory and scan those files, --log-opts has no effect on the scan when --no-git is set
+      --pipe cat some_file | gitleaks detect --pipe   scan input from stdin, ex: cat some_file | gitleaks detect --pipe
+
+Global Flags:
+  -b, --baseline-path string       path to baseline with issues that can be ignored
+  -c, --config string              config file path
+                                   order of precedence:
+                                   1. --config/-c
+                                   2. env var GITLEAKS_CONFIG
+                                   3. (--source/-s)/.gitleaks.toml
+                                   If none of the three options are used, then gitleaks will use the default config
+      --exit-code int              exit code when leaks have been encountered (default 1)
+  -l, --log-level string           log level (trace, debug, info, warn, error, fatal) (default "info")
+      --max-target-megabytes int   files larger than this will be skipped
+      --no-banner                  suppress banner
+      --redact                     redact secrets from logs and stdout
+  -f, --report-format string       output format (json, csv, sarif) (default "json")
+  -r, --report-path string         report file
+  -s, --source string              path to source (default: $PWD) (default ".")
+  -v, --verbose                    show verbose output from scan
+
+gitleaks exited with status 126: it found a secret, or it could not run. Read its output above.
+push and pr will refuse this export.
+
+==== Summary ====
+RUNS LATER — no changed path matches a pattern. Any source file can still run later.
+history:      intact
+attribution:  clean
+secret scan:  failed
+tip:          f1e6dbe2947c24f094bc95f5e3e0efb25c4920b9
+repository:   /tmp/tmp.bIb8iCSxAZ/out/asb-mini-node-777459/repo.git
+status file:  /tmp/tmp.bIb8iCSxAZ/out/asb-mini-node-777459/export.status
+NEEDS A HUMAN: see the lines above that are not 'intact', 'clean', 'stripped' or 'passed'.
+
+Exported to /tmp/tmp.bIb8iCSxAZ/out/asb-mini-node-777459/repo.git, but something above needs you. push and pr refuse until export is clean.
+PROBLEM: path mode: export needs a human; read its output above
+
+==== path mode: destroy
+==> removed session asb-mini-node-777459
+
+==== URL mode, workspace in memory: run
+This session may use up to 4.5 GB of this host's memory:
+  agent 4.0 GB = 2g for processes + 512m /tmp + 512m home + 64m shared memory + 1g workspace
+  proxy, sidecar, keeper and services 0.5 GB
+Its workspace is held in memory.
+==> cloning https://github.com/jonschlinkert/is-number on this host
+==> creating session asb-is-number-4f5a13
+==> importing branch agent/asb-is-number-4f5a13 (starting at 98e8ff1da1a8)
+/tmp/sandbox-import.6l8rE3/repo.bundle is okay
+sandbox-import: agent/asb-is-number-4f5a13 at 98e8ff1da1a89f93d1397a24d7413ed15421c139
+==> checking the barriers (verify --quick)
+PASS B01-user — read its own ids from the kernel: real, effective, saved and filesystem uid and gid are all 61000
+PASS B02-caps — read the five capability sets from the kernel: all empty (CapBnd, the ceiling for anything started here, included)
+PASS B02-raw-socket — opened a raw ICMP socket, which needs the NET_RAW capability: refused (1 Operation not permitted)
+PASS B02-caps-all — in each of [keeper proxy credsidecar agent]: Podman reports no capability added and empty effective and bounding sets, and a process started inside reads all five capability sets as empty from the kernel
+PASS B03-nnp-flag — the kernel reports NoNewPrivs: 1 for this process
+PASS B03-setuid-inert — found 11 setuid/setgid files on the root filesystem (/usr/bin/chfn /usr/bin/chsh /usr/bin/gpasswd /usr/bin/mount /usr/bin/newgrp /usr/bin/passwd ); ran /usr/bin/chfn: it started with effective uid 61000 and gid 61000, still the agent's
+PASS B03-nnp-all — in each of [keeper proxy credsidecar agent]: created with no-new-privileges, and a process started inside reads NoNewPrivs: 1 from the kernel
+PASS B04-seccomp-mode — the kernel reports Seccomp: 2 (a filter is attached to this process)
+PASS B04-ptrace — called ptrace(PTRACE_TRACEME), which the kernel and Podman's default filter both allow: refused (1 Operation not permitted)
+PASS B04-mount — called mount() to put a new filesystem on /tmp/.verify-mnt.149 (the system call itself, not the mount program, which gives up before asking): refused (1 Operation not permitted)
+PASS B04-unshare-user — ran 'unshare -U true' to create a user namespace: refused (unshare: unshare failed: Operation not permitted)
+PASS B04-clone-newuser — called clone() with CLONE_NEWUSER to start a process in a new user namespace: refused (1 Operation not permitted)
+PASS B04-clone3 — called clone3() with CLONE_NEWUSER: refused (38 Function not implemented)
+PASS B04-setns — called setns() on its own user namespace, which the kernel alone would answer with 'invalid argument': refused (1 Operation not permitted)
+PASS B04-process-vm-readv — called process_vm_readv() on its own process, which the kernel alone always allows: refused (1 Operation not permitted)
+PASS B04-bpf — called bpf() to create a map: refused (1 Operation not permitted)
+SKIP B05-lsm-label — (no-selinux) this host does not run SELinux, so there is no label to compare (the kernel reports 'runc (unconfined)'). Rootless Podman applies no AppArmor profile either: this barrier is absent on this host
+PASS B06-runtime-sockets — looked for the Docker, Podman, containerd and CRI-O sockets by path and by environment variable, and searched every mount for socket files outside the writable places: none
+PASS B06-runtime-binaries — looked on PATH for docker, podman, nerdctl and buildah, and searched the whole root filesystem for those programs and for dockerd, containerd, runc and crun: none
+PASS B06-pid1 — listed every process visible here: 2, all owned by uid 61000; process 1 is 'catatonit', the container's own first process, not the host's
+PASS B06-cgroupns — /proc/self/cgroup reads '0::/': this process sees the root of its own cgroup tree and nothing of the host's
+PASS B06-private-modes — in each of [keeper proxy credsidecar agent]: Podman reports not privileged, private process, shared-memory and cgroup namespaces, not the host's network, and no device passed in
+SKIP B06-runtime-class — (no-runtime-class) SANDBOX_RUNTIME_CLASS is not set, so the containers run on Podman's default runtime (runc), not gVisor
+PASS B07-readonly-root — tried to create a file and a directory in each of / /usr /etc: every attempt answered 'Read-only file system'
+PASS B07-readonly-all — in each of [keeper proxy credsidecar agent]: created with a read-only root, and creating a file in / from inside answered 'Read-only file system'
+PASS B08-writable-set — tried to create a file in each of the 29 mounts; it worked only in: /home /tmp /workspace /dev/shm /dev/mqueue. /dev/mqueue also accepts entries: they are message queues, not files, capped at 819200 bytes per user by ulimit.
+PASS B08-mount-flags — read the kernel's mount table: /tmp /home /dev/shm /workspace are each nosuid,nodev, capped at the size asked for, /dev/shm also noexec; the home directory and /workspace/repo are mode 700
+PASS B08-workspace-volume — podman volume inspect: the workspace is held in memory, capped at 1073741824 bytes, nosuid and nodev, and is a volume made for this session, not a folder of yours
+SKIP B08-fill — (quick) filling every memory-backed place to the brim is left out of --quick
+PASS B09-mounts — went through all 29 mounts in the kernel's table: the only host files are the ones Podman generates, read-only ( /run/.containerenv /etc/hostname)
+PASS B09-host-mounts — listed every mount Podman reports for [keeper proxy credsidecar agent]: the agent has the workspace volume and nothing else, no host path is writable anywhere, and the only host path at all is the proxy's read-only allowlists ( keeper:/workspace(volume,read-only) proxy:/etc/squid/session(bind,read-only) agent:/workspace(volume,writable) )
+PASS B10-pids-max — /sys/fs/cgroup/pids.max reads 512, the --pids-limit asked for
+PASS B10-memory-max — /sys/fs/cgroup/memory.max reads 4362076160 bytes, the --memory asked for (4362076160)
+PASS B10-swap-max — /sys/fs/cgroup/memory.swap.max reads 0: nothing of this container can be pushed to swap
+PASS B10-cpu-max — /sys/fs/cgroup/cpu.max reads '200000 100000': 200000/100000 = 2.000 processors, the --cpus asked for
+PASS B10-limits-all — Podman reports, for each of [keeper proxy credsidecar agent]: a memory limit, a memory+swap limit equal to it, a process limit and a CPU limit (the agent's are compared with the kernel's own numbers in B10-*-max)
+SKIP B10-fork-limit — (quick) forking up to the process limit is left out of --quick
+PASS B11-ulimits — read /proc/self/limits: open files 65536, processes 512, largest file 1073741824 bytes, core dumps 0, each as asked for, soft and hard
+PASS B11-fsize — wrote one byte at offset 1073741824, just past the largest-file limit: refused (the writer got the file-size signal)
+PASS B11-core-all — in each of [keeper proxy credsidecar agent]: a process started inside reads a core-dump limit of 0 (soft and hard) from the kernel
+PASS B12-no-route — connected straight to public addresses, ignoring the proxy: 1.1.1.1 [443 ENETUNREACH 80 ENETUNREACH 53 ENETUNREACH ] 2606:4700:4700::1111 [443 ENETUNREACH ] datagram to 8.8.8.8 [error ENETUNREACH]; the routing table has no default route and the only interface besides loopback is eth0 
+PASS B12-network-attach — Podman reports the agent on one network, asb-is-number-4f5a13-sandbox, which is marked internal; the proxy is the only container on asb-is-number-4f5a13-egress
+PASS B13-network-no-gateway — podman network inspect asb-is-number-4f5a13-sandbox: subnet 10.201.0.0/24, no gateway address, name service off (B13-gateway-ports probes the address from inside)
+PASS B13-hosts-all — in each of [keeper proxy credsidecar agent]: read /etc/hosts from inside. It is the image's own file, not one Podman wrote, and holds loopback addresses only
+PASS B13-gateway-ports — probed 10.201.0.1, the address a gateway would have, on 22 53 80 443 2375 2376 3000 5432 8080: nothing answered ( 22:EHOSTUNREACH 53:EHOSTUNREACH 80:EHOSTUNREACH 443:EHOSTUNREACH 2375:EHOSTUNREACH 2376:EHOSTUNREACH 3000:EHOSTUNREACH 5432:EHOSTUNREACH 8080:EHOSTUNREACH )
+PASS B13-etc-hosts — read all 2 entries of /etc/hosts: loopback only, and the file is the image's own, not one Podman wrote (which would name the host)
+PASS B14-no-resolver — /etc/resolv.conf names no resolver; 'getent hosts example.com' found nothing (and found localhost, so the tool works); a lookup from node failed with EAI_AGAIN
+PASS B14-dns-by-hand — sent a hand-made DNS question for example.com to 10.201.0.1 port 53, where a gateway's name service would be: no answer (timeout)
+PASS B15-token-absent — read the apikey credential from your keyring on this host, copied out and searched the agent's environment, /proc/*/environ, home, workspace, /tmp and /dev/shm for it: not there. Two canaries planted first were found, so the search works. The credential itself never entered the container
+PASS B15-key-files — searched every mount except the repository itself for SSH private keys, .git-credentials, .netrc and cloud, Docker, GitHub-CLI and Kubernetes credential files; looked for a git credential helper and for token variables in the environment: none
+PASS B15-push — ran 'git push --dry-run' to https://github.com/jonschlinkert/is-number as the agent: refused (fatal: unable to access 'https://github.com/jonschlinkert/is-number/': CONNECT tunnel failed, response 403)
+PASS B16-add-address — tried to add 10.201.0.3 (the sidecar's address) to interface eth0, which needs the NET_ADMIN capability: refused (1 Operation not permitted)
+PASS B16-packet-socket — opened a packet socket, the kind used to forge another machine's address: refused (1 Operation not permitted)
+PASS B20-allowed-host — asked the proxy for a tunnel to files.pythonhosted.org:443, a host on the agent's list (the control: refusals mean nothing if nothing is ever allowed): the proxy answered 200 (allowed)
+PASS B20-denied-host — asked the proxy for a tunnel to v277d7ae524ccfd20.example.com:443, a host on no list: the proxy answered 403 (refused)
+PASS B20-port-80 — asked the proxy for http://files.pythonhosted.org/ in plaintext on port 80 (an ALLOWED host, so only the port rule can refuse it): the proxy answered 403 (refused)
+PASS B20-connect-port — asked the proxy for a tunnel to files.pythonhosted.org:8443 (an ALLOWED host, so only the port rule can refuse it): the proxy answered 403 (refused)
+PASS B20-ip-literal-v4 — asked the proxy for a tunnel to the bare address 1.1.1.1:443: the proxy answered 403 (refused)
+PASS B20-ip-literal-v6 — asked the proxy for a tunnel to the bare address [2606:4700:4700::1111]:443: the proxy answered 403 (refused)
+PASS B20-never-allow — tried to allow storage.googleapis.com, a host on the never-allow list, twice: through the function './sandbox allow' uses, and by writing the entry into a copy of allowlist.local by hand and rendering the proxy's lists. Both were refused
+PASS B21-vendor-plain — asked the proxy, from the agent, for a tunnel to the model vendor's host api.anthropic.com:443 (B21-sidecar-allowed shows the same request is allowed from the sidecar): the proxy answered 403 (refused)
+PASS B21-vendor-forged — asked again for api.anthropic.com:443, this time claiming to be the sidecar with X-Forwarded-For: 10.201.0.3 and Forwarded: for=10.201.0.3: the proxy answered 403 (refused)
+PASS B21-sidecar-allowed — from the sidecar's address, asked the proxy for a tunnel to api.anthropic.com:443: allowed (200). The same request from the agent is refused (B21-vendor-plain), so the rule really is about the address
+PASS B22-credential-swap — sent a model request (POST /v1/messages) from the agent with a dummy credential to a second sidecar: the mock vendor received the sidecar's token and never saw the dummy
+PASS B22-credential-replace — piped a new token into the running sidecar and sent another request: the mock vendor received the new token, not the old one, with no restart
+PASS B23-mcp-servers — sent a model request naming a remote MCP server: refused with 400, and the mock vendor never received it
+PASS B23-web-fetch — sent a model request asking the vendor's servers to fetch a URL: refused with 400, and the mock vendor never received it
+PASS B24-oversized — sent a 33 MB model request: refused (http 413), and the mock vendor never received it
+PASS B25-search-logged — ran one web search through the second sidecar with the query 'verifysearch1a2583c479f17b1c' and found that query in the sidecar's log, as Podman collected it
+PASS B24-budget — with a budget of 3, the fourth model request was refused with 403 and the mock vendor received exactly 3 (the refused requests above cost nothing)
+PASS B23-unknown-path — asked this session's sidecar for /verify-not-forwarded, a path no CLI uses: 404, not forwarded
+PASS B25-proxy-log — the request B20-denied-host made is in the proxy's log, as Podman collected it: [10/Oct/2026:05:01:04] src=10.201.0.10 TCP_DENIED/403 up=95 down=3757 ms=0 dst=- CONNECT v277d7ae524ccfd20.example.com:443
+PASS B26-deadline-set — Podman reports its own kill timer of 1800 seconds (this session's time limit) on every container of [keeper proxy credsidecar agent] except the keeper, which has none. Letting it pass is a test of its own: scripts/verify.sh --deadline-test
+PASS B26-keeper — Podman reports the keeper running with no network and as its own user 61003, so the agent can neither reach nor signal what holds the workspace (the agent's process list is checked in B06-pid1)
+SKIP B26-deadline — (separate) letting a time limit pass, with the launcher gone and the agent forking, needs a session of its own: scripts/verify.sh --deadline-test
+SKIP B27-export — (separate) the export attempts (hostile .git/config and hooks, attribution, a fake secret, a hidden lockfile change, a symlink, an endless stream) run in: scripts/verify.sh --deadline-test
+PASS B28-log-driver — Podman reports, for each of [keeper proxy credsidecar agent]: the k8s-file log driver (a file that belongs to the container and is deleted with it), and no log file lies inside anything mounted into a container
+PASS B29-rootless — this host: not root (uid 1002), and Podman reports that it runs rootless and on this machine
+SKIP B29-doctor — (quick) running doctor again is left out of --quick (./sandbox run has just run its checks)
+SKIP B30-other-branch — (no-git-relay) this session has no git relay (it is off unless you pass --git-relay)
+SKIP B30-tag — (no-git-relay) this session has no git relay (it is off unless you pass --git-relay)
+SKIP B30-force-push — (no-git-relay) this session has no git relay (it is off unless you pass --git-relay)
+SKIP B31-destroy — (separate) checking that destroy leaves nothing would destroy this session; it runs in: scripts/verify.sh --deadline-test
+PASS B32-logs-filter — wrote escape sequences (set-title, clear-screen, colour) into the agent's log and into a request line to the proxy. Podman's raw log holds them (5 control characters); './sandbox logs agent' and 'logs proxy' printed the same lines with none
+SKIP B33-store — (memory-workspace) this session's workspace is held in memory; the disk store watch only exists when the workspace is on the store
+
+73 passed, 0 failed, 12 skipped for a stated reason.
+Session asb-is-number-4f5a13 runs until 2026-10-10 00:30, at most 40 model requests.
+From here on every byte on this screen is the agent's. Do not type a password into it.
+Failed to authenticate. API Error: 403 the model vendor rejected the sandbox's credential (it may have expired or been revoked). The agent cannot fix this; the operator can, with ./sandbox login
+
+The agent's CLI has exited with status 1. Session asb-is-number-4f5a13 is still there, holding its workspace.
+  bring the work out:   SANDBOX_SESSION=asb-is-number-4f5a13 ./sandbox export
+  remove the session:   SANDBOX_SESSION=asb-is-number-4f5a13 ./sandbox destroy
+PROBLEM: URL mode, workspace in memory: run exited 1
+
+==== URL mode, workspace in memory: verify (every check, on session asb-is-number-4f5a13)
+PASS B01-user — read its own ids from the kernel: real, effective, saved and filesystem uid and gid are all 61000
+PASS B02-caps — read the five capability sets from the kernel: all empty (CapBnd, the ceiling for anything started here, included)
+PASS B02-raw-socket — opened a raw ICMP socket, which needs the NET_RAW capability: refused (1 Operation not permitted)
+PASS B02-caps-all — in each of [keeper proxy credsidecar agent]: Podman reports no capability added and empty effective and bounding sets, and a process started inside reads all five capability sets as empty from the kernel
+PASS B03-nnp-flag — the kernel reports NoNewPrivs: 1 for this process
+PASS B03-setuid-inert — found 11 setuid/setgid files on the root filesystem (/usr/bin/chfn /usr/bin/chsh /usr/bin/gpasswd /usr/bin/mount /usr/bin/newgrp /usr/bin/passwd ); ran /usr/bin/chfn: it started with effective uid 61000 and gid 61000, still the agent's
+PASS B03-nnp-all — in each of [keeper proxy credsidecar agent]: created with no-new-privileges, and a process started inside reads NoNewPrivs: 1 from the kernel
+PASS B04-seccomp-mode — the kernel reports Seccomp: 2 (a filter is attached to this process)
+PASS B04-ptrace — called ptrace(PTRACE_TRACEME), which the kernel and Podman's default filter both allow: refused (1 Operation not permitted)
+PASS B04-mount — called mount() to put a new filesystem on /tmp/.verify-mnt.1410 (the system call itself, not the mount program, which gives up before asking): refused (1 Operation not permitted)
+PASS B04-unshare-user — ran 'unshare -U true' to create a user namespace: refused (unshare: unshare failed: Operation not permitted)
+PASS B04-clone-newuser — called clone() with CLONE_NEWUSER to start a process in a new user namespace: refused (1 Operation not permitted)
+PASS B04-clone3 — called clone3() with CLONE_NEWUSER: refused (38 Function not implemented)
+PASS B04-setns — called setns() on its own user namespace, which the kernel alone would answer with 'invalid argument': refused (1 Operation not permitted)
+PASS B04-process-vm-readv — called process_vm_readv() on its own process, which the kernel alone always allows: refused (1 Operation not permitted)
+PASS B04-bpf — called bpf() to create a map: refused (1 Operation not permitted)
+SKIP B05-lsm-label — (no-selinux) this host does not run SELinux, so there is no label to compare (the kernel reports 'runc (unconfined)'). Rootless Podman applies no AppArmor profile either: this barrier is absent on this host
+PASS B06-runtime-sockets — looked for the Docker, Podman, containerd and CRI-O sockets by path and by environment variable, and searched every mount for socket files outside the writable places: none
+PASS B06-runtime-binaries — looked on PATH for docker, podman, nerdctl and buildah, and searched the whole root filesystem for those programs and for dockerd, containerd, runc and crun: none
+PASS B06-pid1 — listed every process visible here: 3, all owned by uid 61000; process 1 is 'catatonit', the container's own first process, not the host's
+PASS B06-cgroupns — /proc/self/cgroup reads '0::/': this process sees the root of its own cgroup tree and nothing of the host's
+PASS B06-private-modes — in each of [keeper proxy credsidecar agent]: Podman reports not privileged, private process, shared-memory and cgroup namespaces, not the host's network, and no device passed in
+SKIP B06-runtime-class — (no-runtime-class) SANDBOX_RUNTIME_CLASS is not set, so the containers run on Podman's default runtime (runc), not gVisor
+PASS B07-readonly-root — tried to create a file and a directory in each of / /usr /etc: every attempt answered 'Read-only file system'
+PASS B07-readonly-all — in each of [keeper proxy credsidecar agent]: created with a read-only root, and creating a file in / from inside answered 'Read-only file system'
+PASS B08-writable-set — tried to create a file in each of the 29 mounts; it worked only in: /home /tmp /workspace /dev/shm /dev/mqueue. /dev/mqueue also accepts entries: they are message queues, not files, capped at 819200 bytes per user by ulimit.
+PASS B08-mount-flags — read the kernel's mount table: /tmp /home /dev/shm /workspace are each nosuid,nodev, capped at the size asked for, /dev/shm also noexec; the home directory and /workspace/repo are mode 700
+PASS B08-workspace-volume — podman volume inspect: the workspace is held in memory, capped at 1073741824 bytes, nosuid and nodev, and is a volume made for this session, not a folder of yours
+PASS B08-fill — filled /tmp /home /dev/shm /workspace to the brim, all at the same time (0 full gigabytes plus the remainders): each answered 'No space left on device' and no process was killed
+PASS B09-mounts — went through all 29 mounts in the kernel's table: the only host files are the ones Podman generates, read-only ( /run/.containerenv /etc/hostname)
+PASS B09-host-mounts — listed every mount Podman reports for [keeper proxy credsidecar agent]: the agent has the workspace volume and nothing else, no host path is writable anywhere, and the only host path at all is the proxy's read-only allowlists ( keeper:/workspace(volume,read-only) proxy:/etc/squid/session(bind,read-only) agent:/workspace(volume,writable) )
+PASS B10-pids-max — /sys/fs/cgroup/pids.max reads 512, the --pids-limit asked for
+PASS B10-memory-max — /sys/fs/cgroup/memory.max reads 4362076160 bytes, the --memory asked for (4362076160)
+PASS B10-swap-max — /sys/fs/cgroup/memory.swap.max reads 0: nothing of this container can be pushed to swap
+PASS B10-cpu-max — /sys/fs/cgroup/cpu.max reads '200000 100000': 200000/100000 = 2.000 processors, the --cpus asked for
+PASS B10-limits-all — Podman reports, for each of [keeper proxy credsidecar agent]: a memory limit, a memory+swap limit equal to it, a process limit and a CPU limit (the agent's are compared with the kernel's own numbers in B10-*-max)
+PASS B10-fork-limit — started processes until the kernel refused: 501 started, then 'resource temporarily unavailable' from the per-user process ulimit; the limit asked for is 512 (it also counts the processes already running)
+PASS B11-ulimits — read /proc/self/limits: open files 65536, processes 512, largest file 1073741824 bytes, core dumps 0, each as asked for, soft and hard
+PASS B11-fsize — wrote one byte at offset 1073741824, just past the largest-file limit: refused (the writer got the file-size signal)
+PASS B11-core-all — in each of [keeper proxy credsidecar agent]: a process started inside reads a core-dump limit of 0 (soft and hard) from the kernel
+PASS B12-no-route — connected straight to public addresses, ignoring the proxy: 1.1.1.1 [443 ENETUNREACH 80 ENETUNREACH 53 ENETUNREACH ] 2606:4700:4700::1111 [443 ENETUNREACH ] datagram to 8.8.8.8 [error ENETUNREACH]; the routing table has no default route and the only interface besides loopback is eth0 
+PASS B12-network-attach — Podman reports the agent on one network, asb-is-number-4f5a13-sandbox, which is marked internal; the proxy is the only container on asb-is-number-4f5a13-egress
+PASS B13-network-no-gateway — podman network inspect asb-is-number-4f5a13-sandbox: subnet 10.201.0.0/24, no gateway address, name service off (B13-gateway-ports probes the address from inside)
+PASS B13-hosts-all — in each of [keeper proxy credsidecar agent]: read /etc/hosts from inside. It is the image's own file, not one Podman wrote, and holds loopback addresses only
+PASS B13-gateway-ports — probed 10.201.0.1, the address a gateway would have, on 22 53 80 443 2375 2376 3000 5432 8080: nothing answered ( 22:EHOSTUNREACH 53:EHOSTUNREACH 80:EHOSTUNREACH 443:EHOSTUNREACH 2375:EHOSTUNREACH 2376:EHOSTUNREACH 3000:EHOSTUNREACH 5432:EHOSTUNREACH 8080:EHOSTUNREACH )
+PASS B13-etc-hosts — read all 2 entries of /etc/hosts: loopback only, and the file is the image's own, not one Podman wrote (which would name the host)
+PASS B14-no-resolver — /etc/resolv.conf names no resolver; 'getent hosts example.com' found nothing (and found localhost, so the tool works); a lookup from node failed with EAI_AGAIN
+PASS B14-dns-by-hand — sent a hand-made DNS question for example.com to 10.201.0.1 port 53, where a gateway's name service would be: no answer (timeout)
+PASS B15-token-absent — read the apikey credential from your keyring on this host, copied out and searched the agent's environment, /proc/*/environ, home, workspace, /tmp and /dev/shm for it: not there. Two canaries planted first were found, so the search works. The credential itself never entered the container
+PASS B15-key-files — searched every mount except the repository itself for SSH private keys, .git-credentials, .netrc and cloud, Docker, GitHub-CLI and Kubernetes credential files; looked for a git credential helper and for token variables in the environment: none
+PASS B15-push — ran 'git push --dry-run' to https://github.com/jonschlinkert/is-number as the agent: refused (fatal: unable to access 'https://github.com/jonschlinkert/is-number/': CONNECT tunnel failed, response 403)
+PASS B16-add-address — tried to add 10.201.0.3 (the sidecar's address) to interface eth0, which needs the NET_ADMIN capability: refused (1 Operation not permitted)
+PASS B16-packet-socket — opened a packet socket, the kind used to forge another machine's address: refused (1 Operation not permitted)
+PASS B20-allowed-host — asked the proxy for a tunnel to files.pythonhosted.org:443, a host on the agent's list (the control: refusals mean nothing if nothing is ever allowed): the proxy answered 200 (allowed)
+PASS B20-denied-host — asked the proxy for a tunnel to ve3b7103b61ddaedc.example.com:443, a host on no list: the proxy answered 403 (refused)
+PASS B20-port-80 — asked the proxy for http://files.pythonhosted.org/ in plaintext on port 80 (an ALLOWED host, so only the port rule can refuse it): the proxy answered 403 (refused)
+PASS B20-connect-port — asked the proxy for a tunnel to files.pythonhosted.org:8443 (an ALLOWED host, so only the port rule can refuse it): the proxy answered 403 (refused)
+PASS B20-ip-literal-v4 — asked the proxy for a tunnel to the bare address 1.1.1.1:443: the proxy answered 403 (refused)
+PASS B20-ip-literal-v6 — asked the proxy for a tunnel to the bare address [2606:4700:4700::1111]:443: the proxy answered 403 (refused)
+PASS B20-never-allow — tried to allow storage.googleapis.com, a host on the never-allow list, twice: through the function './sandbox allow' uses, and by writing the entry into a copy of allowlist.local by hand and rendering the proxy's lists. Both were refused
+PASS B21-vendor-plain — asked the proxy, from the agent, for a tunnel to the model vendor's host api.anthropic.com:443 (B21-sidecar-allowed shows the same request is allowed from the sidecar): the proxy answered 403 (refused)
+PASS B21-vendor-forged — asked again for api.anthropic.com:443, this time claiming to be the sidecar with X-Forwarded-For: 10.201.0.3 and Forwarded: for=10.201.0.3: the proxy answered 403 (refused)
+PASS B21-sidecar-allowed — from the sidecar's address, asked the proxy for a tunnel to api.anthropic.com:443: allowed (200). The same request from the agent is refused (B21-vendor-plain), so the rule really is about the address
+PASS B22-credential-swap — sent a model request (POST /v1/messages) from the agent with a dummy credential to a second sidecar: the mock vendor received the sidecar's token and never saw the dummy
+PASS B22-credential-replace — piped a new token into the running sidecar and sent another request: the mock vendor received the new token, not the old one, with no restart
+PASS B23-mcp-servers — sent a model request naming a remote MCP server: refused with 400, and the mock vendor never received it
+PASS B23-web-fetch — sent a model request asking the vendor's servers to fetch a URL: refused with 400, and the mock vendor never received it
+PASS B24-oversized — sent a 33 MB model request: refused (http 413), and the mock vendor never received it
+PASS B25-search-logged — ran one web search through the second sidecar with the query 'verifysearch9e8f5a011ed5d992' and found that query in the sidecar's log, as Podman collected it
+PASS B24-budget — with a budget of 3, the fourth model request was refused with 403 and the mock vendor received exactly 3 (the refused requests above cost nothing)
+PASS B23-unknown-path — asked this session's sidecar for /verify-not-forwarded, a path no CLI uses: 404, not forwarded
+PASS B25-proxy-log — the request B20-denied-host made is in the proxy's log, as Podman collected it: [10/Oct/2026:05:01:28] src=10.201.0.10 TCP_DENIED/403 up=95 down=3757 ms=0 dst=- CONNECT ve3b7103b61ddaedc.example.com:443
+PASS B26-deadline-set — Podman reports its own kill timer of 1800 seconds (this session's time limit) on every container of [keeper proxy credsidecar agent] except the keeper, which has none. Letting it pass is a test of its own: scripts/verify.sh --deadline-test
+PASS B26-keeper — Podman reports the keeper running with no network and as its own user 61003, so the agent can neither reach nor signal what holds the workspace (the agent's process list is checked in B06-pid1)
+SKIP B26-deadline — (separate) letting a time limit pass, with the launcher gone and the agent forking, needs a session of its own: scripts/verify.sh --deadline-test
+SKIP B27-export — (separate) the export attempts (hostile .git/config and hooks, attribution, a fake secret, a hidden lockfile change, a symlink, an endless stream) run in: scripts/verify.sh --deadline-test
+PASS B28-log-driver — Podman reports, for each of [keeper proxy credsidecar agent]: the k8s-file log driver (a file that belongs to the container and is deleted with it), and no log file lies inside anything mounted into a container
+PASS B29-rootless — this host: not root (uid 1002), and Podman reports that it runs rootless and on this machine
+PASS B29-doctor — ran scripts/doctor.sh, which checks each condition the launcher refuses on: it found nothing wrong
+SKIP B30-other-branch — (no-git-relay) this session has no git relay (it is off unless you pass --git-relay)
+SKIP B30-tag — (no-git-relay) this session has no git relay (it is off unless you pass --git-relay)
+SKIP B30-force-push — (no-git-relay) this session has no git relay (it is off unless you pass --git-relay)
+SKIP B31-destroy — (separate) checking that destroy leaves nothing would destroy this session; it runs in: scripts/verify.sh --deadline-test
+PASS B32-logs-filter — wrote escape sequences (set-title, clear-screen, colour) into the agent's log and into a request line to the proxy. Podman's raw log holds them (5 control characters); './sandbox logs agent' and 'logs proxy' printed the same lines with none
+SKIP B33-store — (memory-workspace) this session's workspace is held in memory; the disk store watch only exists when the workspace is on the store
+
+76 passed, 0 failed, 9 skipped for a stated reason.
+
+==== URL mode, workspace in memory: export
+==> writing a bundle of branch agent/asb-is-number-4f5a13 in a container with no network
+
+==== agent-sandbox export: asb-is-number-4f5a13 ====
+bundle: 59936 bytes    branch: agent/asb-is-number-4f5a13    started from: 98e8ff1da1a89f93d1397a24d7413ed15421c139
+
+==== Attribution ====
+No AI attribution in the commit messages.
+
+==== Commits (0) ====
+No new commits on this branch.
+
+==== Code diff (first 200 lines of each file) ====
+Files that run later are not in this diff. They have their own section below.
+(no changes outside the runs-later files)
+
+==== RUNS LATER — read this first ====
+Nothing in the sandbox ran these for you. They run on your machine, in CI, or in
+the next agent session, after you merge. Reading them is the only barrier.
+
+No changed path matches a runs-later pattern, and no symlink or submodule changed.
+
+This list is made from the path patterns in policy/runs-later.txt; any source file can run later too.
+
+==== Secret scan ====
+Running gitleaks process over the exported commits ...
+Error: unknown flag: --ignore-gitleaks-allow
+Usage:
+  gitleaks detect [flags]
+
+Flags:
+      --follow-symlinks                               scan files that are symlinks to other files
+  -h, --help                                          help for detect
+      --log-opts string                               git log options
+      --no-git                                        treat git repo as a regular directory and scan those files, --log-opts has no effect on the scan when --no-git is set
+      --pipe cat some_file | gitleaks detect --pipe   scan input from stdin, ex: cat some_file | gitleaks detect --pipe
+
+Global Flags:
+  -b, --baseline-path string       path to baseline with issues that can be ignored
+  -c, --config string              config file path
+                                   order of precedence:
+                                   1. --config/-c
+                                   2. env var GITLEAKS_CONFIG
+                                   3. (--source/-s)/.gitleaks.toml
+                                   If none of the three options are used, then gitleaks will use the default config
+      --exit-code int              exit code when leaks have been encountered (default 1)
+  -l, --log-level string           log level (trace, debug, info, warn, error, fatal) (default "info")
+      --max-target-megabytes int   files larger than this will be skipped
+      --no-banner                  suppress banner
+      --redact                     redact secrets from logs and stdout
+  -f, --report-format string       output format (json, csv, sarif) (default "json")
+  -r, --report-path string         report file
+  -s, --source string              path to source (default: $PWD) (default ".")
+  -v, --verbose                    show verbose output from scan
+
+gitleaks exited with status 126: it found a secret, or it could not run. Read its output above.
+push and pr will refuse this export.
+
+==== Summary ====
+RUNS LATER — no changed path matches a pattern. Any source file can still run later.
+history:      intact
+attribution:  clean
+secret scan:  failed
+tip:          98e8ff1da1a89f93d1397a24d7413ed15421c139
+repository:   /tmp/tmp.bIb8iCSxAZ/out/asb-is-number-4f5a13/repo.git
+status file:  /tmp/tmp.bIb8iCSxAZ/out/asb-is-number-4f5a13/export.status
+NEEDS A HUMAN: see the lines above that are not 'intact', 'clean', 'stripped' or 'passed'.
+
+Exported to /tmp/tmp.bIb8iCSxAZ/out/asb-is-number-4f5a13/repo.git, but something above needs you. push and pr refuse until export is clean.
+PROBLEM: URL mode, workspace in memory: export needs a human; read its output above
+
+==== URL mode, workspace in memory: destroy
+==> removed session asb-is-number-4f5a13
+
+==== verify: the deadline, export and destroy checks (creates its own short session)
+Session asb-repo-0824c2 is up; waiting about 180 seconds for its time limit to pass with no launcher running...
+PASS B26-deadline — ran a session with a time limit of 180 seconds, ended the launcher, and set the agent forking without pause. Twenty seconds after the limit, with nothing of the sandbox running on the host: every container but the keeper is dead (asb-repo-0824c2-keeper running,asb-repo-0824c2-proxy exited,asb-repo-0824c2-credsidecar exited,asb-repo-0824c2-agent exited)
+PASS B26-export-after-deadline — after the deadline had killed the agent, './sandbox export' still brought the work out (status 2, /tmp/sandbox-verify.F16hGD/out/asb-repo-0824c2/repo.git): the keeper held the workspace
+PASS B27-git-config-hook — planted core.fsmonitor, core.sshCommand, core.pager and four hooks that each run a command in the agent's repository, then exported: the command never ran on this host, and the exported repository has none of them
+PASS B27-attribution — committed with a 'Co-Authored-By: Claude' trailer; export stripped it, and no commit message of the exported branch has one
+PASS B27-secret-scan — committed a fake token with a 'gitleaks:allow' comment and a .gitleaksignore entry naming it: the scan found it all the same (SCAN=failed), so push and pr refuse
+PASS B27-dependency-diff — changed package-lock.json and marked it '-diff binary' in .gitattributes: export listed the lockfile as changed among the files that run later, and listed the .gitattributes that tried to hide it
+PASS B27-symlink — committed a symlink to /etc/passwd: export reported it and checked nothing out on this host
+PASS B32-export-filter — committed with set-title, clear-screen and colour escape sequences in the message: './sandbox export' printed that commit with no control character left
+PASS B27-endless-stream — fed export a stream that never ends in place of the bundle: it stopped reading at the workspace cap, refused, exported nothing and kept nothing (error: the bundle is larger than the workspace it came from (0.2 GB): refused, nothing was exported)
+PASS B31-destroy — ran './sandbox destroy', then listed containers, networks and volumes by the session's label and by its name, and looked for its directory: nothing is left (the container logs went with the containers)
+
+10 passed, 0 failed, 0 skipped for a stated reason.
+
+4 problem(s). Record each one in PHASE-B.md and fix the cause, not the check.

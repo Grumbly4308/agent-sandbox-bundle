@@ -1,0 +1,42 @@
+# Two jobs. The first needs no container runtime and runs on every push. The
+# second is the real thing, on rootless Podman, and runs only when asked for
+# and only if the repository has the test key.
+name: ci
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools the static tests use
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck jq
+      - name: Everything that needs no container runtime
+        run: make test
+
+  podman:
+    # Runs the whole cycle against rootless Podman. Needs an API key from a
+    # dedicated workspace with a spend cap, stored as the repository secret
+    # SANDBOX_TEST_ANTHROPIC_KEY, and pinned images (scripts/pin-images.sh)
+    # committed beforehand.
+    if: github.event_name == 'workflow_dispatch'
+    needs: static
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Podman and the host tools
+        # gitleaks is the export's secret scan: without it the cycle's export
+        # step reports "not run" and counts as a failure.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends podman uidmap slirp4netns passt catatonit dbus-user-session jq gitleaks
+      - name: Images build and pass the quick checks
+        run: tests/phase-b/images.sh
+      - name: doctor, run, verify, export, destroy
+        env:
+          SANDBOX_TEST_ANTHROPIC_KEY: ${{ secrets.SANDBOX_TEST_ANTHROPIC_KEY }}
+        run: tests/phase-b/cycle.sh

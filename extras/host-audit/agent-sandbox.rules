@@ -1,0 +1,43 @@
+# agent-sandbox.rules — Linux audit (auditd) rules for watching a sandbox
+# from the host.
+#
+# OPTIONAL. Needs root on the host. NOT one of the sandbox's barriers: it
+# stops nothing, it only records. NEVER LOADED OR TESTED by the authors; read
+# README.md in this directory first.
+#
+# auditd cannot select "the processes of one container": its rules have no
+# field for a cgroup or a container. The closest it has is the user id. Under
+# rootless Podman the agent's user (61000 inside the container) is, on the
+# host, one id out of your subordinate range:
+#
+#     host id = (start of your range in /etc/subuid) + 61000 - 1
+#
+# So these rules see the agent processes of EVERY session of your host user,
+# not of one session, and nothing of the proxy, sidecar or relay (they run
+# under 31, 61001 and 61002: add lines for them the same way if you want
+# them).
+#
+# Two placeholders to replace before loading (README.md has the commands):
+#   @AGENT_HOST_UID@   the host id worked out as above
+#   @STATE_DIR@        the sandbox's state directory, e.g.
+#                      /run/user/1000/agent-sandbox (it must exist when the
+#                      rules are loaded)
+
+# Every program the agent's user starts.
+-a always,exit -F arch=b64 -S execve,execveat -F uid=@AGENT_HOST_UID@ -k agent-sandbox-exec
+
+# Every connection the agent's user opens. Inside the sandbox these can only
+# reach the proxy, the sidecar, the relay and sibling services; a record that
+# shows any other address is worth a look. This is noisy: a build opens
+# thousands, most of them to local sockets.
+-a always,exit -F arch=b64 -S connect -F uid=@AGENT_HOST_UID@ -k agent-sandbox-connect
+
+# On x86-64 hosts, the same two for 32-bit programs, which use other system
+# call numbers. Delete these two lines on arm64 if auditctl refuses them.
+-a always,exit -F arch=b32 -S execve,execveat -F uid=@AGENT_HOST_UID@ -k agent-sandbox-exec
+-a always,exit -F arch=b32 -S connect -F uid=@AGENT_HOST_UID@ -k agent-sandbox-connect
+
+# Writes and permission changes under the state directory: the session
+# records, the allowlists the proxy reads, the export output markers. Only
+# ./sandbox should ever write here.
+-a always,exit -F dir=@STATE_DIR@ -F perm=wa -k agent-sandbox-state

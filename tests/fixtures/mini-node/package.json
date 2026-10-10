@@ -1,0 +1,12 @@
+{
+  "name": "mini-node",
+  "version": "1.0.0",
+  "description": "Test fixture for agent-sandbox: the smallest repository an agent can be pointed at.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "main": "slugify.js",
+  "scripts": {
+    "test": "node --test"
+  }
+}

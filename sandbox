@@ -1,0 +1,2041 @@
+#!/usr/bin/env bash
+# sandbox — run an AI coding agent in a throwaway container it cannot get out
+# of: no credential of yours inside, no route to the internet except through a
+# short allowlist, and no folder of yours mounted.
+#
+#   ./sandbox doctor                       is this host safe to run on?
+#   ./sandbox login                        store the model credential, once
+#   ./sandbox run git@host:you/repo.git    start a session and attach to it
+#   ./sandbox export                       bring the work out and read the diff
+#   ./sandbox push   or   ./sandbox pr     publish it, from your own environment
+#   ./sandbox destroy                      remove the session
+#
+# What a session is made of, and every flag its containers run with, is in
+# topology.sh. This file decides nothing about isolation: it checks the host,
+# fills in the numbers and calls Podman in the right order. The design is
+# docs/00-threat-model.md; tags such as [logical B29] point into its register
+# of barriers, and codes such as "closes C1" into the findings against the
+# previous version.
+#
+# Host-side code: it must also run under macOS's bash 3.2, so there are no
+# associative arrays, no mapfile and no ${var,,} here.
+#
+# shellcheck source-path=SCRIPTDIR
+set -euo pipefail
+
+SANDBOX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IFS= read -r SANDBOX_VERSION < "$SANDBOX_ROOT/VERSION"
+
+# Where sessions are recorded: memory-backed and private to you where the
+# system offers such a place, so nothing about a session outlives a reboot.
+if [ -z "${SANDBOX_STATE_DIR:-}" ]; then
+  if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+    SANDBOX_STATE_DIR="$XDG_RUNTIME_DIR/agent-sandbox"
+  else
+    SANDBOX_STATE_DIR="${TMPDIR:-/tmp}/agent-sandbox-$(id -u)"
+  fi
+fi
+# Your settings and your own allowlist entries.
+SANDBOX_CONFIG_DIR="${SANDBOX_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-sandbox}"
+export SANDBOX_ROOT SANDBOX_VERSION SANDBOX_STATE_DIR SANDBOX_CONFIG_DIR
+
+LABEL="agent-sandbox.session"
+SESSION_PATTERN='^asb-[a-z0-9]([a-z0-9-]*[a-z0-9])?-[0-9a-f]{6}$'
+WATCH_INTERVAL=30     # seconds between two looks by the host watchdog
+
+# The session a command works on. Filled by cmd_run or load_session; the names
+# are the keys of the session's state file.
+SESSION="" SESSION_DIR="" AGENT="" AUTH="" TOOLCHAIN="" BRANCH="" BASE_COMMIT=""
+ORIGIN_URL="" DEADLINE_EPOCH="" SUBNET="" EGRESS_SUBNET="" WORKSPACE_DRIVER=""
+SERVICES="" GIT_RELAY="" CREATED_EPOCH="" WORKSPACE_BYTES="" STORE=""
+
+say()  { printf '%s\n' "$*"; }
+info() { printf '==> %s\n' "$*"; }
+warn() { printf 'warning: %s\n' "$*" >&2; }
+die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+  cat <<'USAGE'
+usage: ./sandbox <command>
+
+  doctor                      check that this host is safe to run on
+  login [--agent A] [--auth oauth|apikey]
+                              store the model credential in your OS keyring
+  run <repo-url|path> [options]
+                              start a session and attach to the agent
+      --agent claude|codex|opencode    --auth oauth|apikey    --branch B
+      --toolchain node|python|full     --service name:version  (repeatable)
+      --auto        let the agent act without asking; the container is the boundary
+      --strict      run the barrier checks even if this image passed them before
+      --git-relay   let the agent push the session branch itself (skips export)
+      --mem N  --cpus N  --pids N  --ttl D  --budget N
+      --workspace-size N  --workspace-driver memory|local  --io-limit N
+      -- args...    everything after -- goes to the agent's CLI unchanged
+  shell                       a shell inside the agent container
+  verify [--quick]            attempt every bypass in the barrier register
+  allow <host>[:port] --reason "<why>" [--until YYYY-MM-DD]
+  allow --url <url> --reason "<why>"      allow --preset <name> --reason "<why>"
+  deny <host>                 remove an entry you added
+  export [--out dir]          bring the session branch out and review it
+  push                        push the exported branch to the repository
+  pr                          push, then open a pull or merge request
+  logs [agent|proxy|sidecar|relay|service]
+  destroy [--all]             remove the session: containers, networks, workspace
+  upgrade                     rebuild every image from scratch
+
+Sizes are written 512m or 4g; durations 90m, 4h or 2d. Defaults live in your
+settings file. Commands other than run act on the session named by
+SANDBOX_SESSION, or on the only session there is.
+USAGE
+}
+
+# ---------------------------------------------------------------------------
+# Small tools
+# ---------------------------------------------------------------------------
+
+# [logical B32] Everything that came out of a container or out of the agent's
+# repository passes through here before it reaches your terminal. It removes
+# control characters other than newline and tab, so output cannot move the
+# cursor, recolour a line of a diff or write to your clipboard. The first
+# step removes the two-byte form some terminals also obey.
+filter_control() {
+  LC_ALL=C sed $'s/\xc2[\x80-\x9f]//g' | LC_ALL=C tr -d '\000-\010\013-\037\177'
+}
+
+# kv_get <file> <KEY> — the value of the last KEY=value line. The files read
+# this way (settings, session state, service descriptions, export results)
+# are data: they are parsed with `read`, never sourced or evaluated.
+kv_get() {
+  local file="$1" want="$2" line found=""
+  [ -f "$file" ] || return 0
+  # The line is split by hand at the first `=`: letting `read` split it would
+  # drop an `=` at the end of the value (a branch or an address may end so).
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in "$want"=*) found="${line#*=}" ;; esac
+  done < "$file"
+  printf '%s' "$found"
+}
+
+# parse_size <what> <value> — a size such as 512m or 4g, printed in bytes.
+# Parsed here, not left to Podman, so every number in a session means one
+# thing. Anything else is refused.
+parse_size() {
+  local what="$1" value="$2" number unit
+  if ! [[ "$value" =~ ^[1-9][0-9]{0,5}[kmg]$ ]]; then
+    die "$what: '$value' is not a size. Write a whole number and a unit: 512m, 4g"
+  fi
+  number="${value%?}"
+  unit="${value#"$number"}"
+  case "$unit" in
+    k) printf '%s' "$(( number * 1024 ))" ;;
+    m) printf '%s' "$(( number * 1024 * 1024 ))" ;;
+    g) printf '%s' "$(( number * 1024 * 1024 * 1024 ))" ;;
+  esac
+}
+
+# parse_duration <what> <value> — a duration such as 90m, 4h or 2d, in seconds.
+parse_duration() {
+  local what="$1" value="$2" number unit
+  if ! [[ "$value" =~ ^[1-9][0-9]{0,5}[smhd]$ ]]; then
+    die "$what: '$value' is not a duration. Write a whole number and a unit: 90m, 4h, 2d"
+  fi
+  number="${value%?}"
+  unit="${value#"$number"}"
+  case "$unit" in
+    s) printf '%s' "$number" ;;
+    m) printf '%s' "$(( number * 60 ))" ;;
+    h) printf '%s' "$(( number * 3600 ))" ;;
+    d) printf '%s' "$(( number * 86400 ))" ;;
+  esac
+}
+
+# parse_count <what> <value> — a whole number above zero.
+parse_count() {
+  if ! [[ "$2" =~ ^[1-9][0-9]{0,8}$ ]]; then
+    die "$1: '$2' is not a whole number above zero"
+  fi
+  printf '%s' "$2"
+}
+
+human_bytes() {
+  local tenths=$(( $1 * 10 / 1073741824 ))
+  printf '%s.%s GB' "$(( tenths / 10 ))" "$(( tenths % 10 ))"
+}
+
+epoch_to_date() {
+  date -d "@$1" '+%Y-%m-%d %H:%M' 2>/dev/null || date -r "$1" '+%Y-%m-%d %H:%M'
+}
+
+# The host part of a repository URL, and the path part without `.git`.
+url_host() {
+  printf '%s' "$1" | sed -E 's|^[a-z+]+://||; s|^[^@/]*@||; s|[:/].*$||'
+}
+url_path() {
+  printf '%s' "$1" | sed -E 's|^[a-z+]+://||; s|^[^@/]*@||; s|^[^/:]+[:/]||; s|^[0-9]+/||; s|\.git$||'
+}
+
+# ---------------------------------------------------------------------------
+# Settings: your defaults, in <config dir>/settings
+# ---------------------------------------------------------------------------
+
+# name|default|what it is. The one list both the file and the fallbacks are
+# made from.
+settings_table() {
+  cat <<EOF
+AGENT|claude|Which agent run starts: a directory name under agents/.
+AUTH|oauth|oauth (a subscription login) or apikey. See agents/<name>/auth.md.
+TOOLCHAIN|node|Which image variant: node, python or full.
+MEM|4g|Memory for the agent's processes.
+CPUS|2|Processor cores for the agent.
+PIDS|512|How many processes and threads the agent container may have.
+NPROC|512|The same ceiling per user id, shared by sessions that run side by side.
+TTL|4h|How long a session runs before Podman stops it.
+BUDGET|500|How many model requests a session may make.
+TMP_SIZE|1g|Size of /tmp, held in memory.
+HOME_SIZE|1g|Size of the home directory, held in memory.
+WORKSPACE_SIZE|4g|Size of the workspace: one session's share of the disk store, or its cap when held in memory.
+WORKSPACE_DRIVER|auto|auto (on the disk store when STORE is set, in memory when it is not), local or memory.
+STORE||The disk store: a filesystem of fixed size that you own. doctor explains how to make one.
+STORE_DEVICE||That filesystem's block device; only needed for --io-limit.
+OUT_DIR|$HOME/agent-sandbox-out|Where export puts the repository it has reviewed.
+EOF
+}
+
+# The usual place for the disk store; doctor's instructions make it there and
+# so do the VM recipes in extras/vm-wrapper/. (The variable exists for the
+# tests.)
+STANDARD_STORE="${SANDBOX_STANDARD_STORE:-/var/lib/agent-sandbox-store}"
+
+# True when a store has already been made at the usual place: a directory of
+# yours that is a filesystem of its own.
+standard_store_ready() {
+  [ "$(uname -s)" != Darwin ] && [ -d "$STANDARD_STORE" ] && [ ! -L "$STANDARD_STORE" ] && [ -O "$STANDARD_STORE" ] \
+    && [ "$(stat -c %d "$STANDARD_STORE" 2>/dev/null)" != "$(stat -c %d "$STANDARD_STORE/.." 2>/dev/null)" ]
+}
+
+ensure_settings() {
+  local file="$SANDBOX_CONFIG_DIR/settings" name default what
+  [ -f "$file" ] && return 0
+  mkdir -p "$SANDBOX_CONFIG_DIR"
+  {
+    printf '# agent-sandbox settings: the defaults for ./sandbox run.\n'
+    printf '# NAME=value lines. A flag on the command line wins over a line here.\n'
+    printf '# This file is read as text; nothing in it is ever executed.\n'
+    while IFS='|' read -r name default what; do
+      # A store that is already there is written in, so it is used without
+      # your having to name it.
+      if [ "$name" = STORE ] && standard_store_ready; then default="$STANDARD_STORE"; fi
+      printf '\n# %s\n%s=%s\n' "$what" "$name" "$default"
+    done <<EOF
+$(settings_table)
+EOF
+  } > "$file"
+}
+
+# setting <NAME> — your value, or the built-in default when you have none.
+setting() {
+  local want="$1" value name default _
+  ensure_settings
+  value="$(kv_get "$SANDBOX_CONFIG_DIR/settings" "$want")"
+  if [ -z "$value" ]; then
+    while IFS='|' read -r name default _; do
+      if [ "$name" = "$want" ]; then value="$default"; fi
+    done <<EOF
+$(settings_table)
+EOF
+  fi
+  printf '%s' "$value"
+}
+
+# ---------------------------------------------------------------------------
+# The host: who is running this, and which Podman  [logical B29]
+# ---------------------------------------------------------------------------
+
+# [closes M3] If a kernel bug lets the agent out, it lands in the account
+# that started the container. That account must not be root, and there is no
+# flag to say otherwise.
+refuse_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    die "refusing to run as root. Use an ordinary account without sudo; there is no override."
+  fi
+}
+
+# Every command that calls Podman goes through here first: not root, Podman
+# on this machine, and not run by root. scripts/doctor.sh holds the checks.
+PODMAN_CHECKED=""
+require_podman() {
+  [ -z "$PODMAN_CHECKED" ] || return 0
+  "$SANDBOX_ROOT/scripts/doctor.sh" --runtime-only || exit 1
+  PODMAN_CHECKED=1
+}
+
+# [physical B05] On a host that runs SELinux the confinement type is named
+# explicitly. Elsewhere this stays empty: rootless Podman applies no AppArmor
+# profile, and asking for one is an error.
+set_selinux_opt() {
+  SANDBOX_SELINUX_OPT=""
+  if [ "$(podman info --format '{{.Host.Security.SELinuxEnabled}}' 2>/dev/null || true)" = true ]; then
+    SANDBOX_SELINUX_OPT="label=type:container_t"
+  fi
+  export SANDBOX_SELINUX_OPT
+}
+
+ensure_state_dir() {
+  # In a shared /tmp somebody else could have made this directory first, or
+  # put a link in its place, and filled it with files of their choosing. Look
+  # before touching anything in it; every command comes through here.
+  [ -e "$SANDBOX_STATE_DIR" ] || [ -L "$SANDBOX_STATE_DIR" ] || ( umask 077; mkdir -p "$SANDBOX_STATE_DIR" )
+  if [ -L "$SANDBOX_STATE_DIR" ] || [ ! -d "$SANDBOX_STATE_DIR" ] || [ ! -O "$SANDBOX_STATE_DIR" ]; then
+    die "$SANDBOX_STATE_DIR is not a directory of yours; set SANDBOX_STATE_DIR to one that is"
+  fi
+  chmod 700 "$SANDBOX_STATE_DIR"
+}
+
+# ---------------------------------------------------------------------------
+# Sessions
+# ---------------------------------------------------------------------------
+
+list_sessions() {
+  local dir
+  for dir in "$SANDBOX_STATE_DIR"/asb-*; do
+    if [ -f "$dir/state" ]; then printf '%s\n' "${dir##*/}"; fi
+  done
+}
+
+# The state file: KEY=value lines, written only here.
+write_state() {
+  local file="$SESSION_DIR/state"
+  ( umask 077
+    printf '%s=%s\n' \
+      SESSION "$SESSION" AGENT "$AGENT" AUTH "$AUTH" TOOLCHAIN "$TOOLCHAIN" \
+      BRANCH "$BRANCH" BASE_COMMIT "$BASE_COMMIT" ORIGIN_URL "$ORIGIN_URL" \
+      DEADLINE_EPOCH "$DEADLINE_EPOCH" SUBNET "$SUBNET" EGRESS_SUBNET "$EGRESS_SUBNET" \
+      WORKSPACE_DRIVER "$WORKSPACE_DRIVER" SERVICES "$SERVICES" GIT_RELAY "$GIT_RELAY" \
+      CREATED_EPOCH "$CREATED_EPOCH" WORKSPACE_BYTES "$WORKSPACE_BYTES" STORE "$STORE" \
+      VERSION "$SANDBOX_VERSION" \
+      > "$file.tmp" )
+  mv -f "$file.tmp" "$file"
+}
+
+# Reads one session's state into the variables above and exports what
+# topology.sh needs to describe the export helper.
+read_state() {
+  local file="$SANDBOX_STATE_DIR/$1/state"
+  [ -f "$file" ] || die "there is no session named $1"
+  SESSION="$1"
+  SESSION_DIR="$SANDBOX_STATE_DIR/$1"
+  AGENT="$(kv_get "$file" AGENT)"
+  AUTH="$(kv_get "$file" AUTH)"
+  TOOLCHAIN="$(kv_get "$file" TOOLCHAIN)"
+  BRANCH="$(kv_get "$file" BRANCH)"
+  BASE_COMMIT="$(kv_get "$file" BASE_COMMIT)"
+  ORIGIN_URL="$(kv_get "$file" ORIGIN_URL)"
+  DEADLINE_EPOCH="$(kv_get "$file" DEADLINE_EPOCH)"
+  SUBNET="$(kv_get "$file" SUBNET)"
+  EGRESS_SUBNET="$(kv_get "$file" EGRESS_SUBNET)"
+  WORKSPACE_DRIVER="$(kv_get "$file" WORKSPACE_DRIVER)"
+  SERVICES="$(kv_get "$file" SERVICES)"
+  GIT_RELAY="$(kv_get "$file" GIT_RELAY)"
+  CREATED_EPOCH="$(kv_get "$file" CREATED_EPOCH)"
+  WORKSPACE_BYTES="$(kv_get "$file" WORKSPACE_BYTES)"
+  STORE="$(kv_get "$file" STORE)"
+  # The session's images carry the version it was started with. After you
+  # update this checkout, `export` must still name those images.
+  if [ -n "$(kv_get "$file" VERSION)" ]; then
+    SANDBOX_VERSION="$(kv_get "$file" VERSION)"
+    export SANDBOX_VERSION
+  fi
+  export SANDBOX_SESSION="$SESSION" SANDBOX_SESSION_DIR="$SESSION_DIR"
+  export SANDBOX_AGENT="$AGENT" SANDBOX_TOOLCHAIN="$TOOLCHAIN"
+}
+
+# The session a command acts on: the one named by SANDBOX_SESSION, else the
+# only one there is.
+load_session() {
+  local sessions count
+  if [ -n "${SANDBOX_SESSION:-}" ]; then
+    # The name becomes part of paths that `destroy` removes.
+    [[ "$SANDBOX_SESSION" =~ $SESSION_PATTERN ]] || die "'$SANDBOX_SESSION' is not a session name"
+    read_state "$SANDBOX_SESSION"
+    return 0
+  fi
+  sessions="$(list_sessions)"
+  count="$(printf '%s' "$sessions" | grep -c . || true)"
+  case "$count" in
+    0) die "there is no session. Start one: ./sandbox run <repo-url|path>" ;;
+    1) read_state "$sessions" ;;
+    *) die "there is more than one session. Set SANDBOX_SESSION to one of:
+$sessions" ;;
+  esac
+}
+
+# Stops every container of a session except the keeper, which holds the
+# workspace so the work can still be exported.  [logical B26]
+stop_session_containers() {
+  local name
+  podman ps --filter "label=$LABEL=$1" --format '{{.Names}}' | while IFS= read -r name; do
+    case "$name" in
+      ''|*-keeper) ;;
+      *) podman stop "$name" >/dev/null 2>&1 || true ;;
+    esac
+  done
+}
+
+# Run before every command. Podman's own timer has normally stopped a session
+# at its deadline; this catches the case where it did not, and reminds you
+# which ended sessions still hold their workspace.
+sweep_sessions() {
+  local session dir deadline now reason
+  now="$(date +%s)"
+  for session in $(list_sessions); do
+    dir="$SANDBOX_STATE_DIR/$session"
+    if [ -f "$dir/stopped" ]; then
+      IFS= read -r reason < "$dir/stopped" || true
+      warn "session $session was stopped: $reason"
+    fi
+    deadline="$(kv_get "$dir/state" DEADLINE_EPOCH)"
+    case "$deadline" in ''|*[!0-9]*) continue ;; esac
+    [ "$now" -ge "$deadline" ] || continue
+    if "$SANDBOX_ROOT/scripts/doctor.sh" --runtime-only 2>/dev/null; then
+      stop_session_containers "$session" || true
+    fi
+    warn "session $session reached its time limit ($(epoch_to_date "$deadline")) and still holds its workspace: SANDBOX_SESSION=$session ./sandbox export, then destroy"
+  done
+}
+
+# ---------------------------------------------------------------------------
+# Credentials  [logical B22, physical B15; closes H1]
+#
+# The model credential rests in your OS keyring. At `run` it is read into a
+# variable of this process and piped to the credential sidecar on stdin. It is
+# never written to a file, never put in a container's environment, never on a
+# command line and never printed. That is why nothing below uses a here-string
+# for it (bash writes those to a temporary file) or passes it as an argument.
+# ---------------------------------------------------------------------------
+
+keyring_get() {   # <agent> <auth>; the secret on stdout
+  if [ "$(uname -s)" = Darwin ]; then
+    security find-generic-password -s agent-sandbox -a "$1-$2" -w 2>/dev/null
+  else
+    command -v secret-tool >/dev/null 2>&1 || return 1
+    secret-tool lookup service agent-sandbox agent "$1" auth "$2" 2>/dev/null
+  fi
+}
+
+keyring_put() {   # <agent> <auth>; the secret on stdin; replaces what is there
+  local hex
+  if [ "$(uname -s)" = Darwin ]; then
+    # `security` takes a new password as an argument or by typing. To keep it
+    # off the command line it is given as hexadecimal on the tool's own
+    # standard input. UNPROVEN until Phase B.
+    hex="$(od -An -v -tx1 | tr -d ' \n')"
+    printf 'add-generic-password -U -s agent-sandbox -a %s -X %s\n' "$1-$2" "$hex" | security -i >/dev/null
+  else
+    secret-tool store --label "agent-sandbox: $1 $2" service agent-sandbox agent "$1" auth "$2"
+  fi
+}
+
+# A token is letters, digits and a little punctuation. Anything else is not a
+# token, and refusing it means no quoting is needed to put one in JSON. The
+# same rule as the sidecar's loader (images/credsidecar/sidecar-load), so a
+# credential it would refuse is refused here, with a message that says so.
+looks_like_token() {
+  case "$1" in
+    ''|*[!A-Za-z0-9._~+/=-]*) return 1 ;;
+  esac
+  [ "${#1}" -ge 8 ] && [ "${#1}" -le 16384 ]
+}
+
+# The branch names export accepts (scripts/export.sh, check_branch). Checked
+# at run, so a session is not spent on a branch that cannot come out.
+valid_branch() {
+  case "$1" in
+    ''|*[!A-Za-z0-9._/-]*|-*|/*|*/|.*|*.|*..*|*//*|*/.*|*/-*|*.lock|*.lock/*) return 1 ;;
+  esac
+  [ "${#1}" -le 200 ] && git check-ref-format --branch "$1" >/dev/null 2>&1
+}
+
+# Prints the JSON object the sidecar's loader reads: {"token":"..."}.
+credential_json() {
+  local agent="$1" auth="$2" secret=""
+  if [ "$agent" = codex ] && [ "$auth" = oauth ]; then
+    codex_sidecar_json 600
+    return
+  fi
+  if [ "$agent" = claude ] && [ "$auth" = apikey ] && [ -n "${SANDBOX_TEST_ANTHROPIC_KEY:-}" ]; then
+    # For tests only. ANTHROPIC_API_KEY is deliberately never read: a key
+    # sitting in your shell should not end up in a sandbox by accident.
+    secret="$SANDBOX_TEST_ANTHROPIC_KEY"
+  elif ! secret="$(keyring_get "$agent" "$auth")" || [ -z "$secret" ]; then
+    if [ -t 0 ]; then
+      read -rsp "Credential for $agent ($auth), used for this session only: " secret
+      printf '\n' >&2
+    else
+      # No terminal: one line on standard input, so a script can supply it
+      # without it ever being an argument or a variable of this process's
+      # parent.
+      IFS= read -r secret || true
+      [ -n "$secret" ] || die "no $auth credential for $agent in your keyring. Store one first: ./sandbox login --agent $agent --auth $auth"
+    fi
+  fi
+  looks_like_token "$secret" \
+    || die "the $auth credential for $agent does not look like a token. Store it again: ./sandbox login --agent $agent --auth $auth"
+  printf '{"token":"%s"}' "$secret"
+}
+
+# --- Codex subscription login ----------------------------------------------
+# What the keyring holds for Codex is the whole ~/.codex/auth.json: a
+# long-lived refresh token and a short-lived access token. Only the access
+# token and the account id ever go to the sidecar. This host renews the access
+# token before it runs out and pipes in the next one.  [logical B22]
+
+# UNPROVEN until Phase B: the endpoint, the client id and the body are the
+# ones the Codex CLI uses, and none of it has been run against the real
+# service. Everything that talks to it is in this one function.
+# stdin: the refresh token. stdout: the service's JSON reply.
+codex_token_request() {
+  jq -Rsc '{client_id: "app_EMoamEEZ73f0CkXaXp7hrann", grant_type: "refresh_token",
+            refresh_token: ., scope: "openid profile email"}' \
+    | curl --silent --show-error --fail --max-time 30 \
+        --header 'Content-Type: application/json' --data-binary @- \
+        https://auth.openai.com/oauth/token
+}
+
+# stdin: the stored login. stdout: seconds until its access token expires.
+codex_seconds_left() {
+  local expiry
+  expiry="$(jq -r '.tokens.access_token | split(".")[1] | gsub("-"; "+") | gsub("_"; "/")
+                   | @base64d | fromjson | .exp' 2>/dev/null || true)"
+  case "$expiry" in ''|*[!0-9]*) expiry=0 ;; esac
+  printf '%s' "$(( expiry - $(date +%s) ))"
+}
+
+# One renewal at a time on this host, whichever session asks: the service
+# gives out a new refresh token with each renewal, and two sessions renewing
+# at once would leave one of them holding a dead one.
+codex_lock() {
+  local lock="$SANDBOX_STATE_DIR/codex-refresh.lock" owner tries=0
+  ensure_state_dir
+  until mkdir "$lock" 2>/dev/null; do
+    owner=""
+    if [ -f "$lock/pid" ]; then IFS= read -r owner < "$lock/pid" || true; fi
+    # The owner is gone, or the lock has sat for a minute with no owner
+    # written in it (its maker died in between). Renaming is atomic, so of
+    # several waiters only one takes the stale lock away.
+    if { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } \
+       || { [ -z "$owner" ] && [ "$tries" -ge 60 ]; }; then
+      if mv "$lock" "$lock.stale.$$" 2>/dev/null; then rm -rf "$lock.stale.$$"; fi
+      continue
+    fi
+    tries=$((tries + 1))
+    [ "$tries" -lt 90 ] || return 1
+    sleep 1
+  done
+  # The process that holds the lock is the one running this function, which
+  # may be a subshell: ask a child for its parent's id.
+  sh -c 'echo "$PPID"' > "$lock/pid"
+}
+codex_unlock() { rm -rf "$SANDBOX_STATE_DIR/codex-refresh.lock"; }
+
+# codex_sidecar_json <seconds> — prints {"token":...,"account_id":...} for the
+# sidecar, renewing the access token first if it has less than <seconds> left.
+codex_sidecar_json() {
+  local margin="$1" login reply renewed
+  command -v jq >/dev/null 2>&1 || die "a Codex subscription login needs jq on this host"
+  codex_lock || die "another session has been renewing the Codex login for over a minute; try again"
+  if ! login="$(keyring_get codex oauth)" || [ -z "$login" ]; then
+    codex_unlock
+    die "no Codex login in your keyring. Store one first: ./sandbox login --agent codex --auth oauth"
+  fi
+  if [ "$(printf '%s' "$login" | codex_seconds_left)" -lt "$margin" ]; then
+    if ! reply="$(printf '%s' "$login" | jq -j '.tokens.refresh_token' | codex_token_request)"; then
+      codex_unlock
+      die "the Codex login could not be renewed. Sign in again with the Codex CLI, then: ./sandbox login --agent codex --auth oauth"
+    fi
+    if ! renewed="$(printf '%s\n%s\n' "$login" "$reply" | jq -sc '
+          .[1] as $new | .[0]
+          | .tokens.access_token = ($new.access_token // error("no access token in the reply"))
+          | .tokens.id_token = ($new.id_token // .tokens.id_token)
+          | .tokens.refresh_token = ($new.refresh_token // .tokens.refresh_token)
+          | .last_refresh = (now | todate)')"; then
+      codex_unlock
+      die "the renewal service sent a reply this version does not understand"
+    fi
+    login="$renewed"
+    # One call replaces the stored login, so the keyring holds the old one or
+    # the new one, never half. The old refresh token is dead from here on.
+    printf '%s' "$login" | keyring_put codex oauth \
+      || warn "the renewed Codex login could not be stored. This session carries on; before the next one run ./sandbox login --agent codex --auth oauth"
+  fi
+  codex_unlock
+  # A login without an account id sends none: the loader refuses an empty one.
+  printf '%s' "$login" | jq -c '{token: .tokens.access_token} + (if (.tokens.account_id // "") == "" then {} else {account_id: .tokens.account_id} end)'
+}
+
+# ---------------------------------------------------------------------------
+# The host watchdog: `./sandbox __watchdog <session>`, started by `run`.
+# One background process on your host per session that needs one. It does two
+# things no container can be trusted to do for itself: it keeps the sidecar
+# supplied with a fresh Codex access token, and with the disk-backed workspace
+# it measures the session's share of the store.  [logical B22, B33]
+# ---------------------------------------------------------------------------
+WATCH_LAST_JSON=""
+
+# One look. Returns 1 when there is nothing left to watch.
+watchdog_tick() {
+  local used json
+  [ -f "$SESSION_DIR/state" ] || return 1
+  [ "$(date +%s)" -lt "$DEADLINE_EPOCH" ] || return 1
+  [ "$(podman inspect --format '{{.State.Running}}' "$SESSION-agent" 2>/dev/null || true)" = true ] || return 1
+
+  if [ "$WORKSPACE_DRIVER" = local ]; then
+    # [logical B33] The store is shared by every session that uses it, and
+    # its files belong to the container's user, so they are measured from
+    # inside Podman's user namespace. Past its share the session is stopped;
+    # the work stays for `export`. This lags by one interval: the hard wall
+    # is the size of the store itself.
+    # Blocks really taken, not the sum of file lengths: a million one-byte
+    # files take gigabytes of the store while adding up to a megabyte.
+    used="$(podman unshare du -s --block-size=1 "$STORE/$SESSION" 2>/dev/null | cut -f1)"
+    case "$used" in ''|*[!0-9]*) used=0 ;; esac
+    if [ "$used" -gt "$WORKSPACE_BYTES" ]; then
+      stop_session_containers "$SESSION"
+      printf 'its workspace grew past --workspace-size (%s)\n' "$(human_bytes "$WORKSPACE_BYTES")" > "$SESSION_DIR/stopped"
+      return 1
+    fi
+  fi
+
+  if [ "$AGENT" = codex ] && [ "$AUTH" = oauth ]; then
+    # Renewed ten minutes before it would expire. It is piped in whenever it
+    # differs from what this process last sent, which also covers a renewal
+    # made by another session's watchdog.
+    if json="$(codex_sidecar_json 600)"; then
+      if [ "$json" != "$WATCH_LAST_JSON" ] \
+         && printf '%s' "$json" | podman exec -i "$SESSION-credsidecar" sidecar-load >/dev/null; then
+        WATCH_LAST_JSON="$json"
+      fi
+    else
+      echo "$(date '+%Y-%m-%d %H:%M:%S') the Codex token could not be renewed" >&2
+    fi
+  fi
+  return 0
+}
+
+cmd_watchdog() {
+  [[ "${1:-}" =~ $SESSION_PATTERN ]] || die "usage: ./sandbox __watchdog <session>"
+  read_state "$1"
+  if [ "${2:-}" = --once ]; then     # one look and out; used by the tests
+    watchdog_tick
+    return
+  fi
+  while watchdog_tick; do
+    sleep "$WATCH_INTERVAL"
+  done
+}
+
+start_watchdog() {
+  nohup "$SANDBOX_ROOT/sandbox" __watchdog "$SESSION" </dev/null >/dev/null 2>"$SESSION_DIR/watchdog.log" &
+  printf '%s\n' "$!" > "$SESSION_DIR/watchdog.pid"
+}
+
+stop_watchdog() {   # <session>
+  local file="$SANDBOX_STATE_DIR/$1/watchdog.pid" pid=""
+  [ -f "$file" ] || return 0
+  IFS= read -r pid < "$file" || true
+  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  # Process ids are reused: only signal it if it is still this watchdog.
+  case "$(ps -p "$pid" -o args= 2>/dev/null || true)" in
+    *"__watchdog $1"*) kill "$pid" 2>/dev/null || true ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Subnets
+# Each session gets two /24 networks of its own, from ranges Podman does not
+# hand out by itself, so sessions can run side by side. They must not overlap
+# anything this host already routes.
+# ---------------------------------------------------------------------------
+
+ip_to_int() {
+  local a b c d
+  IFS=. read -r a b c d <<<"$1"
+  printf '%s' "$(( (a << 24) + (b << 16) + (c << 8) + d ))"
+}
+
+# True when two IPv4 blocks (a.b.c.d/n) share an address.
+cidr_overlap() {
+  local bits_a="${1#*/}" bits_b="${2#*/}" bits mask
+  bits=$(( bits_a < bits_b ? bits_a : bits_b ))
+  mask=$(( bits == 0 ? 0 : (0xffffffff << (32 - bits)) & 0xffffffff ))
+  [ $(( $(ip_to_int "${1%/*}") & mask )) -eq $(( $(ip_to_int "${2%/*}") & mask )) ]
+}
+
+# Every IPv4 block in use: Podman's networks and the host's routes.
+used_cidrs() {
+  local word
+  {
+    podman network ls --format '{{range .Subnets}}{{.Subnet}} {{end}}'
+    if command -v ip >/dev/null 2>&1; then ip -4 route show 2>/dev/null | cut -d' ' -f1; fi
+  } | tr ' ' '\n' | while IFS= read -r word; do
+    if [[ "$word" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then word="$word/32"; fi
+    if [[ "$word" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]]; then printf '%s\n' "$word"; fi
+  done
+}
+
+# pick_subnet <second octet> <blocks in use> — the first free 10.<octet>.N.0/24.
+pick_subnet() {
+  local octet="$1" used="$2" n=0 candidate other free
+  while [ "$n" -le 255 ]; do
+    candidate="10.$octet.$n.0/24"
+    free=1
+    for other in $used; do
+      if cidr_overlap "$candidate" "$other"; then free=0; break; fi
+    done
+    if [ "$free" -eq 1 ]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+    n=$((n + 1))
+  done
+  die "no free network left in 10.$octet.0.0/16; destroy sessions you no longer need"
+}
+
+# ---------------------------------------------------------------------------
+# Images
+# ---------------------------------------------------------------------------
+
+# An image is named here by what it is: proxy, credsidecar, gitrelay, or
+# agent-<agent>:<toolchain>.
+image_tag() {
+  case "$1" in
+    agent-*:*) printf 'localhost/agent-sandbox/%s-%s' "$1" "$SANDBOX_VERSION" ;;
+    *)         printf 'localhost/agent-sandbox/%s:%s' "$1" "$SANDBOX_VERSION" ;;
+  esac
+}
+
+# build_image <what> [podman build options...]
+build_image() {
+  local what="$1" name value file context args=()
+  shift
+  # [closes M2] Base images are pinned by digest. The digests are filled in
+  # on a real host; until then nothing is built from a floating tag.
+  [ -f "$SANDBOX_ROOT/images/PINS" ] || die "images/PINS is missing"
+  while IFS='=' read -r name value; do
+    case "$name" in ''|'#'*) continue ;; esac
+    case "$value" in
+      *UNPINNED*) die "images/PINS: $name is still UNPINNED. Run scripts/pin-images.sh once, read the digests it wrote, then try again." ;;
+    esac
+    args+=(--build-arg "$name=$value")
+  done < "$SANDBOX_ROOT/images/PINS"
+  case "$what" in
+    agent-*:*)
+      # One image per agent and toolchain. Context: the repository root.
+      name="${what#agent-}"
+      check_cli_version "${name%%:*}"
+      args+=(--build-arg "AGENT=${name%%:*}" --build-arg "TOOLCHAIN=${what##*:}")
+      file="$SANDBOX_ROOT/images/agent/Containerfile"; context="$SANDBOX_ROOT" ;;
+    credsidecar)
+      file="$SANDBOX_ROOT/images/credsidecar/Containerfile"; context="$SANDBOX_ROOT" ;;
+    proxy|gitrelay)
+      file="$SANDBOX_ROOT/images/$what/Containerfile"; context="$SANDBOX_ROOT/images/$what" ;;
+    *) die "there is no image called $what" ;;
+  esac
+  # Which files it was built from (ensure_image).
+  args+=(--label "agent-sandbox.inputs=$(inputs_sum "$what")")
+  info "building $(image_tag "$what")"
+  podman build ${args[@]+"${args[@]}"} "$@" --build-arg "SANDBOX_VERSION=$SANDBOX_VERSION" \
+    --tag "$(image_tag "$what")" --file "$file" "$context"
+}
+
+# Builds an image that is missing, and one built from other files than these:
+# the tag stays the same when a CLI pin, a launch script or the sidecar
+# changes, so the tag alone would keep the old image.
+ensure_image() {
+  local tag
+  tag="$(image_tag "$1")"
+  if ! podman image exists "$tag"; then
+    build_image "$1"
+  elif [ "$(podman image inspect --format '{{index .Labels "agent-sandbox.inputs"}}' "$tag" 2>/dev/null || true)" != "$(inputs_sum "$1")" ]; then
+    info "$tag was built from other files than these ($(image_inputs "$1" | tr '\n' ' ' | sed 's/ $//')); rebuilding it"
+    build_image "$1"
+  fi
+}
+
+# The files and directories, under the repository, an image is built from:
+# what its Containerfile copies in, and the pinned base images.
+image_inputs() {   # <what>
+  case "$1" in
+    agent-*:*)   local agent="${1#agent-}"; printf '%s\n' images/agent "agents/${agent%%:*}" ;;
+    credsidecar) printf '%s\n' images/credsidecar agents/*/sidecar.json ;;
+    *)           printf '%s\n' "images/$1" ;;
+  esac
+  printf '%s\n' images/PINS
+}
+
+# A checksum of every file among them, names and contents.
+inputs_sum() {   # <what>
+  local paths=() path
+  while IFS= read -r path; do
+    [ -e "$SANDBOX_ROOT/$path" ] && paths+=("$path")
+  done < <(cd "$SANDBOX_ROOT" && image_inputs "$1")
+  # shellcheck disable=SC2016  # the $f is the inner shell's
+  (cd "$SANDBOX_ROOT" && find ${paths[@]+"${paths[@]}"} -type f -print0 2>/dev/null | LC_ALL=C sort -z \
+     | xargs -0 -r sh -c 'for f; do printf "%s\n" "$f"; cat "$f"; done' sh) | cksum | cut -d' ' -f1
+}
+
+# The CLI a plug-in pins, as "<npm package> <version>", read from its
+# install.sh. Nothing is printed for a plug-in that pins none.
+cli_pin() {   # <agent>
+  local file="$SANDBOX_ROOT/agents/$1/install.sh" package version
+  [ -f "$file" ] || return 0
+  # shellcheck disable=SC2016  # the ${VERSION} searched for is install.sh's
+  package="$(sed -n 's/^WRAPPER_SPEC="\(.*\)@\${VERSION}.*"$/\1/p' "$file")"
+  version="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$file")"
+  [ -z "$package" ] || [ -z "$version" ] || printf '%s %s\n' "$package" "$version"
+}
+
+# npm's "latest" version of a package, or nothing when the registry cannot
+# be asked. npm is used when it is installed; otherwise curl and jq.
+cli_latest() {   # <npm package>
+  local registry="${SANDBOX_NPM_REGISTRY:-https://registry.npmjs.org}"
+  if command -v npm >/dev/null 2>&1; then
+    timeout 20 npm view "$1" dist-tags.latest --registry "$registry" 2>/dev/null || true
+  elif command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+    curl -fsS --max-time 20 "$registry/-/package/${1//\//%2f}/dist-tags" 2>/dev/null | jq -r '.latest // empty' 2>/dev/null || true
+  fi
+}
+
+# Warns when the CLI pinned for <agent> is not npm's latest. Never stops a
+# build or a session: moving a pin means reading new hashes (the top of the
+# plug-in's install.sh says how), which is for you to do, not for run.
+CLI_CHECKED=""
+check_cli_version() {   # <agent>
+  local pin package version latest
+  case " $CLI_CHECKED " in *" $1 "*) return 0 ;; esac
+  CLI_CHECKED="$CLI_CHECKED $1"
+  pin="$(cli_pin "$1")"
+  [ -n "$pin" ] || return 0
+  read -r package version <<<"$pin"
+  latest="$(cli_latest "$package" | head -n 1)"
+  case "$latest" in
+    ''|*[!0-9A-Za-z.+-]*)
+      warn "could not ask npm which $package is the latest; carrying on with the pinned $version" ;;
+    "$version") ;;
+    *)
+      warn "agents/$1/install.sh pins $package $version; npm's latest is $latest. To move the pin, follow the top of that file, then ./sandbox upgrade" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Sibling services: services/<name>/service.conf
+# ---------------------------------------------------------------------------
+SVC_IMAGE="" SVC_USER="" SVC_MEMORY="" SVC_PIDS="" SVC_URL_VAR=""
+SVC_URL_TEMPLATE="" SVC_HEALTH="" SVC_VERSIONS=""
+SVC_TMPFS=() SVC_ENV=() SVC_COMMAND=()
+
+# load_service <name>[:<version>] — reads the description into the SVC_
+# variables topology.sh uses.
+load_service() {
+  local name="${1%%:*}" version="" file line key value known found=0
+  case "$1" in *:*) version="${1#*:}" ;; esac
+  [[ "$name" =~ ^[a-z][a-z0-9-]*$ ]] || die "--service: '$1' is not name:version"
+  file="$SANDBOX_ROOT/services/$name/service.conf"
+  [ -f "$file" ] || die "--service: there is no services/$name/service.conf"
+  SVC_IMAGE="" SVC_USER="" SVC_MEMORY="" SVC_PIDS="" SVC_URL_VAR=""
+  SVC_URL_TEMPLATE="" SVC_HEALTH="" SVC_VERSIONS=""
+  SVC_TMPFS=() SVC_ENV=() SVC_COMMAND=()
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Split by hand at the first `=`, so `ENV=NAME=` keeps its empty value.
+    # (Podman reads a bare `--env NAME` as "copy NAME from the host".)
+    case "$line" in *=*) ;; *) continue ;; esac
+    key="${line%%=*}" value="${line#*=}"
+    case "$key" in
+      IMAGE)        SVC_IMAGE="$value" ;;
+      USER)         SVC_USER="$value" ;;
+      MEMORY)       SVC_MEMORY="$value" ;;
+      PIDS)         SVC_PIDS="$value" ;;
+      URL_VAR)      SVC_URL_VAR="$value" ;;
+      URL_TEMPLATE) SVC_URL_TEMPLATE="$value" ;;
+      HEALTH)       SVC_HEALTH="$value" ;;
+      VERSIONS)     SVC_VERSIONS="$value" ;;
+      TMPFS)        SVC_TMPFS+=("$value") ;;
+      ENV)          SVC_ENV+=("$value") ;;
+      COMMAND_ARG)  SVC_COMMAND+=("$value") ;;     # an empty value is an empty argument
+    esac
+  done < "$file"
+  if [ -n "$version" ] && [ -n "$SVC_VERSIONS" ]; then
+    for known in $SVC_VERSIONS; do
+      if [ "$known" = "$version" ]; then found=1; fi
+    done
+    [ "$found" -eq 1 ] || die "--service: $name is offered in version $SVC_VERSIONS, not $version"
+  fi
+  # [closes M2] A service image is named by digest or not used at all.
+  case "$SVC_IMAGE" in
+    *@sha256:*) ;;
+    *) die "services/$name/service.conf: the image is not pinned by digest. Run scripts/pin-images.sh once." ;;
+  esac
+}
+
+# A service's connection string. It points at the service's address on the
+# session network: no container here is found by name.
+service_url() {   # <address>
+  printf '%s' "${SVC_URL_TEMPLATE//\{host\}/$1}"
+}
+
+# ---------------------------------------------------------------------------
+# run
+# ---------------------------------------------------------------------------
+
+# The memory limit topology.sh has just given a container (in TOPO), in bytes.
+topo_memory() {
+  local i=0 value
+  while [ "$i" -lt "${#TOPO[@]}" ]; do
+    if [ "${TOPO[$i]}" = --memory ]; then
+      value="${TOPO[$((i + 1))]}"
+      case "$value" in
+        *[!0-9]*) parse_size "topology.sh" "$value" ;;
+        *)        printf '%s' "$value" ;;
+      esac
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  printf '0'
+}
+
+# An agent is a directory under agents/; a fourth one needs no change here.
+agent_exists() {
+  [[ "$1" =~ ^[a-z][a-z0-9-]*$ ]] || return 1
+  [ -d "$SANDBOX_ROOT/agents/$1" ]
+}
+
+# Where the workspace is kept. On disk when there is a store to put it on:
+# held in memory it has to fit in what the host can spare, and real
+# repositories with their dependencies often do not.
+resolve_workspace_driver() {
+  if [ "$WORKSPACE_DRIVER" = auto ]; then
+    if [ -n "$STORE" ]; then WORKSPACE_DRIVER=local; else WORKSPACE_DRIVER=memory; fi
+  fi
+}
+
+# agent_memory_limit <processes> <tmp> <home>, in bytes.  [physical B10]
+# The agent's memory limit covers its processes and every memory-backed place
+# it can write to (64m is /dev/shm; the workspace unless it is on disk),
+# because files held in memory are memory. Without the sum, a full workspace
+# would get the agent killed instead of getting "no space left".
+agent_memory_limit() {
+  local limit=$(( $1 + $2 + $3 + 64 * 1024 * 1024 ))
+  if [ "$WORKSPACE_DRIVER" = memory ]; then limit=$(( limit + WORKSPACE_BYTES )); fi
+  printf '%s' "$limit"
+}
+
+# What the other containers of the session may use, in bytes: added up from
+# the limits topology.sh gives each of them, so those numbers live in one
+# place. Call it with topology.sh sourced and its variables exported.
+helpers_memory() {
+  local sum service count=0
+  topo_keeper;  sum="$(topo_memory)"
+  topo_proxy;   sum=$(( sum + $(topo_memory) ))
+  topo_sidecar; sum=$(( sum + $(topo_memory) ))
+  if [ "$GIT_RELAY" = 1 ]; then topo_gitrelay; sum=$(( sum + $(topo_memory) )); fi
+  for service in $SERVICES; do
+    load_service "$service"
+    topo_service "${service%%:*}" "$(service_address "$count")"
+    sum=$(( sum + $(topo_memory) ))
+    count=$((count + 1))
+  done
+  printf '%s' "$sum"
+}
+
+# What a session started with your settings as they are, and no options,
+# may take from the host. For `doctor`, which calls it as $(...): the session
+# it describes is imaginary and its values must not outlive the call.
+default_session_memory() {
+  local agent mem tmp home helpers
+  SESSION=asb-doctor-000000 SUBNET=10.201.0.0/24 GIT_RELAY=0 SERVICES=""
+  WORKSPACE_DRIVER="$(setting WORKSPACE_DRIVER)"; STORE="$(setting STORE)"
+  resolve_workspace_driver
+  # One assignment per value: a size that does not parse must stop this, not
+  # leave an empty number for the sum.
+  WORKSPACE_BYTES="$(parse_size WORKSPACE_SIZE "$(setting WORKSPACE_SIZE)")" || return 1
+  mem="$(parse_size MEM "$(setting MEM)")" || return 1
+  tmp="$(parse_size TMP_SIZE "$(setting TMP_SIZE)")" || return 1
+  home="$(parse_size HOME_SIZE "$(setting HOME_SIZE)")" || return 1
+  agent="$(agent_memory_limit "$mem" "$tmp" "$home")" || return 1
+  export SANDBOX_SESSION="$SESSION" SANDBOX_SESSION_DIR="$SANDBOX_STATE_DIR/$SESSION"
+  export SANDBOX_AGENT=claude SANDBOX_AUTH=oauth SANDBOX_TOOLCHAIN=node
+  export SANDBOX_BUDGET=1 SANDBOX_TTL_SECONDS=1
+  export SANDBOX_SUBNET="$SUBNET" SANDBOX_EGRESS_SUBNET=10.202.0.0/24
+  session_addresses
+  # shellcheck source=topology.sh
+  . "$SANDBOX_ROOT/topology.sh"
+  helpers="$(helpers_memory)" || return 1
+  printf '%s' "$(( agent + helpers ))"
+}
+
+# Which credential modes an agent takes is the plug-in's to say: they are the
+# keys under "modes" in its sidecar.json (OpenCode, for one, takes no
+# subscription login). Read with grep so the host needs no JSON tool.
+require_auth_mode() {   # <agent> <auth>
+  local file="$SANDBOX_ROOT/agents/$1/sidecar.json"
+  [ -f "$file" ] || return 0
+  grep -Eq "^[[:space:]]*\"$2\"[[:space:]]*:[[:space:]]*\{" "$file" \
+    || die "$1 does not take --auth $2. agents/$1/auth.md says which credential it uses and why."
+}
+
+# The agent's environment file may hold NAME=value lines only. Podman would
+# read a bare NAME as "copy this variable in from the host's environment",
+# which is how a key in your shell could end up inside.  [physical B15]
+check_env_file() {
+  local line n=0
+  [ -f "$1" ] || die "$1 is missing"
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    case "$line" in ''|'#'*) continue ;; esac
+    [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || die "$1 line $n is not NAME=value"
+  done < "$1"
+}
+
+new_session_name() {
+  local slug
+  slug="${1%/}"
+  slug="${slug##*[/:]}"
+  slug="$(printf '%s' "${slug%.git}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | tr -s '-' | cut -c1-24)"
+  slug="${slug#-}"
+  slug="${slug%-}"
+  printf 'asb-%s-%s' "${slug:-repo}" "$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
+}
+
+# Host-side import.  [closes C1, H6]
+# The repository is cloned here, on your host, with your credentials, into a
+# bare clone that is never checked out; the session gets one branch of it as a
+# git bundle. The agent never works in a directory of yours, and the sandbox
+# never sees a git credential. Sets BASE_COMMIT and ORIGIN_URL.
+RUN_IMPORT_DIR=""
+import_repository() {
+  local source="$1" clone authority
+  RUN_IMPORT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-sandbox-import.XXXXXX")"
+  clone="$RUN_IMPORT_DIR/repo.git"
+  if [ -d "$source" ]; then
+    source="$(cd "$source" && pwd)"
+    git -C "$source" rev-parse --git-dir >/dev/null 2>&1 || die "$source is not a git repository"
+    # Where `push` will send the work: the repository's own origin, or the
+    # repository itself when it has none.
+    ORIGIN_URL="$(git -C "$source" config --get remote.origin.url || true)"
+    [ -n "$ORIGIN_URL" ] || ORIGIN_URL="$source"
+    say "Only committed work goes in: uncommitted changes in $source stay where they are."
+  else
+    ORIGIN_URL="$source"
+  fi
+  case "$ORIGIN_URL" in
+    *[[:cntrl:]]*) die "the repository address has control characters in it" ;;
+    # user@ or user:password@ in an http(s) address is a credential (a token
+    # is often given as the user name). It would be written to the state
+    # file, printed, and handed to export. ssh://git@host is not affected.
+    http://*|https://*)
+      authority="${ORIGIN_URL#*://}"; authority="${authority%%/*}"
+      case "$authority" in
+        *@*) die "the repository address has a user name or token in it. Keep credentials in your git credential helper, not in the URL." ;;
+      esac ;;
+    *://*:*@*) die "the repository address has a password in it. Keep the token in your git credential helper, not in the URL." ;;
+  esac
+  info "cloning $source on this host"
+  # No hooks, no submodules, no files checked out: nothing from the
+  # repository runs here.
+  git -c core.hooksPath=/dev/null clone --quiet --bare --no-recurse-submodules --template= \
+    "$source" "$clone" || die "could not clone $source"
+  # An existing branch of that name is continued; otherwise the session
+  # branch starts at the repository's current commit.
+  if ! BASE_COMMIT="$(git --git-dir="$clone" rev-parse --verify --quiet "refs/heads/$BRANCH^{commit}")"; then
+    BASE_COMMIT="$(git --git-dir="$clone" rev-parse --verify --quiet 'HEAD^{commit}')" \
+      || die "the repository has no commits yet"
+    git --git-dir="$clone" update-ref "refs/heads/$BRANCH" "$BASE_COMMIT"
+  fi
+  git --git-dir="$clone" symbolic-ref HEAD "refs/heads/$BRANCH"
+}
+
+# The addresses of a session, fixed by position in its /24.
+session_addresses() {
+  local prefix="${SUBNET%.0/24}"
+  export SANDBOX_PROXY_IP="$prefix.2" SANDBOX_SIDECAR_IP="$prefix.3" SANDBOX_AGENT_IP="$prefix.10"
+  SANDBOX_RELAY_IP=""
+  if [ "$GIT_RELAY" = 1 ]; then SANDBOX_RELAY_IP="$prefix.4"; fi
+  export SANDBOX_RELAY_IP
+}
+
+# The address of the n-th sibling service (0, 1, 2 ...): .20 upward.
+service_address() {
+  printf '%s.%s' "${SUBNET%.0/24}" "$(( 20 + $1 ))"
+}
+
+# Podman copies your proxy variables into every container it creates unless
+# told not to. topology.sh tells it not to (--http-proxy=false); removing
+# them for this one call as well means the result does not depend on the
+# Podman version honouring that flag.  [physical B15]
+podman_create() {
+  env -u http_proxy -u https_proxy -u ftp_proxy -u no_proxy \
+      -u HTTP_PROXY -u HTTPS_PROXY -u FTP_PROXY -u NO_PROXY \
+      podman create "$@" >/dev/null
+}
+
+# wait_for <what> <seconds> <command...>
+wait_for() {
+  local what="$1" limit="$2" waited=0
+  shift 2
+  until "$@" >/dev/null 2>&1; do
+    waited=$((waited + 1))
+    [ "$waited" -lt "$limit" ] || die "$what did not come up within $limit seconds. Look at: ./sandbox logs"
+    sleep 1
+  done
+}
+
+# What the CLI is handed when it is started: your git identity, the
+# credential mode, the Codex account id, and the connection strings of
+# sibling services. EXEC_ENV is filled for `podman exec`.
+EXEC_ENV=()
+exec_environment() {
+  local name email service count=0 account
+  EXEC_ENV=(--env "SANDBOX_AUTH=$AUTH")
+  # [TLS] The certificate of this session's sidecar, for the CLI to trust.
+  # Public: the key never left the sidecar.
+  if [ -s "$SESSION_DIR/sidecar-ca.pem" ]; then
+    EXEC_ENV+=(--env "SANDBOX_SIDECAR_CA=$(cat "$SESSION_DIR/sidecar-ca.pem")")
+  fi
+  # Codex will not start unless the account in its (dummy) login is one the
+  # vendor lists for the real login. Only the id goes in, never a token.
+  if [ "$AGENT" = codex ] && [ "$AUTH" = oauth ]; then
+    account="$(keyring_get codex oauth 2>/dev/null | jq -r '.tokens.account_id // empty' 2>/dev/null || true)"
+    case "$account" in
+      ''|*[!A-Za-z0-9._:-]*) ;;
+      *) EXEC_ENV+=(--env "SANDBOX_CODEX_ACCOUNT_ID=$account") ;;
+    esac
+  fi
+  # Commits made inside carry your name, as they would on your own machine.
+  name="$(git config user.name || true)"
+  email="$(git config user.email || true)"
+  if [ -n "$name" ]; then
+    EXEC_ENV+=(--env "GIT_AUTHOR_NAME=$name" --env "GIT_COMMITTER_NAME=$name")
+  fi
+  if [ -n "$email" ]; then
+    EXEC_ENV+=(--env "GIT_AUTHOR_EMAIL=$email" --env "GIT_COMMITTER_EMAIL=$email")
+  fi
+  for service in $SERVICES; do
+    load_service "$service"
+    if [ -n "$SVC_URL_VAR" ]; then
+      EXEC_ENV+=(--env "$SVC_URL_VAR=$(service_url "$(service_address "$count")")")
+    fi
+    count=$((count + 1))
+  done
+}
+
+# [TLS] Codex with a subscription refuses a ChatGPT backend that is not
+# HTTPS, so its sidecar speaks TLS. Every other agent's stays plain HTTP on
+# the session's internal network.
+sidecar_tls() { [ "$AGENT" = codex ] && [ "$AUTH" = oauth ]; }
+
+# sidecar_tls_json <address> <seconds>: a new key and a certificate for the
+# sidecar's address, valid a day longer than the session, as the JSON
+# `sidecar-load --tls` reads. The key exists only in this pipe and in the
+# sidecar's memory; the certificate alone is kept, in the session directory,
+# for the agent to trust (exec_environment).
+sidecar_tls_json() {
+  local address="$1" days=$(( $2 / 86400 + 2 )) key cert
+  command -v openssl >/dev/null 2>&1 || die "a Codex subscription session needs openssl on this host"
+  key="$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 2>/dev/null)" \
+    || die "openssl could not make a key for the sidecar"
+  cert="$(printf '%s\n' "$key" | openssl req -x509 -key /dev/stdin -subj "/CN=agent-sandbox sidecar $address" \
+            -addext "subjectAltName=IP:$address" -addext "basicConstraints=critical,CA:FALSE" \
+            -addext "extendedKeyUsage=serverAuth" -days "$days" 2>/dev/null)" \
+    || die "openssl could not make a certificate for the sidecar"
+  printf '%s\n' "$cert" > "$SESSION_DIR/sidecar-ca.pem"
+  jq -nc --arg key "$key" --arg cert "$cert" '{key: $key, cert: $cert}'
+}
+
+# If `run` stops half-way, nothing is left behind.
+RUN_UNFINISHED=""
+run_cleanup() {
+  [ -z "$RUN_IMPORT_DIR" ] || rm -rf "$RUN_IMPORT_DIR"
+  if [ -n "$RUN_UNFINISHED" ]; then
+    warn "run did not finish; removing what it had made of session $RUN_UNFINISHED"
+    destroy_session "$RUN_UNFINISHED" || true
+  fi
+}
+
+cmd_run() {
+  local source="" auto=0 strict=0 io_limit="" store_device service names count=0
+  local mem cpus pids nproc ttl budget tmp_size home_size workspace_size
+  local mem_bytes tmp_bytes home_bytes ttl_seconds total helpers used credential
+  local relay_host="" relay_token="" relay_user=x-access-token relay_remote="" image_ids
+  local doctor_args=() tty=(-i) launch_args=() cli_args=() status=0
+
+  AGENT="$(setting AGENT)"; AUTH="$(setting AUTH)"; TOOLCHAIN="$(setting TOOLCHAIN)"
+  mem="$(setting MEM)"; cpus="$(setting CPUS)"; pids="$(setting PIDS)"; nproc="$(setting NPROC)"
+  ttl="$(setting TTL)"; budget="$(setting BUDGET)"
+  tmp_size="$(setting TMP_SIZE)"; home_size="$(setting HOME_SIZE)"
+  workspace_size="$(setting WORKSPACE_SIZE)"; WORKSPACE_DRIVER="$(setting WORKSPACE_DRIVER)"
+  STORE="$(setting STORE)"; store_device="$(setting STORE_DEVICE)"
+  BRANCH="" GIT_RELAY=0 SERVICES=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --agent|--auth|--branch|--toolchain|--service|--mem|--cpus|--pids|--ttl|--budget|--workspace-size|--workspace-driver|--io-limit)
+        [ $# -ge 2 ] || die "$1 needs a value"
+        case "$1" in
+          --agent)            AGENT="$2" ;;
+          --auth)             AUTH="$2" ;;
+          --branch)           BRANCH="$2" ;;
+          --toolchain)        TOOLCHAIN="$2" ;;
+          --service)          SERVICES="${SERVICES:+$SERVICES }$2" ;;
+          --mem)              mem="$2" ;;
+          --cpus)             cpus="$2" ;;
+          --pids)             pids="$2" ;;
+          --ttl)              ttl="$2" ;;
+          --budget)           budget="$2" ;;
+          --workspace-size)   workspace_size="$2" ;;
+          --workspace-driver) WORKSPACE_DRIVER="$2" ;;
+          --io-limit)         io_limit="$2" ;;
+        esac
+        shift ;;
+      --auto)      auto=1 ;;
+      --strict)    strict=1 ;;
+      --git-relay) GIT_RELAY=1 ;;
+      --keep)
+        die "--keep no longer exists. A session always stays until you run ./sandbox destroy; its workspace outlives the time limit." ;;
+      --accept-rootful)
+        die "--accept-rootful no longer exists. The only runtime is rootless Podman, and there is no override." ;;
+      --)
+        # Everything after -- is handed to the agent's CLI unchanged, so a
+        # script can give it a prompt (for example: -- -p "fix the tests").
+        shift
+        cli_args=("$@")
+        break ;;
+      -*) die "run: unknown option $1 (options are written '--mem 8g', with a space)" ;;
+      *)  [ -z "$source" ] || die "run takes one repository; got '$source' and '$1'"
+          source="$1" ;;
+    esac
+    shift
+  done
+  [ -n "$source" ] || die "usage: ./sandbox run <repo-url|path> [options]   (./sandbox help lists them)"
+
+  # --- Check everything that can be checked before anything is made ---------
+  agent_exists "$AGENT" || die "--agent: there is no agents/$AGENT"
+  case "$AUTH" in oauth|apikey) ;; *) die "--auth is oauth or apikey, not '$AUTH'" ;; esac
+  require_auth_mode "$AGENT" "$AUTH"
+  case "$TOOLCHAIN" in node|python|full) ;; *) die "--toolchain is node, python or full, not '$TOOLCHAIN'" ;; esac
+  case "$WORKSPACE_DRIVER" in auto|memory|local) ;; *) die "--workspace-driver is memory or local, not '$WORKSPACE_DRIVER'" ;; esac
+  resolve_workspace_driver
+  if ! [[ "$cpus" =~ ^[0-9]+(\.[0-9]+)?$ ]] || ! [[ "$cpus" =~ [1-9] ]]; then
+    die "--cpus: '$cpus' is not a number above zero"
+  fi
+  mem_bytes="$(parse_size --mem "$mem")"
+  tmp_bytes="$(parse_size TMP_SIZE "$tmp_size")"
+  home_bytes="$(parse_size HOME_SIZE "$home_size")"
+  WORKSPACE_BYTES="$(parse_size --workspace-size "$workspace_size")"
+  ttl_seconds="$(parse_duration --ttl "$ttl")"
+  pids="$(parse_count --pids "$pids")"
+  nproc="$(parse_count NPROC "$nproc")"
+  # The per-user limit must never be the tighter of the two, or raising
+  # --pids would appear to do nothing.
+  if [ "$nproc" -lt "$pids" ]; then nproc="$pids"; fi
+  budget="$(parse_count --budget "$budget")"
+  # Optional: an agent whose settings all depend on the session has none.
+  [ ! -f "$SANDBOX_ROOT/agents/$AGENT/env" ] || check_env_file "$SANDBOX_ROOT/agents/$AGENT/env"
+  command -v git >/dev/null 2>&1 || die "git is not installed"
+  for service in $SERVICES; do load_service "$service"; done
+
+  SANDBOX_IO_LIMIT="" SANDBOX_STORE_DEVICE=""
+  if [ "$WORKSPACE_DRIVER" = local ]; then
+    # [physical B08] The disk-backed workspace is a directory on a filesystem
+    # made for the purpose. Without one there is nothing to cap it, so it is
+    # refused; doctor (below) checks the store is real and yours.
+    [ -n "$STORE" ] || die "--workspace-driver local needs a disk store, and none is set up. ./sandbox doctor prints the commands to make one."
+    case "$STORE" in /*) ;; *) die "STORE must be a full path starting with /, not '$STORE'" ;; esac
+    doctor_args+=(--store "$STORE")
+    if [ -n "$io_limit" ]; then
+      SANDBOX_IO_LIMIT="$(parse_size --io-limit "$io_limit")"
+      SANDBOX_STORE_DEVICE="$store_device"
+      doctor_args+=(--io --store-device "$store_device")
+    fi
+  else
+    STORE=""
+    [ -z "$io_limit" ] || die "--io-limit slows writes to a disk; the memory-backed workspace has none. Use it with --workspace-driver local."
+  fi
+
+  require_podman
+  set_selinux_opt
+  ensure_state_dir
+
+  # --- Name the session and fill in what topology.sh reads ------------------
+  SESSION="$(new_session_name "$source")"
+  SESSION_DIR="$SANDBOX_STATE_DIR/$SESSION"
+  [ -n "$BRANCH" ] || BRANCH="agent/$SESSION"
+  valid_branch "$BRANCH" || die "--branch: '$BRANCH' is not a branch name this can export (letters, digits, and . _ / - only)"
+  used="$(used_cidrs)"
+  SUBNET="$(pick_subnet 201 "$used")"
+  EGRESS_SUBNET="$(pick_subnet 202 "$used")"
+  session_addresses
+
+  export SANDBOX_SESSION="$SESSION" SANDBOX_SESSION_DIR="$SESSION_DIR"
+  export SANDBOX_SUBNET="$SUBNET" SANDBOX_EGRESS_SUBNET="$EGRESS_SUBNET"
+  # The relay's one branch and one repository (topology.sh, topo_gitrelay).
+  # The repository address is only known after the import below; until then
+  # a placeholder lets the memory total be added up.
+  export SANDBOX_BRANCH="$BRANCH" SANDBOX_RELAY_UPSTREAM="not-known-yet"
+  export SANDBOX_AGENT="$AGENT" SANDBOX_AUTH="$AUTH" SANDBOX_TOOLCHAIN="$TOOLCHAIN"
+  if sidecar_tls; then export SANDBOX_SIDECAR_TLS=1; else unset SANDBOX_SIDECAR_TLS; fi
+  export SANDBOX_CPUS="$cpus" SANDBOX_PIDS="$pids" SANDBOX_NPROC="$nproc"
+  export SANDBOX_BUDGET="$budget" SANDBOX_TTL_SECONDS="$ttl_seconds"
+  export SANDBOX_TMP_SIZE="$tmp_bytes" SANDBOX_HOME_SIZE="$home_bytes"
+  export SANDBOX_WORKSPACE_DRIVER="$WORKSPACE_DRIVER" SANDBOX_WORKSPACE_SIZE="$WORKSPACE_BYTES"
+  export SANDBOX_STORE="$STORE" SANDBOX_IO_LIMIT SANDBOX_STORE_DEVICE
+  # The largest single file the agent may write: the workspace cap. [physical B11]
+  export SANDBOX_FSIZE_BYTES="$WORKSPACE_BYTES"
+  SANDBOX_MEM_LIMIT="$(agent_memory_limit "$mem_bytes" "$tmp_bytes" "$home_bytes")"
+  export SANDBOX_MEM_LIMIT
+  # The addresses the agent reaches directly, not through the proxy.
+  SANDBOX_NO_PROXY_EXTRA=""
+  if [ "$GIT_RELAY" = 1 ]; then
+    SANDBOX_NO_PROXY_EXTRA=",$SANDBOX_RELAY_IP"
+  fi
+  for service in $SERVICES; do
+    SANDBOX_NO_PROXY_EXTRA="$SANDBOX_NO_PROXY_EXTRA,$(service_address "$count")"
+    count=$((count + 1))
+  done
+  export SANDBOX_NO_PROXY_EXTRA
+  export SANDBOX_ALLOW_HTTP=0
+
+  # shellcheck source=topology.sh
+  . "$SANDBOX_ROOT/topology.sh"
+
+  # --- How much of the host's memory this session may take ------------------
+  helpers="$(helpers_memory)"
+  total=$(( SANDBOX_MEM_LIMIT + helpers ))
+  # The remaining refusals: Podman new enough, cgroup v2 with the controllers
+  # delegated, the id range, the seccomp file, the store, and enough memory.
+  "$SANDBOX_ROOT/scripts/doctor.sh" --preflight --memory "$total" ${doctor_args[@]+"${doctor_args[@]}"} || exit 1
+  say "This session may use up to $(human_bytes "$total") of this host's memory:"
+  say "  agent $(human_bytes "$SANDBOX_MEM_LIMIT") = $mem for processes + $tmp_size /tmp + $home_size home + 64m shared memory$([ "$WORKSPACE_DRIVER" = memory ] && printf ' + %s workspace' "$workspace_size")"
+  say "  proxy, sidecar, keeper and services $(human_bytes "$helpers")"
+  if [ "$WORKSPACE_DRIVER" = local ]; then
+    say "Its workspace is on disk: up to $workspace_size of the store at $STORE."
+  else
+    say "Its workspace is held in memory$([ -n "$(setting STORE)" ] || printf ' (no disk store is set up; ./sandbox doctor says how to make one)')."
+  fi
+
+  # --- The credentials, before anything is created --------------------------
+  credential="$(credential_json "$AGENT" "$AUTH")"
+  [ -n "$credential" ] || die "no credential"
+
+  trap run_cleanup EXIT
+  trap 'exit 130' INT TERM
+  import_repository "$source"
+
+  if [ "$GIT_RELAY" = 1 ]; then
+    # [logical B30] The relay reaches one repository over HTTPS, through the
+    # proxy, with one narrow token that you type in for this session.
+    case "$ORIGIN_URL" in
+      https://*) ;;
+      *) die "--git-relay needs an https:// repository address; this one is $ORIGIN_URL" ;;
+    esac
+    relay_host="$(url_host "$ORIGIN_URL")"
+    # The relay is given the address without any user name or token in it:
+    # its one credential is the token typed below, nothing borrowed from a
+    # remote URL on your host.
+    SANDBOX_RELAY_UPSTREAM="$(printf '%s' "$ORIGIN_URL" | sed -E 's|^https://[^/@]*@|https://|')"
+    export SANDBOX_RELAY_UPSTREAM
+    case "$relay_host" in *gitlab*) relay_user=oauth2 ;; esac
+    # What the agent's clone gets as "origin". The relay ignores the path and
+    # sends everything to the one repository above.
+    relay_remote="http://$SANDBOX_RELAY_IP:8081/repo.git"
+    say "The git relay lets the agent push branch $BRANCH to $ORIGIN_URL by itself."
+    say "What it pushes does NOT go through export: no diff review, no secret scan."
+    # Typed here, or piped in on stdin; it is not stored anywhere on this host.
+    read -rsp "A git token that can push to that one repository and nothing else: " relay_token \
+      || die "--git-relay needs a git token, typed or on standard input"
+    if [ -t 0 ]; then printf '\n' >&2; fi
+    looks_like_token "$relay_token" || die "that does not look like a token"
+  fi
+
+  # --- The session directory and its state  [closes L1: all of it is in one
+  # place, and `destroy` removes that place] ---------------------------------
+  mkdir -m 700 "$SESSION_DIR"
+  RUN_UNFINISHED="$SESSION"      # from here on, a failure removes the session again
+  mkdir -m 755 "$SESSION_DIR/proxy"
+  mkdir "$SESSION_DIR/export"
+  CREATED_EPOCH="$(date +%s)"
+  DEADLINE_EPOCH=$(( CREATED_EPOCH + ttl_seconds ))
+  write_state
+
+  # --- The proxy's lists  [logical B20, B21] --------------------------------
+  # shellcheck source=/dev/null
+  . "$SANDBOX_ROOT/scripts/allowlist.sh"
+  allowlist_render "$SESSION_DIR" "$AGENT" ${relay_host:+"$relay_host"} \
+    || die "the allowlist could not be written; see the message above"
+  # Plaintext port 80 stays closed. A plaintext URL you allowed opens only
+  # its own path prefix; the proxy's rules for those come before the refusal.
+
+  # --- Images: built here when missing, never pulled at start ---------------
+  check_cli_version "$AGENT"
+  ensure_image "agent-$AGENT:$TOOLCHAIN"
+  ensure_image proxy
+  ensure_image credsidecar
+  if [ "$GIT_RELAY" = 1 ]; then ensure_image gitrelay; fi
+  for service in $SERVICES; do
+    load_service "$service"
+    podman image exists "$SVC_IMAGE" || podman pull "$SVC_IMAGE"
+  done
+
+  # The time limit counts from now, not from before the images were built:
+  # Podman's own deadline starts when each container does.
+  CREATED_EPOCH="$(date +%s)"
+  DEADLINE_EPOCH=$(( CREATED_EPOCH + ttl_seconds ))
+  write_state
+
+  # --- Create: networks, workspace, then the containers ---------------------
+  # Every argument comes from topology.sh and is passed on unchanged.
+  info "creating session $SESSION"
+  topo_network_sandbox;  podman network create "${TOPO[@]}" >/dev/null
+  topo_network_egress;   podman network create "${TOPO[@]}" >/dev/null
+  if [ "$WORKSPACE_DRIVER" = local ]; then
+    # The store's directory for this session, handed to the container's user.
+    # That user is not a real account on your host, so the hand-over happens
+    # inside Podman's user namespace.
+    mkdir -m 700 "$STORE/$SESSION"
+    podman unshare chown 61000:61000 "$STORE/$SESSION"
+  fi
+  topo_volume_workspace; podman volume create "${TOPO[@]}" >/dev/null
+  topo_keeper;           podman_create "${TOPO[@]}"
+  topo_proxy;            podman_create "${TOPO[@]}"
+  topo_sidecar;          podman_create "${TOPO[@]}"
+  names="$SESSION-keeper $SESSION-proxy $SESSION-credsidecar"
+  if [ "$GIT_RELAY" = 1 ]; then
+    topo_gitrelay
+    podman_create "${TOPO[@]}"
+    names="$names $SESSION-gitrelay"
+  fi
+  count=0
+  for service in $SERVICES; do
+    load_service "$service"
+    topo_service "${service%%:*}" "$(service_address "$count")"
+    podman_create "${TOPO[@]}"
+    names="$names $SESSION-svc-${service%%:*}"
+    count=$((count + 1))
+  done
+  topo_agent;            podman_create "${TOPO[@]}"
+  names="$names $SESSION-agent"
+
+  # --- Start, keeper first: it is what holds the workspace open -------------
+  for service in $names; do
+    podman start "$service" >/dev/null
+  done
+  wait_for "the proxy" 30 podman exec "$SESSION-proxy" squid -k check -f /var/run/squid/squid.conf
+  # [TLS] Before the health check: a TLS sidecar listens only once it has
+  # its key.
+  if sidecar_tls; then
+    sidecar_tls_json "$SANDBOX_SIDECAR_IP" "$ttl_seconds" | podman exec -i "$SESSION-credsidecar" sidecar-load --tls >/dev/null \
+      || die "the credential sidecar did not accept its TLS key and certificate"
+  fi
+  wait_for "the credential sidecar" 30 podman exec "$SESSION-credsidecar" sidecar-healthcheck
+  for service in $SERVICES; do
+    load_service "$service"
+    if [ -n "$SVC_HEALTH" ]; then
+      # shellcheck disable=SC2086  # the health check is a command and its arguments
+      wait_for "service ${service%%:*}" 60 podman exec "$SESSION-svc-${service%%:*}" $SVC_HEALTH
+    fi
+  done
+
+  # --- The credential goes in on stdin, to the sidecar only  [logical B22] --
+  printf '%s' "$credential" | podman exec -i "$SESSION-credsidecar" sidecar-load >/dev/null \
+    || die "the credential sidecar did not accept the credential"
+  if [ "$GIT_RELAY" = 1 ]; then
+    wait_for "the git relay" 30 podman exec "$SESSION-gitrelay" gitrelay-healthcheck
+    printf '{"token":"%s","username":"%s"}' "$relay_token" "$relay_user" \
+      | podman exec -i "$SESSION-gitrelay" relay-load >/dev/null \
+      || die "the git relay did not accept the token"
+    relay_token=""
+  fi
+
+  # --- The code goes in as a bundle on stdin --------------------------------
+  info "importing branch $BRANCH (starting at ${BASE_COMMIT:0:12})"
+  exec_environment
+  git --git-dir="$RUN_IMPORT_DIR/repo.git" bundle create --quiet - HEAD "refs/heads/$BRANCH" \
+    | podman exec -i "${EXEC_ENV[@]}" "$SESSION-agent" sandbox-import "$BRANCH" ${relay_remote:+"$relay_remote"} 2>&1 | filter_control \
+    || die "the repository could not be imported into the session"
+  rm -rf "$RUN_IMPORT_DIR"
+  RUN_IMPORT_DIR=""
+
+  # --- The barrier checks, before the agent has run anything ----------------
+  # Once per set of images, or every time with --strict. A failed check means
+  # a barrier is not there, so the session is not started.
+  # "Passed before" means: these images, this Podman, this kernel, these
+  # flags and this shape of session. Change any of them and the checks run
+  # again.
+  image_ids="$(podman image inspect --format '{{.Id}}' "$(image_tag "agent-$AGENT:$TOOLCHAIN")" "$(image_tag proxy)" "$(image_tag credsidecar)" | tr '\n' ' ')"
+  image_ids="$image_ids|podman=$(podman version --format '{{.Client.Version}}' 2>/dev/null || true)|kernel=$(uname -r)"
+  image_ids="$image_ids|files=$(cat "$SANDBOX_ROOT/topology.sh" "$SANDBOX_ROOT/seccomp/agent-seccomp.json" | cksum | tr ' ' ':')"
+  image_ids="$image_ids|relay=$GIT_RELAY|driver=$WORKSPACE_DRIVER|services=$SERVICES|runtime=${SANDBOX_RUNTIME_CLASS:-}|selinux=${SANDBOX_SELINUX_OPT:-}"
+  if [ "$strict" -eq 1 ] || ! grep -qxF "$image_ids" "$SANDBOX_CONFIG_DIR/verified" 2>/dev/null; then
+    info "checking the barriers (verify --quick)"
+    # verify searches the agent's container for the real credential, on this
+    # host. It is handed over on a file descriptor, never as an argument.
+    "$SANDBOX_ROOT/scripts/verify.sh" --quick --credential-fd 3 "$SESSION" \
+      3< <(printf '%s' "$credential") 2>&1 | filter_control \
+      || die "a barrier check failed, so the session was not started. See the FAIL lines above."
+    printf '%s\n' "$image_ids" >> "$SANDBOX_CONFIG_DIR/verified"
+  fi
+  credential=""
+
+  if [ "$WORKSPACE_DRIVER" = local ] || { [ "$AGENT" = codex ] && [ "$AUTH" = oauth ]; }; then
+    start_watchdog
+  fi
+
+  # --- Attach ----------------------------------------------------------------
+  RUN_UNFINISHED=""
+  trap - EXIT INT TERM
+  say "Session $SESSION runs until $(epoch_to_date "$DEADLINE_EPOCH"), at most $budget model requests."
+  say "From here on every byte on this screen is the agent's. Do not type a password into it."
+  if [ -t 0 ] && [ -t 1 ]; then tty=(-it); fi
+  if [ "$auto" -eq 1 ]; then launch_args=(--auto); fi
+  podman exec "${tty[@]}" "${EXEC_ENV[@]}" "$SESSION-agent" sandbox-launch \
+    ${launch_args[@]+"${launch_args[@]}"} ${cli_args[@]+"${cli_args[@]}"} || status=$?
+
+  say ""
+  say "The agent's CLI has exited$([ "$status" -eq 0 ] || printf ' with status %s' "$status"). Session $SESSION is still there, holding its workspace."
+  say "  bring the work out:   SANDBOX_SESSION=$SESSION ./sandbox export"
+  say "  remove the session:   SANDBOX_SESSION=$SESSION ./sandbox destroy"
+  return "$status"
+}
+
+# ---------------------------------------------------------------------------
+# shell, verify, logs
+# ---------------------------------------------------------------------------
+
+cmd_shell() {
+  local tty=(-i)
+  [ $# -eq 0 ] || die "usage: ./sandbox shell"
+  load_session
+  require_podman
+  [ "$(podman inspect --format '{{.State.Running}}' "$SESSION-agent" 2>/dev/null || true)" = true ] \
+    || die "the agent container of $SESSION is not running (its time limit may have passed). The work is still there: ./sandbox export"
+  if [ -t 0 ] && [ -t 1 ]; then tty=(-it); fi
+  exec_environment
+  podman exec "${tty[@]}" "${EXEC_ENV[@]}" "$SESSION-agent" bash
+}
+
+cmd_verify() {
+  local args=()
+  case "${1:-}" in
+    --quick) args=(--quick) ;;
+    '') ;;
+    *) die "usage: ./sandbox verify [--quick]" ;;
+  esac
+  load_session
+  require_podman
+  "$SANDBOX_ROOT/scripts/verify.sh" ${args[@]+"${args[@]}"} "$SESSION" 2>&1 | filter_control
+}
+
+cmd_logs() {
+  local name names
+  load_session
+  require_podman
+  case "${1:-proxy}" in
+    agent|proxy) names="$SESSION-${1:-proxy}" ;;
+    sidecar)     names="$SESSION-credsidecar" ;;
+    relay)       [ "$GIT_RELAY" = 1 ] || die "session $SESSION has no git relay"
+                 names="$SESSION-gitrelay" ;;
+    service)     names="$(podman ps -a --filter "label=$LABEL=$SESSION" --format '{{.Names}}' | grep -e '-svc-' || true)"
+                 [ -n "$names" ] || die "session $SESSION has no sibling service" ;;
+    *) die "usage: ./sandbox logs [agent|proxy|sidecar|relay|service]" ;;
+  esac
+  # [logical B28] Logs are what Podman collected from each container's
+  # output. The proxy's and the sidecar's are the record of what happened;
+  # the agent's is whatever the agent chose to print.
+  for name in $names; do
+    podman logs "$name" 2>&1 | filter_control
+  done
+}
+
+# ---------------------------------------------------------------------------
+# allow, deny  [logical B20]
+# ---------------------------------------------------------------------------
+
+# Writes every session's proxy lists again and tells each proxy to re-read
+# them: no rebuild, no restart. Your own entries are shared by all sessions.
+reload_allowlists() {
+  local session relay
+  for session in $(list_sessions); do
+    read_state "$session"
+    relay=""
+    if [ "$GIT_RELAY" = 1 ]; then relay="$(url_host "$ORIGIN_URL")"; fi
+    allowlist_render "$SESSION_DIR" "$AGENT" ${relay:+"$relay"} \
+      || die "the lists of session $session could not be rewritten; see the message above"
+    require_podman
+    if [ "$(podman inspect --format '{{.State.Running}}' "$session-proxy" 2>/dev/null || true)" = true ]; then
+      podman exec "$session-proxy" squid -k reconfigure -f /var/run/squid/squid.conf \
+        || warn "the proxy of $session did not re-read its lists"
+      info "session $session: the proxy has re-read its lists"
+    fi
+  done
+}
+
+cmd_allow() {
+  local usage='usage: ./sandbox allow <host>[:port] --reason "<why>" [--until YYYY-MM-DD]
+       ./sandbox allow --url <url> --reason "<why>" [--until YYYY-MM-DD]
+       ./sandbox allow --preset <name> --reason "<why>"'
+  local kind="" value="" reason="" until="-" host=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason|--until|--url|--preset)
+        [ $# -ge 2 ] || die "$usage"
+        case "$1" in
+          --reason) reason="$2" ;;
+          --until)  until="$2" ;;
+          --url)    kind=url; value="$2" ;;
+          --preset) kind=preset; value="$2" ;;
+        esac
+        shift ;;
+      -*) die "$usage" ;;
+      *)  [ -z "$value" ] || die "$usage"
+          value="$1"
+          case "$1" in
+            *://*) die "'$1' is a URL. Allow the host name, or the URL with --url." ;;
+            *:*)   kind=hostport ;;
+            *)     kind=host ;;
+          esac ;;
+    esac
+    shift
+  done
+  [ -n "$value" ] || die "$usage"
+  # Every entry is a way data could leave, so each one says why it is there.
+  [ -n "$reason" ] || die "a reason is required: --reason \"<why this host is needed>\""
+
+  # shellcheck source=/dev/null
+  . "$SANDBOX_ROOT/scripts/allowlist.sh"
+  # Refuses anything that is not a host name, anything on the never-allow
+  # list and anything that would open a model vendor's host to the agent.
+  allowlist_add "$kind" "$value" "$until" "$reason" || exit 1
+  if [ "$until" = - ]; then info "allowed $value"; else info "allowed $value until $until"; fi
+
+  case "$kind" in
+    host)     host="$value" ;;
+    hostport) host="${value%:*}" ;;
+    url)      host="${value#*://}"; host="${host%%/*}" ;;
+  esac
+  case "$kind:$value" in
+    url:https://*)
+      say "For HTTPS only the host name is enforced: the proxy cannot see paths inside an encrypted connection, so all of $host is now allowed."
+      say "Path rules apply to plaintext http:// URLs only." ;;
+    url:http://*)
+      say "A plaintext rule: only this path prefix is opened, on port 80. It applies to running sessions at once." ;;
+  esac
+  if [ -n "$host" ] && allowlist_upload_capable "$host"; then
+    warn "$host accepts uploads. The proxy checks only the host name, so with an account of the attacker's own the whole workspace can leave through it."
+  fi
+  reload_allowlists
+}
+
+cmd_deny() {
+  [ $# -eq 1 ] || die "usage: ./sandbox deny <host>   (the value exactly as you allowed it)"
+  # shellcheck source=/dev/null
+  . "$SANDBOX_ROOT/scripts/allowlist.sh"
+  allowlist_remove "$1" || exit 1
+  info "removed $1"
+  reload_allowlists
+}
+
+# ---------------------------------------------------------------------------
+# export, push, pr  [logical B27; closes C1]
+#
+# The agent wrote the repository in the workspace, so nothing on the host
+# runs git inside it. A fresh container with no network writes one bundle to
+# stdout; scripts/export.sh fetches it into a repository the host created and
+# reviews it there. push and pr act on that repository only, and send it to
+# the address recorded at `run`, never to one that came out of the sandbox.
+# ---------------------------------------------------------------------------
+
+cmd_export() {
+  local out="" bundle size status=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --out) [ $# -ge 2 ] || die "--out needs a directory"; out="$2"; shift ;;
+      *) die "usage: ./sandbox export [--out dir]" ;;
+    esac
+    shift
+  done
+  load_session
+  require_podman
+  set_selinux_opt
+  [ -n "$out" ] || out="$(setting OUT_DIR)"
+  mkdir -p "$out"
+  out="$(cd "$out" && pwd)"
+
+  # The bundle goes next to where it will be unpacked, on disk. The session
+  # directory is held in memory, and a bundle can be as large as the
+  # workspace. It is removed as soon as export.sh has read it.
+  bundle="$out/.$SESSION.bundle"
+  rm -f "$bundle"
+
+  # shellcheck source=topology.sh
+  . "$SANDBOX_ROOT/topology.sh"
+  topo_export
+  podman rm -f "$SESSION-export" >/dev/null 2>&1 || true     # left by an interrupted export
+  info "writing a bundle of branch $BRANCH in a container with no network"
+  # The stream is the agent's to shape, so reading stops one byte past the
+  # workspace cap: an endless stream cannot fill this host.
+  podman run "${TOPO[@]}" "$BRANCH" 2> >(filter_control >&2) \
+    | head -c "$(( WORKSPACE_BYTES + 1 ))" > "$bundle" || status=$?
+  podman rm -f "$SESSION-export" >/dev/null 2>&1 || true
+  size="$(wc -c < "$bundle" | tr -d ' ')"
+  if [ "$size" -gt "$WORKSPACE_BYTES" ]; then
+    rm -f "$bundle"
+    die "the bundle is larger than the workspace it came from ($(human_bytes "$WORKSPACE_BYTES")): refused, nothing was exported"
+  fi
+  if [ "$status" -ne 0 ] || [ "$size" -eq 0 ]; then
+    rm -f "$bundle"
+    die "the export helper produced no bundle. Is there a commit on $BRANCH? (./sandbox logs agent)"
+  fi
+  printf '%s\n' "$out" > "$SESSION_DIR/export/out-dir"
+
+  status=0
+  SANDBOX_EXPORT_MAX_BYTES="$WORKSPACE_BYTES" "$SANDBOX_ROOT/scripts/export.sh" "$bundle" "$out" "$SESSION" "$BASE_COMMIT" "$BRANCH" ${ORIGIN_URL:+"$ORIGIN_URL"} 2>&1 \
+    | filter_control || status="${PIPESTATUS[0]}"
+  rm -f "$bundle"
+  say ""
+  case "$status" in
+    0) say "Exported to $out/$SESSION/repo.git. Read the dependency diff first, then the code diff."
+       say "Then: ./sandbox push   or   ./sandbox pr   and, when you are done,   ./sandbox destroy" ;;
+    2) say "Exported to $out/$SESSION/repo.git, but something above needs you. push and pr refuse until export is clean." ;;
+    *) die "export failed (status $status)" ;;
+  esac
+  return "$status"
+}
+
+# Finds the repository `export` made and checks it may be published. Sets
+# EXPORT_REPO.
+EXPORT_REPO=""
+exported_repository() {
+  local out="" status scan attribution tip
+  [ -f "$SESSION_DIR/export/out-dir" ] || die "nothing has been exported from $SESSION yet: ./sandbox export"
+  IFS= read -r out < "$SESSION_DIR/export/out-dir" || true
+  EXPORT_REPO="$out/$SESSION/repo.git"
+  status="$out/$SESSION/export.status"
+  if [ ! -d "$EXPORT_REPO" ] || [ ! -f "$status" ]; then
+    die "$out/$SESSION is not a finished export: ./sandbox export"
+  fi
+  scan="$(kv_get "$status" SCAN)"
+  attribution="$(kv_get "$status" ATTRIBUTION)"
+  tip="$(kv_get "$status" TIP)"
+  [ "$scan" = passed ] || die "the secret scan did not pass (SCAN=${scan:-missing}). Fix what export reported, then export again."
+  # History below the commit recorded at `run` was rewritten: the diff export
+  # printed was against nothing, and what would be pushed is not a
+  # continuation of your branch. That needs your eyes, not a push.
+  [ "$(kv_get "$status" HISTORY)" = intact ] \
+    || die "the agent rewrote history below the starting commit (HISTORY=$(kv_get "$status" HISTORY)). Read the export output; push it by hand from $EXPORT_REPO if that is really what you want."
+  case "$attribution" in
+    clean|stripped) ;;
+    *) die "AI attribution could not be removed from the commits (ATTRIBUTION=${attribution:-missing}). Export again after fixing it." ;;
+  esac
+  [ -n "$ORIGIN_URL" ] || die "no repository address was recorded for $SESSION"
+  [ "$(git --git-dir="$EXPORT_REPO" rev-parse --verify --quiet "refs/heads/$BRANCH")" = "$tip" ] \
+    || die "the exported repository is not at the commit export reviewed. Export again."
+}
+
+cmd_push() {
+  [ $# -eq 0 ] || die "usage: ./sandbox push"
+  load_session
+  exported_repository
+  info "pushing $BRANCH to $ORIGIN_URL from your environment"
+  # No force: if the branch moved on the remote, you decide what happens.
+  git --git-dir="$EXPORT_REPO" -c core.hooksPath=/dev/null push "$ORIGIN_URL" "refs/heads/$BRANCH:refs/heads/$BRANCH"
+}
+
+cmd_pr() {
+  local host path title
+  [ $# -eq 0 ] || die "usage: ./sandbox pr"
+  cmd_push
+  host="$(url_host "$ORIGIN_URL")"
+  path="$(url_path "$ORIGIN_URL")"
+  [ -n "$host" ] || die "the repository address is a local path; there is nowhere to open a request"
+  # The title is the agent's text: filtered like everything else it wrote.
+  title="$(git --git-dir="$EXPORT_REPO" log -1 --format=%s "refs/heads/$BRANCH" | filter_control)"
+  # Run outside any repository, with the repository named explicitly, so the
+  # tool has no git configuration to consult but yours.
+  cd "${EXPORT_REPO%/repo.git}"
+  case "$host" in
+    github.com)
+      if command -v gh >/dev/null 2>&1; then
+        gh pr create --repo "$host/$path" --head "$BRANCH" --title "$title" --body ""
+        return
+      fi
+      say "Open the pull request here:"
+      say "  https://$host/$path/compare/$BRANCH?expand=1" ;;
+    *)
+      if command -v glab >/dev/null 2>&1; then
+        glab mr create --repo "https://$host/$path" --source-branch "$BRANCH" --title "$title" --description "" --yes
+        return
+      fi
+      say "Open the merge request here:"
+      say "  https://$host/$path/-/merge_requests/new?merge_request%5Bsource_branch%5D=$BRANCH" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# login
+# ---------------------------------------------------------------------------
+
+cmd_login() {
+  local agent auth secret="" path=""
+  agent="$(setting AGENT)"
+  auth="$(setting AUTH)"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --agent) [ $# -ge 2 ] || die "--agent needs a value"; agent="$2"; shift ;;
+      --auth)  [ $# -ge 2 ] || die "--auth needs a value"; auth="$2"; shift ;;
+      *) die "usage: ./sandbox login [--agent A] [--auth oauth|apikey]" ;;
+    esac
+    shift
+  done
+  agent_exists "$agent" || die "--agent: there is no agents/$agent"
+  case "$auth" in oauth|apikey) ;; *) die "--auth is oauth or apikey, not '$auth'" ;; esac
+  require_auth_mode "$agent" "$auth"
+  if [ "$(uname -s)" != Darwin ] && ! command -v secret-tool >/dev/null 2>&1; then
+    die "secret-tool is not installed (apt install libsecret-tools, dnf install libsecret). Without a keyring, ./sandbox run asks for the credential each time."
+  fi
+
+  case "$agent/$auth" in
+    claude/oauth)
+      say "On a machine where you are signed in to Claude Code with the sandbox account, run:"
+      say "    claude setup-token"
+      say "It prints a token that is valid for one year and can make model requests and nothing else."
+      read -rsp "Paste that token: " secret
+      printf '\n' >&2 ;;
+    codex/oauth)
+      command -v jq >/dev/null 2>&1 || die "a Codex subscription login needs jq on this host"
+      say "Sign in with the Codex CLI on this account first (codex login). It writes auth.json."
+      read -rp "Path to that file [$HOME/.codex/auth.json]: " path
+      path="${path:-$HOME/.codex/auth.json}"
+      [ -f "$path" ] || die "$path does not exist"
+      # Stored whole, on one line. Only its access token ever reaches a container.
+      secret="$(jq -c 'select((.tokens.access_token | type) == "string" and (.tokens.refresh_token | type) == "string")' < "$path")" \
+        || die "$path is not a Codex auth.json"
+      [ -n "$secret" ] || die "$path has no subscription login in it (no tokens)" ;;
+    */apikey)
+      read -rsp "Paste the API key for $agent: " secret
+      printf '\n' >&2 ;;
+    *)
+      say "See agents/$agent/auth.md for which credential this agent takes and where to get it."
+      read -rsp "Paste the credential: " secret
+      printf '\n' >&2 ;;
+  esac
+  [ -n "$secret" ] || die "nothing was entered"
+  if [ "$agent/$auth" != codex/oauth ]; then
+    looks_like_token "$secret" || die "that does not look like a token"
+  fi
+  printf '%s' "$secret" | keyring_put "$agent" "$auth" || die "the keyring did not take the credential (is it unlocked?)"
+  secret=""
+
+  say ""
+  say "Stored in your OS keyring as agent-sandbox / $agent / $auth. It is piped to the"
+  say "credential sidecar at each run and never enters the agent's container."
+  say ""
+  say "This credential is a login to an account, so three things matter:"
+  say "  1. Use a dedicated subscription account for sandboxes, not your everyday one."
+  say "  2. Switch off extra usage (overage billing) on that account, so the most an"
+  say "     agent can spend is the plan already paid for. For an API key: a dedicated"
+  say "     console workspace with a spend cap."
+  say "  3. To revoke it:"
+  case "$agent/$auth" in
+    claude/oauth) say "     sign in to claude.ai as that account, open Settings, then Claude Code, and revoke the token." ;;
+    codex/oauth)  say "     sign in to chatgpt.com as that account, open Settings, then Security, and log out of all devices." ;;
+    */apikey)     say "     delete the key in the vendor's console (API keys)." ;;
+    *)            say "     follow agents/$agent/auth.md." ;;
+  esac
+  if [ "$(uname -s)" = Darwin ]; then
+    say "     Then delete the stored copy: security delete-generic-password -s agent-sandbox -a $agent-$auth"
+  else
+    say "     Then delete the stored copy: secret-tool clear service agent-sandbox agent $agent auth $auth"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# destroy  [logical B31; closes L1]
+# ---------------------------------------------------------------------------
+
+# Removes everything Podman holds under the session's label, then the
+# session's directory, and its directory on the disk store if it has one.
+# Container logs belong to their containers and go with them.
+destroy_session() {
+  local session="$1" dir="$SANDBOX_STATE_DIR/$1" filter="label=$LABEL=$1" id ids driver store store_dir left=0
+  stop_watchdog "$session"
+  # A listing that fails must not pass for "nothing there".
+  ids="$(podman ps -aq --filter "$filter")" || left=1
+  for id in $ids; do
+    podman rm -f -v -t 0 "$id" >/dev/null || left=1
+  done
+  ids="$(podman network ls -q --filter "$filter")" || left=1
+  for id in $ids; do
+    podman network rm -f "$id" >/dev/null || left=1
+  done
+  # A disk-backed workspace is a directory on the store. Where it is comes
+  # from the volume itself, so it is still found when the session directory
+  # is gone (a reboot empties it). Only a path that ends in this session's
+  # name is ever removed.
+  store_dir="$(podman volume inspect --format '{{index .Options "device"}}' "$session-workspace" 2>/dev/null || true)"
+  case "$store_dir" in
+    /*/"$session") ;;
+    *) store_dir="" ;;
+  esac
+  ids="$(podman volume ls -q --filter "$filter")" || left=1
+  for id in $ids; do
+    podman volume rm -f "$id" >/dev/null || left=1
+  done
+  if [ "$left" -ne 0 ]; then
+    warn "something of $session could not be removed (see above); its directory is kept so destroy can be run again"
+    return 1
+  fi
+  driver="$(kv_get "$dir/state" WORKSPACE_DRIVER)"
+  store="$(kv_get "$dir/state" STORE)"
+  if [ -z "$store_dir" ] && [ "$driver" = local ] && [ -n "$store" ]; then
+    store_dir="$store/$session"
+  fi
+  if [ -n "$store_dir" ] && [ -d "$store_dir" ]; then
+    # The files belong to the container's user: removed from inside Podman's
+    # user namespace, where that user exists.
+    podman unshare rm -rf "$store_dir"
+  fi
+  rm -rf "$dir"
+  info "removed session $session"
+}
+
+cmd_destroy() {
+  local all=0 session names
+  case "${1:-}" in
+    --all) all=1 ;;
+    '') ;;
+    *) die "usage: ./sandbox destroy [--all]" ;;
+  esac
+  require_podman
+  if [ "$all" -eq 0 ]; then
+    load_session
+    destroy_session "$SESSION"
+    return
+  fi
+  # Every session with a directory, and anything Podman still holds under the
+  # label whose directory is gone (a reboot empties the state directory).
+  names="$( {
+      for session in "$SANDBOX_STATE_DIR"/asb-*; do
+        if [ -d "$session" ]; then printf '%s\n' "${session##*/}"; fi
+      done
+      podman ps -a --filter "label=$LABEL" --format '{{.Names}}'
+      podman network ls --filter "label=$LABEL" --format '{{.Name}}'
+      podman volume ls --filter "label=$LABEL" --format '{{.Name}}'
+    } | sed -E 's/^(asb-.*-[0-9a-f]{6})-(keeper|agent|proxy|credsidecar|gitrelay|export|sandbox|egress|workspace|svc-.*)$/\1/' | sort -u)"
+  for session in $names; do
+    [[ "$session" =~ $SESSION_PATTERN ]] || continue
+    destroy_session "$session"
+  done
+  rm -rf "$SANDBOX_STATE_DIR/codex-refresh.lock"
+}
+
+# ---------------------------------------------------------------------------
+# upgrade
+# The images are the artifact: nothing updates itself inside a container with
+# a read-only root. This rebuilds each image that exists here from scratch
+# and shows what changed.
+# ---------------------------------------------------------------------------
+
+# The version list inside an image, as "name version" lines (the file holds
+# name=version). Read without starting anything the image would run itself.
+image_versions() {   # <tag>
+  podman run --rm --network none --pull=never --read-only --cap-drop=ALL \
+    --entrypoint cat "$1" /usr/share/sandbox/versions 2>/dev/null | filter_control | tr '=' ' ' || true
+}
+
+cmd_upgrade() {
+  local tag what whats="" toolchain before after name old new key value
+  [ $# -eq 0 ] || die "usage: ./sandbox upgrade"
+  require_podman
+  for tag in $(podman images --format '{{.Repository}}:{{.Tag}}'); do
+    case "$tag" in
+      localhost/agent-sandbox/agent-*)
+        # agent-<agent>:<toolchain>-<version>; a toolchain name has no hyphen.
+        what="${tag#localhost/agent-sandbox/}"
+        toolchain="${what##*:}"
+        what="${what%%:*}:${toolchain%%-*}" ;;
+      localhost/agent-sandbox/*)
+        what="${tag#localhost/agent-sandbox/}"
+        what="${what%%:*}" ;;
+      *) continue ;;
+    esac
+    case " $whats " in *" $what "*) ;; *) whats="$whats $what" ;; esac
+  done
+  [ -n "$whats" ] || die "there is no agent-sandbox image here yet; ./sandbox run builds what it needs"
+  for what in $whats; do
+    tag="$(image_tag "$what")"
+    before="$(image_versions "$tag")"
+    build_image "$what" --no-cache --pull
+    after="$(image_versions "$tag")"
+    say "$tag:"
+    if [ -z "$after" ]; then
+      say "  (the image lists no versions)"
+      continue
+    fi
+    while read -r name new; do
+      [ -n "$name" ] || continue
+      old="$(printf '%s\n' "$before" | while read -r key value; do if [ "$key" = "$name" ]; then printf '%s' "$value"; fi; done)"
+      if [ "$old" = "$new" ]; then
+        say "  $name $new (unchanged)"
+      else
+        say "  $name ${old:-none} -> $new"
+      fi
+    done <<EOF
+$after
+EOF
+  done
+}
+
+cmd_doctor() {
+  [ $# -eq 0 ] || die "usage: ./sandbox doctor"
+  local store memory args=()
+  memory="$(default_session_memory)" \
+    || die "your settings file has a value that cannot be read (see above): $SANDBOX_CONFIG_DIR/settings"
+  args=(--memory "$memory")
+  store="$(setting STORE)"
+  if [ -n "$store" ]; then args+=(--store "$store"); fi
+  "$SANDBOX_ROOT/scripts/doctor.sh" "${args[@]}"
+}
+
+main() {
+  local command="${1:-help}"
+  [ $# -eq 0 ] || shift
+  case "$command" in
+    help|-h|--help) usage; return 0 ;;
+    doctor)         cmd_doctor "$@"; return ;;      # doctor reports root itself, in red
+  esac
+  refuse_root
+  case "$command" in
+    __watchdog) cmd_watchdog "$@"; return ;;
+  esac
+  ensure_state_dir
+  sweep_sessions
+  case "$command" in
+    run)     cmd_run "$@" ;;
+    shell)   cmd_shell "$@" ;;
+    verify)  cmd_verify "$@" ;;
+    allow)   cmd_allow "$@" ;;
+    deny)    cmd_deny "$@" ;;
+    export)  cmd_export "$@" ;;
+    push)    cmd_push "$@" ;;
+    pr)      cmd_pr "$@" ;;
+    login)   cmd_login "$@" ;;
+    logs)    cmd_logs "$@" ;;
+    destroy) cmd_destroy "$@" ;;
+    upgrade) cmd_upgrade "$@" ;;
+    *)       die "unknown command: $command (try ./sandbox help)" ;;
+  esac
+}
+
+# Run only when executed; the tests source this file to reach its functions.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi

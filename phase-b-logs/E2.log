@@ -1,0 +1,60 @@
+
+$ id
+uid=61000(agent) gid=61000(agent) groups=61000(agent)
+[exit 0]
+
+$ cat /etc/hosts
+127.0.0.1 localhost sandbox
+::1 localhost ip6-localhost ip6-loopback
+[exit 0]
+
+$ cat /etc/resolv.conf (bytes: 0)
+
+$ getent hosts localhost
+::1             localhost ip6-localhost ip6-loopback
+[exit 0]
+
+$ getent hosts example.com
+[exit 2]
+
+$ env | grep -iE key|token
+SANDBOX_AUTH=apikey
+
+$ curl -sS -o /dev/null https://example.com
+curl: (56) CONNECT tunnel failed, response 403
+[exit 56]
+
+$ npm view is-number version
+7.0.0
+[exit 0]
+
+$ touch /probe
+touch: cannot touch '/probe': Read-only file system
+[exit 1]
+
+$ df -h /workspace /tmp
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/loop0       20G  2.4M   20G   1% /workspace
+tmpfs           512M  2.5M  510M   1% /tmp
+[exit 0]
+
+$ ls /var/run/docker.sock /run/podman
+ls: cannot access '/var/run/docker.sock': No such file or directory
+ls: cannot access '/run/podman': No such file or directory
+[exit 2]
+
+$ ls -la /home/agent /workspace
+/home/agent:
+total 4
+drwx------ 3 agent agent  80 Oct 10 05:12 .
+drwxrwxrwt 3 root  root   60 Oct 10 05:12 ..
+drwx------ 5 agent agent 100 Oct 10 05:12 .claude
+-rw------- 1 agent agent 799 Oct 10 05:12 .claude.json
+
+/workspace:
+total 16
+drwxrwxrwt 4 root  root  4096 Oct 10 05:12 .
+dr-xr-xr-x 1 root  root  4096 Oct 10 05:12 ..
+drwxr-xr-x 3 agent agent 4096 Oct 10 05:12 .cache
+drwx------ 4 agent agent 4096 Oct 10 05:12 repo
+[exit 0]

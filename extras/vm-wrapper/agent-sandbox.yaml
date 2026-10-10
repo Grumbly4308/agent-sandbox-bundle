@@ -1,0 +1,122 @@
+# agent-sandbox.yaml — a Lima template: a throwaway virtual machine to run
+# the whole sandbox in, with nothing of yours inside it.
+#
+# EXAMPLE, NEVER STARTED by the authors (no Lima on the machine this was
+# written on). Read README.md in this directory first.
+#
+# What a VM adds: a second kernel. A container shares your host's kernel, so
+# a kernel bug the agent can reach lets it out onto your host. Here it would
+# land in this VM instead, which holds no credential, sees none of your
+# files, and is deleted when you are done.
+#
+#   limactl start --name=agent-sandbox ./agent-sandbox.yaml
+
+# Ubuntu 24.04, whose Podman (4.9) is new enough for the sandbox (4.4).
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+
+# One session takes up to about 6.6 GB of memory with the default settings
+# (see B10 in docs/00-threat-model.md); the VM needs that plus room for
+# itself. The disk holds the system, the images and a 20 GB store for the
+# sessions' workspaces (made below).
+cpus: 4
+memory: "8GiB"
+disk: "50GiB"
+
+# No folder of yours is visible in the VM. Lima's default would mount your
+# home directory; an empty list mounts nothing. Code goes in and out with
+# `limactl copy` (see README.md).
+mounts: []
+
+ssh:
+  # Your SSH agent is not offered to the VM, so nothing in it can use your keys.
+  forwardAgent: false
+  # Your public keys are not copied in either; Lima's own key is enough.
+  loadDotSSHPubKeys: false
+
+# Lima would otherwise make every port a program in the VM listens on
+# reachable on your host's 127.0.0.1. Nothing in the sandbox needs that.
+portForwards:
+  - guestIP: "127.0.0.1"
+    guestPortRange: [1, 65535]
+    ignore: true
+  - guestIP: "0.0.0.0"
+    guestPortRange: [1, 65535]
+    ignore: true
+
+# Lima's built-in container runtime (containerd) is not wanted: the only
+# runtime is rootless Podman.
+containerd:
+  system: false
+  user: false
+
+provision:
+  # As root, once, at first boot.
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      # podman, uidmap, slirp4netns, passt: rootless Podman and its networking
+      # catatonit:                          the tiny first process `podman --init` puts in the keeper
+      # dbus-user-session:                  lets rootless Podman ask systemd to apply limits
+      # git, jq:                            the launcher uses both
+      # libsecret-tools:                    only if you choose to run `login` in the VM
+      apt-get install -y \
+        podman uidmap slirp4netns passt catatonit dbus-user-session git jq libsecret-tools
+      # gitleaks: the secret scan at export. Installed apart, so that a
+      # release without the package still gets everything else; without it,
+      # export refuses to mark the scan as passed.
+      apt-get install -y gitleaks || echo "gitleaks is not packaged here; install it by hand"
+
+      # The sandbox refuses to run as a user who can become root, and the
+      # user Lima creates can (passwordless sudo). So: a second user with no
+      # sudo and no password, for the sandbox only. useradd gives it the
+      # subordinate id ranges rootless Podman needs.
+      id sandbox >/dev/null 2>&1 || useradd --create-home --shell /bin/bash sandbox
+      passwd --lock sandbox
+
+      # Let that user's Podman set CPU, memory, process and disk-speed limits
+      # on its containers [physical B10].
+      mkdir -p /etc/systemd/system/user@.service.d
+      printf '[Service]\nDelegate=cpu cpuset io memory pids\n' \
+        > /etc/systemd/system/user@.service.d/delegate.conf
+      systemctl daemon-reload
+
+      # The disk store [physical B08]: one file of fixed size with a
+      # filesystem in it, where sessions keep their workspaces. 20 GB is the
+      # most all sessions together can put on this VM's disk; the system and
+      # the images are on the rest and cannot be crowded out. Mounted at
+      # every boot. ./sandbox finds it there and writes it into the sandbox
+      # user's settings the first time it runs.
+      if [ ! -e /var/lib/agent-sandbox-store.img ]; then
+        fallocate -l 20G /var/lib/agent-sandbox-store.img
+        mkfs.ext4 -q -m 0 /var/lib/agent-sandbox-store.img
+        mkdir -p /var/lib/agent-sandbox-store
+        echo '/var/lib/agent-sandbox-store.img /var/lib/agent-sandbox-store ext4 loop,nosuid,nodev,nofail 0 0' >> /etc/fstab
+        mount /var/lib/agent-sandbox-store
+        chown sandbox:sandbox /var/lib/agent-sandbox-store
+      fi
+
+      # Keep the user's service manager running without a login, and point
+      # shells at it; without these, rootless Podman cannot apply the limits.
+      loginctl enable-linger sandbox
+      # Single quotes on purpose: the two lines are written as they are and
+      # worked out at each login.
+      # shellcheck disable=SC2016
+      if ! grep -q XDG_RUNTIME_DIR /home/sandbox/.profile; then
+        printf '%s\n' \
+          'export XDG_RUNTIME_DIR="/run/user/$(id -u)"' \
+          'export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"' \
+          >> /home/sandbox/.profile
+      fi
+
+message: |
+  Enter the VM as the unprivileged user the sandbox runs under:
+    limactl shell agent-sandbox sudo -iu sandbox
+  Delete it, and everything in it, when you are done:
+    limactl delete --force agent-sandbox

@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# agents/claude/launch [--auto] [args...] — start Claude Code in the sandbox.
+#
+# Run by sandbox-launch, in /workspace/repo, as the agent's user. It writes
+# the few settings Claude Code needs to start here, gives it a DUMMY
+# credential, and becomes the CLI.
+#
+# Nothing in this file is a barrier. It runs as the agent and writes into the
+# agent's own home; the agent can undo every line. Each setting, why it is
+# there and whether the spike proved it necessary: compat.md.
+#
+# The credential below is a placeholder that looks right to the CLI. The real
+# one is held by the credential sidecar, which throws this one away and puts
+# its own in [logical B22]. No real credential is ever in this container
+# [physical B15].
+set -euo pipefail
+
+auto=0
+if [ "${1:-}" = "--auto" ]; then
+  auto=1
+  shift
+fi
+
+# Every model request (/v1/messages, token counting, sub-agents, compaction,
+# web search) goes to the sidecar instead of the vendor. Its address is this
+# session's, handed in by topology.sh.
+export ANTHROPIC_BASE_URL="${SANDBOX_SIDECAR_URL:?launch(claude): SANDBOX_SIDECAR_URL is not set}"
+
+dummy_oauth_token="sk-ant-oat01-sandbox-dummy-not-a-credential"
+dummy_api_key="sk-ant-api03-sandbox-dummy-not-a-credential"
+
+# First-run state for ~/.claude.json: "onboarding is done" and "this folder
+# is trusted". Without the first the full-screen interface exits at once;
+# without the second it stops at a dialog on every start, because the home
+# directory is new in every session.
+state='{"hasCompletedOnboarding":true,"projects":{"/workspace/repo":{"hasTrustDialogAccepted":true}}}'
+
+case "${SANDBOX_AUTH:-}" in
+  oauth)
+    export CLAUDE_CODE_OAUTH_TOKEN="$dummy_oauth_token"
+    unset ANTHROPIC_API_KEY
+    ;;
+  apikey)
+    export ANTHROPIC_API_KEY="$dummy_api_key"
+    unset CLAUDE_CODE_OAUTH_TOKEN
+    # The interface asks "use this API key?" for a key it finds in the
+    # environment, and makes no request until someone says yes. It remembers
+    # the answer by the key's last 20 characters; record the yes.
+    state="$(jq -c --arg tail "${dummy_api_key: -20}" \
+      '.customApiKeyResponses = {approved: [$tail], rejected: []}' <<<"$state")"
+    ;;
+  *)
+    echo "launch(claude): SANDBOX_AUTH must be 'oauth' or 'apikey' (got '${SANDBOX_AUTH:-}')" >&2
+    exit 2
+    ;;
+esac
+
+# Write ~/.claude.json. On a second start in the same session the CLI has
+# filled the file with its own state; keep that and set our keys on top. A
+# file that is not valid JSON is replaced.
+umask 077
+config="$HOME/.claude.json"
+if ! merged="$(jq -c --argjson add "$state" '. * $add' "$config" 2>/dev/null)"; then
+  merged="$state"
+fi
+printf '%s\n' "$merged" >"$config.tmp"
+mv "$config.tmp" "$config"
+
+# Passed on the command line instead of shipping a settings.json:
+#   skipWebFetchPreflight  before fetching a page the CLI asks a fixed vendor
+#                          host about the domain. The proxy refuses that host,
+#                          and without this every WebFetch fails. WebFetch
+#                          itself still goes through the proxy.
+#   attribution            no "Co-Authored-By" trailer on commits or pull
+#                          requests. A courtesy: `./sandbox export` is what
+#                          strips attribution and refuses if any survives.
+settings='{"skipWebFetchPreflight":true,"attribution":{"commit":"","pr":""}}'
+
+args=(--settings "$settings")
+if [ "$auto" -eq 1 ]; then
+  # Run without permission prompts. Nobody is watching to answer them; the
+  # container is the boundary either way.
+  args+=(--dangerously-skip-permissions)
+fi
+
+exec claude "${args[@]}" "$@"

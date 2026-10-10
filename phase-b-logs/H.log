@@ -1,0 +1,7 @@
+++ ./sandbox destroy --all
+++ podman ps -a
+CONTAINER ID  IMAGE       COMMAND     CREATED     STATUS      PORTS       NAMES
+++ podman volume ls
+++ podman network ls
+NETWORK ID    NAME        DRIVER
+2f259bab93aa  podman      bridge

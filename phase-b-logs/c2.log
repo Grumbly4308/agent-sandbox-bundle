@@ -1,0 +1,42 @@
+tests/run.sh
+== shellcheck -x agents/claude/install.sh agents/claude/launch agents/codex/install.sh agents/codex/launch agents/opencode/install.sh agents/opencode/launch images/agent/make-sbom.sh images/agent/sandbox-bundle images/agent/sandbox-idle images/agent/sandbox-import images/agent/sandbox-launch images/agent/verify-inside.sh images/proxy/entrypoint.sh sandbox scripts/allowlist.sh scripts/doctor.sh scripts/export.sh scripts/make-seccomp.sh scripts/pin-images.sh scripts/verify.sh tests/allowlist/injection.sh tests/allowlist/never-allow.sh tests/allowlist/render.sh tests/allowlist/shipped-lists.sh tests/allowlist/valid-host.sh tests/export/lib.sh tests/export/test-attribution.sh tests/export/test-clean-export.sh tests/export/test-hostile-git.sh tests/export/test-output-and-history.sh tests/export/test-policy.sh tests/export/test-runs-later.sh tests/fakes/podman tests/gitrelay/run.sh tests/images/lib.sh tests/images/run.sh tests/images/test-containerfile.sh tests/images/test-env-files.sh tests/images/test-idle.sh tests/images/test-import-bundle.sh tests/images/test-install.sh tests/images/test-launch.sh tests/images/test-lint.sh tests/images/test-sbom.sh tests/images/test-seccomp.sh tests/images/test-services.sh tests/launcher/credentials.sh tests/launcher/doctor.sh tests/launcher/images.sh tests/launcher/integration.sh tests/launcher/lib.sh tests/launcher/parse.sh tests/launcher/refusals.sh tests/launcher/relay.sh tests/launcher/run.sh tests/launcher/session.sh tests/launcher/store.sh tests/phase-b/cycle.sh tests/phase-b/images.sh tests/proxy/render.sh tests/run.sh tests/sidecar/run.sh tests/topology/test.sh tests/verify/host-fake-podman.sh tests/verify/inside-smoke.sh tests/verify/lifecycle-fake.sh tests/verify/run.sh tests/verify/static.sh topology.sh
+== bash tests/allowlist/injection.sh
+allowlist injection: all checks passed
+== bash tests/allowlist/never-allow.sh
+allowlist never-allow: all checks passed
+== bash tests/allowlist/render.sh
+allowlist render: all checks passed
+== bash tests/allowlist/shipped-lists.sh
+allowlist shipped lists: all checks passed
+== bash tests/allowlist/valid-host.sh
+allowlist valid-host: all checks passed
+== bash tests/export/test-attribution.sh
+test-attribution: all passed
+== bash tests/export/test-clean-export.sh
+test-clean-export: all passed
+== bash tests/export/test-hostile-git.sh
+test-hostile-git: all passed
+== bash tests/export/test-output-and-history.sh
+test-output-and-history: all passed
+== bash tests/export/test-policy.sh
+test-policy: all passed
+== bash tests/export/test-runs-later.sh
+test-runs-later: all passed
+== bash tests/gitrelay//run.sh
+# duration_ms 3384.679027
+== bash tests/images//run.sh
+tests/images: all test files passed
+== bash tests/launcher//run.sh
+run.sh: all checks passed
+== bash tests/proxy/render.sh
+proxy render: all static checks passed
+== bash tests/sidecar//run.sh
+110 passed, 0 failed
+== bash tests/topology/test.sh
+topology: all static checks passed
+== bash tests/verify//run.sh
+6 scenarios, 0 assertion(s) failed
+== sh -c cd tests/fixtures/mini-node && node --test
+# duration_ms 46.536157
+
+All static tests passed. No barrier has been verified against Podman by this run.

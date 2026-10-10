@@ -1,0 +1,19 @@
+# Claude Code: the hosts this agent's session adds to the egress proxy's
+# lists.  [logical B20, B21]
+#
+# Two sections. `[agent]` hosts are reachable from the agent container.
+# `[sidecar]` hosts are reachable from the credential sidecar's address and
+# from nowhere else: the agent cannot reach the model vendor directly, so it
+# cannot send your code there under an account of the attacker's.
+# One host per line, then `#` and the reason.
+
+[agent]
+# Nothing, on purpose. Every model call goes to the sidecar, which is on the
+# session's own network and not behind the proxy. The CLI also contacts a few
+# fixed hosts by itself (api.anthropic.com, platform.claude.com,
+# downloads.claude.ai, github.com). In the spike (Claude Code 2.1.283,
+# 2026-10-01) each of them was refused and the CLI carried on working, so
+# none is listed.
+
+[sidecar]
+api.anthropic.com   # the model API: where the sidecar forwards /v1/messages. No token endpoint is listed: the sidecar never refreshes a login.

@@ -1,0 +1,393 @@
+#!/usr/bin/env bash
+# A stand-in for `podman`, for the launcher's tests. It starts nothing. It
+# writes down every call and answers the questions ./sandbox asks with canned
+# output, so a whole run / allow / export / destroy cycle can be driven as
+# plain processes on a machine with no container runtime.
+#
+# Put this directory first on PATH and set:
+#   FAKE_PODMAN_LOG     file that gets one line per call: the arguments,
+#                       separated by tabs (required)
+#   FAKE_PODMAN_STATE   directory where the fake remembers which containers,
+#                       networks, volumes and images "exist" (default:
+#                       $FAKE_PODMAN_LOG.state). Standard input of every
+#                       `exec -i` is kept in its stdin/ directory, numbered in
+#                       call order: <n>.<container>.<command>[--option]
+#
+# Switches, all optional:
+#   FAKE_PODMAN_ROOTLESS=false       `podman info` reports a root-run Podman
+#   FAKE_PODMAN_REMOTE=true          ... a remote one
+#   FAKE_PODMAN_VERSION=4.3.1        ... this version (default 5.4.0)
+#   FAKE_PODMAN_BACKEND=cni          ... this network backend (default netavark)
+#   FAKE_PODMAN_CGROUPS=v1           ... this cgroup version (default v2)
+#   FAKE_PODMAN_CONTROLLERS="memory pids"   ... these controllers (default cpu io memory pids)
+#   FAKE_PODMAN_IDMAP="0:1 "         ... this id mapping (default "0:1 1:65536 ")
+#   FAKE_PODMAN_SELINUX=true         ... SELinux enabled (default false)
+#   FAKE_PODMAN_MEMFREE=N            ... this much free memory, in bytes
+#   FAKE_PODMAN_SUBNETS="10.201.0.0/24 ..."  networks that exist already
+#   FAKE_PODMAN_IMAGES=absent        no image exists until `build` or `pull`
+#   FAKE_PODMAN_FAIL="start"         these subcommands fail (space separated;
+#                                    `exec:sidecar-load` fails one exec command)
+#   FAKE_PODMAN_BUNDLE=file          what the export helper writes to stdout
+#   FAKE_PODMAN_BUNDLE_BYTES=N       ... or N bytes of filler instead
+#   FAKE_PODMAN_LAUNCH_EXIT=N        exit status of `exec ... sandbox-launch`
+#   FAKE_PODMAN_LOGS=text            what `podman logs` prints
+#   FAKE_PODMAN_DU=N                 bytes `podman unshare du` reports
+#   FAKE_PODMAN_VERSIONS_OLD / _NEW  /usr/share/sandbox/versions before and
+#                                    after an image is rebuilt
+#   FAKE_PODMAN_INPUTS=sum           the agent-sandbox.inputs label of an image
+#                                    that exists without having been built here
+set -euo pipefail
+
+log="${FAKE_PODMAN_LOG:?set FAKE_PODMAN_LOG to the file that records the calls}"
+state="${FAKE_PODMAN_STATE:-$log.state}"
+mkdir -p "$state/containers" "$state/networks" "$state/volumes" "$state/images" "$state/stdin"
+
+fail() { printf 'fake podman: %s\n' "$*" >&2; exit 125; }
+
+# --- write the call down ----------------------------------------------------
+{
+  first=1
+  for arg in "$@"; do
+    arg="${arg//$'\t'/ }"
+    arg="${arg//$'\n'/ }"
+    if [ "$first" -eq 1 ]; then printf '%s' "$arg"; first=0; else printf '\t%s' "$arg"; fi
+  done
+  printf '\n'
+} >> "$log"
+
+[ $# -gt 0 ] || fail "no command"
+for name in ${FAKE_PODMAN_FAIL:-}; do
+  if [ "$name" = "$1" ]; then fail "'$1' was told to fail (FAKE_PODMAN_FAIL)"; fi
+done
+
+# --- helpers ----------------------------------------------------------------
+
+# option_value <--name> <args...>: the value given to an option, in either
+# spelling (`--name value` or `--name=value`). Prints the first one found.
+option_value() {
+  local want="$1"
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      "$want")   printf '%s' "${2:-}"; return 0 ;;
+      "$want"=*) printf '%s' "${1#*=}"; return 0 ;;
+    esac
+    shift
+  done
+  return 0
+}
+
+has_arg() {
+  local want="$1"
+  shift
+  while [ $# -gt 0 ]; do
+    if [ "$1" = "$want" ]; then return 0; fi
+    shift
+  done
+  return 1
+}
+
+last_arg() {
+  local last=""
+  for last in "$@"; do :; done
+  printf '%s' "$last"
+}
+
+# An image tag as a file name.
+image_file() {
+  local name="${1//\//%}"
+  printf '%s/images/%s' "$state" "$name"
+}
+
+# The names in a state directory whose recorded label matches a
+# `label=...` filter (or all of them when there is no filter).
+list_objects() {
+  local kind="$1" filter="$2" all="$3" file label status
+  for file in "$state/$kind"/*; do
+    [ -f "$file" ] || continue
+    label="$(sed -n 's/^label=//p' "$file")"
+    status="$(sed -n 's/^status=//p' "$file")"
+    case "$filter" in
+      '') ;;
+      label=*=*) [ "label=$label" = "$filter" ] || continue ;;
+      label=*)   case "$label" in "${filter#label=}"=*) ;; *) continue ;; esac ;;
+      *) fail "unsupported filter: $filter" ;;
+    esac
+    if [ "$kind" = containers ] && [ "$all" != all ] && [ "$status" != running ]; then continue; fi
+    printf '%s\n' "${file##*/}"
+  done
+}
+
+# `podman info --format`: every field ./sandbox and doctor.sh ask for.
+render_info() {
+  local out="$1" controllers="${FAKE_PODMAN_CONTROLLERS-cpu io memory pids}"
+  out="${out//'{{.Host.Security.Rootless}}'/${FAKE_PODMAN_ROOTLESS:-true}}"
+  out="${out//'{{.Host.ServiceIsRemote}}'/${FAKE_PODMAN_REMOTE:-false}}"
+  out="${out//'{{.Version.Version}}'/${FAKE_PODMAN_VERSION:-5.4.0}}"
+  out="${out//'{{.Host.NetworkBackend}}'/${FAKE_PODMAN_BACKEND:-netavark}}"
+  out="${out//'{{.Host.CgroupsVersion}}'/${FAKE_PODMAN_CGROUPS:-v2}}"
+  out="${out//'{{.Host.CgroupControllers}}'/[$controllers]}"
+  out="${out//'{{.Host.Security.SELinuxEnabled}}'/${FAKE_PODMAN_SELINUX:-false}}"
+  out="${out//'{{.Host.MemFree}}'/${FAKE_PODMAN_MEMFREE:-68719476736}}"
+  out="${out//'{{range .Host.IDMappings.UIDMap}}{{.ContainerID}}:{{.Size}} {{end}}'/${FAKE_PODMAN_IDMAP-0:1 1:65536 }}"
+  out="${out//'{{range .Host.IDMappings.GIDMap}}{{.ContainerID}}:{{.Size}} {{end}}'/${FAKE_PODMAN_IDMAP-0:1 1:65536 }}"
+  case "$out" in *'{{'*) fail "info: a template field this fake does not know: $out" ;; esac
+  printf '%s\n' "$out"
+}
+
+command="$1"
+shift
+
+case "$command" in
+  info)
+    render_info "$(option_value --format "$@")"
+    ;;
+
+  version)
+    printf '%s\n' "${FAKE_PODMAN_VERSION:-5.4.0}"
+    ;;
+
+  network|volume)
+    kind="${command}s"
+    sub="${1:-}"
+    [ $# -eq 0 ] || shift
+    case "$sub" in
+      create)
+        name="$(last_arg "$@")"
+        [ ! -e "$state/$kind/$name" ] || fail "$command $name already exists"
+        subnet="$(option_value --subnet "$@")"
+        for other in "$state"/networks/*; do
+          [ -f "$other" ] || continue
+          if [ -n "$subnet" ] && [ "$(sed -n 's/^subnet=//p' "$other")" = "$subnet" ]; then
+            fail "subnet $subnet is already used on the host or by another config"
+          fi
+        done
+        printf 'label=%s\nsubnet=%s\n' "$(option_value --label "$@")" "$subnet" > "$state/$kind/$name"
+        printf '%s\n' "$name"
+        ;;
+      ls)
+        format="$(option_value --format "$@")"
+        case "$format" in
+          '{{range .Subnets}}{{.Subnet}} {{end}}')
+            for file in "$state"/networks/*; do
+              [ -f "$file" ] || continue
+              sed -n 's/^subnet=//p' "$file"
+            done
+            for subnet in ${FAKE_PODMAN_SUBNETS:-}; do printf '%s\n' "$subnet"; done
+            ;;
+          ''|'{{.Name}}')
+            list_objects "$kind" "$(option_value --filter "$@")" all
+            ;;
+          *) fail "$command ls: a format this fake does not know: $format" ;;
+        esac
+        ;;
+      rm)
+        for name in "$@"; do
+          case "$name" in -*) continue ;; esac
+          [ -e "$state/$kind/$name" ] || fail "no such $command: $name"
+          rm -f "$state/$kind/$name"
+        done
+        ;;
+      exists)
+        [ -e "$state/$kind/$1" ]
+        ;;
+      *) fail "unsupported: $command $sub" ;;
+    esac
+    ;;
+
+  create)
+    name="$(option_value --name "$@")"
+    [ -n "$name" ] || fail "create without --name"
+    [ ! -e "$state/containers/$name" ] || fail "the container name \"$name\" is already in use"
+    printf 'label=%s\nstatus=created\n' "$(option_value --label "$@")" > "$state/containers/$name"
+    # Real Podman copies the caller's proxy variables into a new container.
+    # Note here whether any were set, so a test can check the launcher
+    # removed them.
+    if [ -n "${http_proxy:-}${https_proxy:-}${HTTP_PROXY:-}${HTTPS_PROXY:-}" ]; then
+      printf '%s\n' "$name" >> "$state/created-with-host-proxy"
+    fi
+    printf 'fake-id-%s\n' "$name"
+    ;;
+
+  start|stop|kill)
+    for name in "$@"; do
+      case "$name" in -*) continue ;; esac
+      [ -e "$state/containers/$name" ] || fail "no such container: $name"
+      status=exited
+      if [ "$command" = start ]; then status=running; fi
+      label="$(sed -n 's/^label=//p' "$state/containers/$name")"
+      printf 'label=%s\nstatus=%s\n' "$label" "$status" > "$state/containers/$name"
+    done
+    ;;
+
+  rm)
+    skip=0
+    for name in "$@"; do
+      if [ "$skip" -eq 1 ]; then skip=0; continue; fi
+      case "$name" in
+        -t|--time) skip=1; continue ;;
+        -*) continue ;;
+      esac
+      [ -e "$state/containers/$name" ] || fail "no such container: $name"
+      rm -f "$state/containers/$name"
+    done
+    ;;
+
+  ps)
+    all=running
+    if has_arg -a "$@" || has_arg -aq "$@" || has_arg --all "$@"; then all=all; fi
+    list_objects containers "$(option_value --filter "$@")" "$all"
+    ;;
+
+  container)
+    [ "${1:-}" = exists ] || fail "unsupported: container ${1:-}"
+    [ -e "$state/containers/$2" ]
+    ;;
+
+  inspect)
+    format="$(option_value --format "$@")"
+    name="$(last_arg "$@")"
+    [ "$format" = '{{.State.Running}}' ] || fail "inspect: a format this fake does not know: $format"
+    [ -e "$state/containers/$name" ] || fail "no such object: $name"
+    if [ "$(sed -n 's/^status=//p' "$state/containers/$name")" = running ]; then echo true; else echo false; fi
+    ;;
+
+  image)
+    sub="${1:-}"
+    [ $# -eq 0 ] || shift
+    case "$sub" in
+      exists)
+        [ "${FAKE_PODMAN_IMAGES:-present}" = present ] || [ -e "$(image_file "$1")" ]
+        ;;
+      inspect)
+        if [ "$(option_value --format "$@")" = '{{index .Labels "agent-sandbox.inputs"}}' ]; then
+          name="$(last_arg "$@")"
+          if [ -e "$(image_file "$name").label" ]; then
+            sed -n 's/^agent-sandbox\.inputs=//p' "$(image_file "$name").label"
+          else
+            printf '%s\n' "${FAKE_PODMAN_INPUTS:-}"
+          fi
+          exit 0
+        fi
+        [ "$(option_value --format "$@")" = '{{.Id}}' ] || fail "image inspect: unknown format"
+        for name in "$@"; do
+          case "$name" in --format|'{{.Id}}') continue ;; esac
+          generation=0
+          if [ -e "$(image_file "$name")" ]; then generation="$(cat "$(image_file "$name")")"; fi
+          printf 'sha256:fake-%s-%s\n' "$(printf '%s' "$name" | cksum | cut -d' ' -f1)" "$generation"
+        done
+        ;;
+      *) fail "unsupported: image $sub" ;;
+    esac
+    ;;
+
+  images)
+    for file in "$state"/images/*; do
+      [ -f "$file" ] || continue
+      name="${file##*/}"
+      printf '%s\n' "${name//%//}"
+    done
+    ;;
+
+  build)
+    tag="$(option_value --tag "$@")"
+    [ -n "$tag" ] || tag="$(option_value -t "$@")"
+    [ -n "$tag" ] || fail "build without --tag"
+    generation=0
+    if [ -e "$(image_file "$tag")" ]; then generation="$(cat "$(image_file "$tag")")"; fi
+    printf '%s\n' "$(( generation + 1 ))" > "$(image_file "$tag")"
+    option_value --label "$@" > "$(image_file "$tag").label"
+    ;;
+
+  pull)
+    printf '1\n' > "$(image_file "$(last_arg "$@")")"
+    ;;
+
+  run)
+    # The export helper: its last two arguments are `sandbox-bundle <branch>`.
+    if has_arg sandbox-bundle "$@"; then
+      if [ -n "${FAKE_PODMAN_BUNDLE_BYTES:-}" ]; then
+        # Noted only when the reader took every byte: a launcher that stops
+        # reading at its cap cuts this off first.
+        if head -c "$FAKE_PODMAN_BUNDLE_BYTES" /dev/zero 2>/dev/null; then
+          : > "$state/bundle-read-to-the-end"
+        fi
+      elif [ -n "${FAKE_PODMAN_BUNDLE:-}" ]; then
+        cat "$FAKE_PODMAN_BUNDLE"
+      fi
+      printf 'sandbox-bundle: wrote a bundle\033[2J\n' >&2
+    elif has_arg /usr/share/sandbox/versions "$@"; then
+      # `upgrade` reads the version list of an image before and after.
+      image=""
+      previous=""
+      for arg in "$@"; do
+        if [ "$previous" = cat ]; then image="$arg"; fi
+        previous="$arg"
+      done
+      generation=0
+      if [ -e "$(image_file "$image")" ]; then generation="$(cat "$(image_file "$image")")"; fi
+      if [ "$generation" -ge 2 ]; then
+        printf '%s\n' "${FAKE_PODMAN_VERSIONS_NEW:-cli 2.0.0}"
+      else
+        printf '%s\n' "${FAKE_PODMAN_VERSIONS_OLD:-cli 1.0.0}"
+      fi
+    else
+      fail "run: a use this fake does not know: $*"
+    fi
+    ;;
+
+  exec)
+    interactive=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -i|-it|-ti|--interactive) interactive=1; shift ;;
+        -t|--tty) shift ;;
+        --env|-e|--user|--workdir) shift 2 ;;
+        -*) shift ;;
+        *) break ;;
+      esac
+    done
+    container="${1:-}"
+    program="${2:-}"
+    [ -e "$state/containers/$container" ] || fail "no such container: $container"
+    [ "$(sed -n 's/^status=//p' "$state/containers/$container")" = running ] \
+      || fail "container $container is not running"
+    for name in ${FAKE_PODMAN_FAIL:-}; do
+      if [ "$name" = "exec:$program" ]; then fail "exec $program was told to fail"; fi
+    done
+    case "$program" in
+      sandbox-launch)
+        printf 'fake agent CLI: started with %s\n' "$*"
+        exit "${FAKE_PODMAN_LAUNCH_EXIT:-0}"
+        ;;
+      bash|sh) ;;
+      *)
+        if [ "$interactive" -eq 1 ]; then
+          number="$(find "$state/stdin" -type f | wc -l | tr -d ' ')"
+          # An option (--x) is part of the name: `sidecar-load --tls` is kept
+          # as <n>.<container>.sidecar-load--tls.
+          option=""
+          case "${3:-}" in --*) option="$3" ;; esac
+          cat > "$state/stdin/$(( number + 1 )).$container.$program$option"
+        fi
+        ;;
+    esac
+    ;;
+
+  logs)
+    printf '%b' "${FAKE_PODMAN_LOGS:-first line\n\033[31mred\033[0m and \033]52;c;ZXZpbA==\007clipboard\n}"
+    ;;
+
+  unshare)
+    case "${1:-}" in
+      chown) ;;                 # the fake has no second user to hand anything to
+      du)    printf '%s\t%s\n' "${FAKE_PODMAN_DU:-4096}" "$(last_arg "$@")" ;;
+      rm)    "$@" ;;
+      *)     fail "unshare: a use this fake does not know: $*" ;;
+    esac
+    ;;
+
+  *)
+    fail "unsupported command: $command"
+    ;;
+esac

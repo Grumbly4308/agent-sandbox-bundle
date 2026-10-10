@@ -1,0 +1,120 @@
+#!/usr/bin/env node
+'use strict';
+// sidecar-load — store the model credential for the sidecar.  [logical B22]
+//
+// ./sandbox runs this inside the sidecar container with the credential on
+// standard input:
+//     printf '%s' "$json" | podman exec -i <session>-credsidecar sidecar-load
+// so the credential is never in an environment variable, a command line or
+// a file on the host. The input is ONE JSON object:
+//     {"token": "...", "account_id": "..."}        (account_id is optional)
+// It is written to <state dir>/cred/credential.json, readable by the
+// sidecar's user only. The server looks at that file on every request, so a
+// replacement (a fresh Codex token, mid-session) takes effect at once.
+//
+// Nothing here prints the credential, on success or on failure.
+//
+// `sidecar-load --tls` stores the sidecar's TLS key and certificate the same
+// way, for agents whose CLI only talks HTTPS to it (Codex with a
+// subscription). The input is ONE JSON object:
+//     {"key": "-----BEGIN PRIVATE KEY-----...", "cert": "-----BEGIN CERTIFICATE-----..."}
+// It is written to <state dir>/cred/tls.json. The server waits for it before
+// it listens, so it never answers in plain HTTP when TLS was asked for.
+//
+// SANDBOX_SIDECAR_STATE_DIR is set by the tests only; in the container the
+// state directory is the memory-backed mount /run/sidecar.
+
+const fs = require('node:fs');
+const path = require('node:path');
+
+const STATE_DIR = process.env.SANDBOX_SIDECAR_STATE_DIR || '/run/sidecar';
+const CRED_DIR = path.join(STATE_DIR, 'cred');
+const CRED_FILE = path.join(CRED_DIR, 'credential.json');
+const TLS_FILE = path.join(CRED_DIR, 'tls.json');
+const INPUT_MAX = 64 * 1024;   // a credential is a few kilobytes at most
+const TLS = process.argv[2] === '--tls';
+if (process.argv.length > 3 || (process.argv[2] !== undefined && !TLS)) {
+  process.stderr.write('usage: sidecar-load [--tls] < json\n');
+  process.exit(1);
+}
+
+// The same rules as in sidecar.mjs: the characters a bearer token may have
+// (RFC 6750). No quote, backslash, space or line break.
+const TOKEN_RE = /^[A-Za-z0-9._~+/=-]{8,16384}$/;
+const ACCOUNT_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+// One PEM block of the given kind: base64 lines between its two markers.
+const pemRe = (kind) => new RegExp(`^-----BEGIN ${kind}-----\\n[A-Za-z0-9+/=\\n]{16,8192}-----END ${kind}-----\\n?$`);
+const KEY_RE = pemRe('(?:EC |RSA )?PRIVATE KEY');
+const CERT_RE = pemRe('CERTIFICATE');
+
+function fail(message) {
+  process.stderr.write(`sidecar-load: ${message}\n`);
+  process.exit(1);
+}
+
+// What goes into the file, checked; fail() for anything else.
+function credentialOf(doc) {
+  const unknown = Object.keys(doc).filter((key) => key !== 'token' && key !== 'account_id');
+  if (unknown.length > 0) fail('the input has a key other than "token" and "account_id"; nothing was stored');
+  if (typeof doc.token !== 'string' || !TOKEN_RE.test(doc.token)) fail('"token" is missing or has characters a token cannot have; nothing was stored');
+  if (doc.account_id !== undefined && (typeof doc.account_id !== 'string' || !ACCOUNT_RE.test(doc.account_id))) {
+    fail('"account_id" has characters an account id cannot have; nothing was stored');
+  }
+  return { token: doc.token, account_id: doc.account_id };
+}
+function tlsOf(doc) {
+  const unknown = Object.keys(doc).filter((key) => key !== 'key' && key !== 'cert');
+  if (unknown.length > 0) fail('the input has a key other than "key" and "cert"; nothing was stored');
+  if (typeof doc.key !== 'string' || !KEY_RE.test(doc.key)) fail('"key" is missing or is not one PEM private key; nothing was stored');
+  if (typeof doc.cert !== 'string' || !CERT_RE.test(doc.cert)) fail('"cert" is missing or is not one PEM certificate; nothing was stored');
+  return { key: doc.key, cert: doc.cert };
+}
+
+function store(input) {
+  let doc;
+  try {
+    doc = JSON.parse(input);
+  } catch {
+    fail('the input is not valid JSON; nothing was stored');
+  }
+  if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) fail('the input must be one JSON object; nothing was stored');
+  const value = TLS ? tlsOf(doc) : credentialOf(doc);
+  const target = TLS ? TLS_FILE : CRED_FILE;
+
+  // The mount above is world-writable like /tmp, so the file lives in a
+  // directory only this user can enter.
+  process.umask(0o077);
+  try {
+    fs.mkdirSync(CRED_DIR, { mode: 0o700 });
+  } catch (err) {
+    if (err.code !== 'EEXIST') fail(`cannot create ${CRED_DIR}: ${err.code}`);
+  }
+  const st = fs.lstatSync(CRED_DIR);
+  if (!st.isDirectory() || st.uid !== process.getuid() || (st.mode & 0o077) !== 0) {
+    fail(`${CRED_DIR} is not a private directory of this user; nothing was stored`);
+  }
+
+  // Write beside the target, then move into place: the move is one step, so
+  // the server never reads half a file.
+  const temp = `${target}.${process.pid}.tmp`;
+  try {
+    fs.rmSync(temp, { force: true });
+    fs.writeFileSync(temp, `${JSON.stringify(value)}\n`, { mode: 0o600, flag: 'wx' });
+    fs.renameSync(temp, target);
+  } catch (err) {
+    fs.rmSync(temp, { force: true });
+    fail(`cannot write ${target}: ${err.code}`);
+  }
+  process.stdout.write(`sidecar-load: ${TLS ? 'TLS key and certificate' : 'credential'} stored\n`);
+}
+
+if (process.stdin.isTTY) fail(`expects the ${TLS ? 'TLS key and certificate' : 'credential'} as JSON on standard input, from a pipe`);
+const chunks = [];
+let size = 0;
+process.stdin.on('data', (chunk) => {
+  size += chunk.length;
+  if (size > INPUT_MAX) fail('the input is too large to be a credential; nothing was stored');
+  chunks.push(chunk);
+});
+process.stdin.on('error', () => fail('cannot read standard input'));
+process.stdin.on('end', () => store(Buffer.concat(chunks).toString('utf8')));
