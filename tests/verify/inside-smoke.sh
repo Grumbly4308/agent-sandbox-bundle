@@ -63,6 +63,7 @@ names="$(sed -n 's/^    \(B[0-9][0-9]-[a-z0-9-]*\)) .*/\1/p' "$inside" | grep -v
 [ "$(printf '%s' "$names" | wc -w)" -ge 45 ] || not_ok "could not read the list of check names from verify-inside.sh"
 
 limit() { sed -n "s/^$1  *\\([^ ]*\\)  *\\([^ ]*\\).*/\\1/p" /proc/self/limits; }
+limit_hard() { sed -n "s/^$1  *\\([^ ]*\\)  *\\([^ ]*\\).*/\\2/p" /proc/self/limits; }
 cg() { cat "/sys/fs/cgroup/$1" 2>/dev/null || true; }
 # shellcheck disable=SC2086  # $names is a list of words
 out="$(bash "$inside" "uid=$(id -u)" "pids=$(cg pids.max)" "mem=$(cg memory.max)" \
@@ -100,8 +101,14 @@ if [ "$status" -eq 2 ]; then ok "no arguments: usage, status 2"; else not_ok "no
 # ---------------------------------------------------------------------------
 expect "own uid" "$(bash "$inside" "uid=$(id -u)" B01-user)" B01-user PASS
 expect "another uid" "$(bash "$inside" "uid=$(( $(id -u) + 1 ))" B01-user)" B01-user FAIL
-expect "the real limits" "$(bash "$inside" "nofile=$(limit 'Max open files')" "nproc=$(limit 'Max processes')" "fsize=$(limit 'Max file size')" B11-ulimits)" B11-ulimits \
-  "$([ "$(limit 'Max core file size')" = 0 ] && printf PASS || printf FAIL)"
+# B11-ulimits wants soft = hard for each limit and core dumps off, so on a host
+# whose hard limits are above its soft ones (a usual login) it must say FAIL.
+real_limits=PASS
+[ "$(limit 'Max core file size') $(limit_hard 'Max core file size')" = "0 0" ] || real_limits=FAIL
+for label in 'Max open files' 'Max processes' 'Max file size'; do
+  [ "$(limit "$label")" = "$(limit_hard "$label")" ] || real_limits=FAIL
+done
+expect "the real limits" "$(bash "$inside" "nofile=$(limit 'Max open files')" "nproc=$(limit 'Max processes')" "fsize=$(limit 'Max file size')" B11-ulimits)" B11-ulimits "$real_limits"
 expect "one limit off by one" "$(bash "$inside" "nofile=$(( $(limit 'Max open files') + 1 ))" "nproc=$(limit 'Max processes')" "fsize=$(limit 'Max file size')" B11-ulimits)" B11-ulimits FAIL
 expect "no value given" "$(bash "$inside" B10-pids-max)" B10-pids-max SKIP
 case "$(cg pids.max)" in
