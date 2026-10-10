@@ -30,6 +30,15 @@ else
   case "$out" in *"warn"*"gitleaks is not installed"*) pass "missing gitleaks is a warning, not a failure" ;; *) fail "no gitleaks warning" ;; esac
 fi
 says "through ./sandbox, doctor checks a default session's memory" "memory: the session may use up to 0.7 GB" "$ROOT/sandbox" doctor
+# A keyring tool is not enough: the keyring must exist and be open. Neither is
+# a refusal (run asks for the credential instead), but doctor names the fix.
+if [ "$(uname -s)" != Darwin ] && command -v secret-tool >/dev/null 2>&1; then
+  case "$out" in *"ok"*"the keyring is unlocked"*) pass "an open keyring is reported" ;; *) fail "open keyring not reported: $out" ;; esac
+  out="$(FAKE_BUSCTL_KEYRING=locked doctor 2>&1)" || fail "a locked keyring made doctor fail"
+  case "$out" in *"warn"*"your keyring is locked"*"scripts/keyring-unlock.py"*) pass "a locked keyring is a warning that names the fix" ;; *) fail "locked keyring: $out" ;; esac
+  out="$(FAKE_BUSCTL_KEYRING=missing doctor 2>&1)" || fail "a missing keyring made doctor fail"
+  case "$out" in *"warn"*"has no keyring"*"scripts/keyring-unlock.py"*) pass "a missing keyring is a warning that names the fix" ;; *) fail "missing keyring: $out" ;; esac
+fi
 
 # --- each failure: named, with a fix, exit 1 ---------------------------------------
 # red <description> <text of the failure> <text of the fix> <command...>

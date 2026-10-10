@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+- **`login` on a headless Linux host.** The account the quickstart recommends
+  (no password, reached over SSH) has no keyring, and gnome-keyring can create
+  or unlock one only through a graphical prompt, so `./sandbox login` ended in
+  `secret-tool: Cannot create an item in a locked collection`.
+  `gnome-keyring-daemon --unlock`, the usual advice, returns 0 and changes
+  nothing against the systemd-managed daemon of gnome-keyring 48. New
+  `scripts/keyring-unlock.py` creates or unlocks the keyring over D-Bus with a
+  password you choose. `login` now checks the keyring before asking for the
+  token and names that fix; `doctor` reports a missing or locked keyring; `run`
+  says why it is asking for the credential. Tests use a stand-in `busctl`.
+- **A git token for one session: `run --git-token`.** For a private
+  repository the host needs a git credential, and a breakout lands in the host
+  account; a personal SSH key there is a larger asset than the inference-only
+  model token the design goes to such lengths to isolate. `--git-token` asks
+  for a token scoped to the one repository and gives it to git's credential
+  cache: held in memory, in the session directory, for the session's time
+  limit; used by the clone, `push` and `pr` (and the relay, with
+  `--git-relay`) instead of anything else on the host; forgotten at
+  `destroy`. Never a file, never in a container.
+- **Docs: what the host holds.** The README, the quickstart and
+  [03 — Credentials](docs/03-credentials.md#git-credentials) now say what a
+  breakout would find on the host, rank the ways to give it a git credential
+  (none, a session token, a deploy key, never a personal key), show the
+  zero-credential workflow over the SSH link you already have, and warn
+  against SSH agent forwarding. The keyring section says plainly what the
+  keyring does and does not protect against, and that typing the token at
+  each `run` is a sound alternative on a headless host.
+
 ## 2.0.0 — 2026-10-10
 
 A rewrite. The architecture of version 1 is kept: an agent container, a Squid

@@ -74,7 +74,9 @@ Optional but worth having on the host:
   still works but `push` refuses. Debian 13 packages 8.16, which is too old;
   take the release binary from github.com/gitleaks/gitleaks instead.
 - `secret-tool` (package `libsecret-tools`) on Linux — stores the model
-  credential in your OS keyring. macOS has its own.
+  credential in your OS keyring. macOS has its own. An account made as in
+  step 1 (no password, reached over SSH) has no keyring yet and no desktop to
+  create one; `scripts/keyring-unlock.py` makes it, see step 4.
 - `gh` or `glab` — lets `./sandbox pr` open the pull request for you.
 
 ## 3. Check the host
@@ -108,6 +110,24 @@ three things that matter more than the command: use a **dedicated account** for
 sandboxes, switch **overage billing off** on it, and how to **revoke** the
 credential. See [03 — Credentials](03-credentials.md).
 
+On a Linux host with no desktop session the keyring is usually missing or
+locked, and `login` says so instead of asking for the token. The fix it names:
+
+```bash
+scripts/keyring-unlock.py            # creates the keyring the first time; unlocks it after a reboot
+```
+
+It asks for a password of your choice. Nothing else can do this without a
+display: gnome-keyring creates and unlocks keyrings through a graphical prompt,
+and `gnome-keyring-daemon --unlock` has no effect on the systemd-managed daemon
+(gnome-keyring 48). After a reboot run it again, or let `run` ask for the
+credential.
+
+Or skip the keyring altogether: without one, `run` asks for the token each
+time and nothing is stored on the host. On a headless box that is a sound
+choice; [03 — Credentials](03-credentials.md#where-the-credential-rests) says
+what the keyring does and does not protect against.
+
 ## 5. Run
 
 ```bash
@@ -119,9 +139,10 @@ credential. See [03 — Credentials](03-credentials.md).
 What happens, in order:
 
 1. The host checks are repeated; anything red stops the run.
-2. Your repository is cloned **on the host**, with your own credentials if it
-   needs them, and handed to the sandbox as a single file. The sandbox never
-   sees a git credential.
+2. Your repository is cloned **on the host** and handed to the sandbox as a
+   single file. The sandbox never sees a git credential. A private repository
+   needs one on the host: see [A private repository](#a-private-repository)
+   below before you put one there.
 3. The containers start: the agent, the proxy, the credential sidecar and a
    small keeper that holds the workspace.
 4. The barrier checks run: the first time for a given set of images, Podman
@@ -141,9 +162,55 @@ Useful options:
 | `--budget 200` | How many model requests the session may make. |
 | `--mem 4g --cpus 2 --pids 512` | Resource ceilings. |
 | `--workspace-size 10g` | This session's share of the disk store. Default 4 GB. |
+| `--git-token` | A git token for this session only, for a private repository. See below. |
 
 When the agent exits, the session is still there. Nothing is lost until you
 destroy it.
+
+### A private repository
+
+The clone in step 2 runs on this host, so a private repository needs a git
+credential this host can use. Which one matters more than it looks, because a
+breakout lands in this account and takes what it finds: read
+[Git credentials](03-credentials.md#git-credentials) before choosing. Two ways
+that leave no lasting credential on the host:
+
+**No git credential at all.** Clone where your credentials already are, send
+the code over the SSH connection you already use to reach this host, and run
+it from the path. GitHub never hears from the sandbox host.
+
+```bash
+# on your workstation
+git clone git@github.com:you/private.git
+ssh you@sandbox-host 'git init --quiet --bare repos/private.git'
+git -C private push you@sandbox-host:repos/private.git main
+
+# on the sandbox host
+./sandbox run ~/repos/private.git
+./sandbox export                      # when the agent is done
+
+# on your workstation: pull the session branch back, review, push with your credentials
+git fetch you@sandbox-host:agent-sandbox-out/<session>/repo.git agent/<session>
+git push origin agent/<session>
+```
+
+`push` and `pr` on the host are not usable this way; the review step is.
+Never connect with SSH agent forwarding (`ssh -A`): it would put your
+workstation's key within reach of the sandbox host.
+
+**A token for this session.** Make a fine-grained token on the git host that
+can read and push *this one repository* with the shortest expiry it allows,
+then:
+
+```bash
+./sandbox run https://github.com/you/private.git --git-token
+```
+
+It asks for the token, holds it in memory (git's own credential cache, in the
+session directory, which a reboot empties) for the session's time limit, and
+uses it for the clone now and for `push` and `pr` later. It is never a file,
+never in a container, and `destroy` forgets it. With `--git-relay` the relay
+gets the same token.
 
 ## 6. Get the work out
 

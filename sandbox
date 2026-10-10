@@ -68,6 +68,8 @@ usage: ./sandbox <command>
       --auto        let the agent act without asking; the container is the boundary
       --strict      run the barrier checks even if this image passed them before
       --git-relay   let the agent push the session branch itself (skips export)
+      --git-token   type a git token for this session: this host clones, pushes
+                    and opens the request with it; held in memory, gone at destroy
       --mem N  --cpus N  --pids N  --ttl D  --budget N
       --workspace-size N  --workspace-driver memory|local  --io-limit N
       -- args...    everything after -- goes to the agent's CLI unchanged
@@ -311,6 +313,7 @@ write_state() {
       BRANCH "$BRANCH" BASE_COMMIT "$BASE_COMMIT" ORIGIN_URL "$ORIGIN_URL" \
       DEADLINE_EPOCH "$DEADLINE_EPOCH" SUBNET "$SUBNET" EGRESS_SUBNET "$EGRESS_SUBNET" \
       WORKSPACE_DRIVER "$WORKSPACE_DRIVER" SERVICES "$SERVICES" GIT_RELAY "$GIT_RELAY" \
+      GIT_TOKEN "$GIT_TOKEN" \
       CREATED_EPOCH "$CREATED_EPOCH" WORKSPACE_BYTES "$WORKSPACE_BYTES" STORE "$STORE" \
       VERSION "$SANDBOX_VERSION" \
       > "$file.tmp" )
@@ -336,6 +339,8 @@ read_state() {
   WORKSPACE_DRIVER="$(kv_get "$file" WORKSPACE_DRIVER)"
   SERVICES="$(kv_get "$file" SERVICES)"
   GIT_RELAY="$(kv_get "$file" GIT_RELAY)"
+  GIT_TOKEN="$(kv_get "$file" GIT_TOKEN)"
+  [ -n "$GIT_TOKEN" ] || GIT_TOKEN=0    # a session from before the option existed
   CREATED_EPOCH="$(kv_get "$file" CREATED_EPOCH)"
   WORKSPACE_BYTES="$(kv_get "$file" WORKSPACE_BYTES)"
   STORE="$(kv_get "$file" STORE)"
@@ -422,6 +427,41 @@ keyring_get() {   # <agent> <auth>; the secret on stdout
   fi
 }
 
+# Linux only: does the account have a default keyring, and is it open? Prints
+# ready, missing, locked or unknown (no busctl, no session bus, no Secret
+# Service). secret-tool cannot tell these apart in what it says, and on a host
+# without a desktop nothing can create or unlock a keyring for it, so the
+# states are told apart here and the fix named: scripts/keyring-unlock.py.
+keyring_state() {
+  local collection locked
+  command -v busctl >/dev/null 2>&1 || { printf unknown; return; }
+  collection="$(busctl --user call org.freedesktop.secrets /org/freedesktop/secrets \
+                  org.freedesktop.Secret.Service ReadAlias s default 2>/dev/null)" \
+    || { printf unknown; return; }
+  case "$collection" in
+    'o "/"') printf missing; return ;;
+    'o "/'*'"') collection="${collection#o \"}"; collection="${collection%\"}" ;;
+    *) printf unknown; return ;;
+  esac
+  locked="$(busctl --user get-property org.freedesktop.secrets "$collection" \
+              org.freedesktop.Secret.Collection Locked 2>/dev/null)" \
+    || { printf unknown; return; }
+  case "$locked" in
+    'b true')  printf locked ;;
+    'b false') printf ready ;;
+    *)         printf unknown ;;
+  esac
+}
+
+# One line saying why the keyring will not take or give a credential, for the
+# states that have a fix; nothing for the others.
+keyring_trouble() {   # <state>
+  case "$1" in
+    missing) printf 'your account has no keyring, and without a desktop session nothing creates one. This does: %s/scripts/keyring-unlock.py' "$SANDBOX_ROOT" ;;
+    locked)  printf 'your keyring is locked, and without a desktop session nothing can ask you to unlock it. This does: %s/scripts/keyring-unlock.py' "$SANDBOX_ROOT" ;;
+  esac
+}
+
 keyring_put() {   # <agent> <auth>; the secret on stdin; replaces what is there
   local hex
   if [ "$(uname -s)" = Darwin ]; then
@@ -457,7 +497,7 @@ valid_branch() {
 
 # Prints the JSON object the sidecar's loader reads: {"token":"..."}.
 credential_json() {
-  local agent="$1" auth="$2" secret=""
+  local agent="$1" auth="$2" secret="" trouble=""
   if [ "$agent" = codex ] && [ "$auth" = oauth ]; then
     codex_sidecar_json 600
     return
@@ -467,6 +507,10 @@ credential_json() {
     # sitting in your shell should not end up in a sandbox by accident.
     secret="$SANDBOX_TEST_ANTHROPIC_KEY"
   elif ! secret="$(keyring_get "$agent" "$auth")" || [ -z "$secret" ]; then
+    if [ "$(uname -s)" != Darwin ]; then
+      trouble="$(keyring_trouble "$(keyring_state)")"
+      [ -z "$trouble" ] || warn "$trouble"
+    fi
     if [ -t 0 ]; then
       read -rsp "Credential for $agent ($auth), used for this session only: " secret
       printf '\n' >&2
@@ -481,6 +525,54 @@ credential_json() {
   looks_like_token "$secret" \
     || die "the $auth credential for $agent does not look like a token. Store it again: ./sandbox login --agent $agent --auth $auth"
   printf '{"token":"%s"}' "$secret"
+}
+
+# --- A git token for one session  [logical B15: it is never inside] -------
+# `run --git-token` asks for a token that can reach the one repository and
+# gives it to git's own credential cache: a daemon of yours that holds it in
+# memory and answers over a socket in the session directory, which a reboot
+# empties. It is never a file, never an argument, never in a container. The
+# cache forgets it at the session's time limit; `destroy` tells the daemon
+# to exit. While it is held, every git command this host runs for the
+# session (the clone, push, pr) consults it and nothing else: not a helper of
+# yours, not a key in ~/.ssh. So the host can hold no git credential at all
+# between sessions. docs/03-credentials.md says when to choose this.
+
+git_token_socket() { printf '%s/git-credential' "$SESSION_DIR"; }
+
+# Options that make the session's token the only credential git consults.
+# Empty when the session has none, so your own git configuration applies.
+GIT_CREDENTIAL_OPTS=()
+set_git_credential_opts() {
+  GIT_CREDENTIAL_OPTS=()
+  [ "${GIT_TOKEN:-0}" = 1 ] || return 0
+  # The helper line is split by a shell: the socket's path must be plain.
+  case "$SESSION_DIR" in
+    *[![:alnum:]/._-]*) die "the session directory's path has characters git's credential helper cannot take: $SESSION_DIR" ;;
+  esac
+  GIT_CREDENTIAL_OPTS=(-c credential.helper= -c "credential.helper=cache --socket=$(git_token_socket)")
+}
+
+# The user name a token is presented with. GitHub takes any; GitLab wants this one.
+git_token_user() {   # <url>
+  case "$(url_host "$1")" in *gitlab*) printf oauth2 ;; *) printf x-access-token ;; esac
+}
+
+git_token_store() {   # <url> <seconds>; the token on stdin
+  { printf 'protocol=https\nhost=%s\nusername=%s\npassword=' "$(url_host "$1")" "$(git_token_user "$1")"
+    cat
+    printf '\n'
+  } | git credential-cache --socket="$(git_token_socket)" --timeout="$2" store
+}
+
+git_token_get() {   # <url>; the token on stdout, nothing once it is gone
+  printf 'protocol=https\nhost=%s\n' "$(url_host "$1")" \
+    | git credential-cache --socket="$(git_token_socket)" get 2>/dev/null | sed -n 's/^password=//p'
+}
+
+git_token_forget() {   # <session directory>
+  [ -S "$1/git-credential" ] || return 0
+  git credential-cache --socket="$1/git-credential" exit 2>/dev/null || true
 }
 
 # --- Codex subscription login ----------------------------------------------
@@ -1043,7 +1135,8 @@ import_repository() {
   info "cloning $source on this host"
   # No hooks, no submodules, no files checked out: nothing from the
   # repository runs here.
-  git -c core.hooksPath=/dev/null clone --quiet --bare --no-recurse-submodules --template= \
+  git -c core.hooksPath=/dev/null ${GIT_CREDENTIAL_OPTS[@]+"${GIT_CREDENTIAL_OPTS[@]}"} \
+    clone --quiet --bare --no-recurse-submodules --template= \
     "$source" "$clone" || die "could not clone $source"
   # An existing branch of that name is continued; otherwise the session
   # branch starts at the repository's current commit.
@@ -1166,7 +1259,7 @@ cmd_run() {
   local source="" auto=0 strict=0 io_limit="" store_device service names count=0
   local mem cpus pids nproc ttl budget tmp_size home_size workspace_size
   local mem_bytes tmp_bytes home_bytes ttl_seconds total helpers used credential
-  local relay_host="" relay_token="" relay_user=x-access-token relay_remote="" image_ids
+  local relay_host="" relay_token="" relay_user=x-access-token relay_remote="" image_ids git_token=""
   local doctor_args=() tty=(-i) launch_args=() cli_args=() status=0
 
   AGENT="$(setting AGENT)"; AUTH="$(setting AUTH)"; TOOLCHAIN="$(setting TOOLCHAIN)"
@@ -1175,7 +1268,7 @@ cmd_run() {
   tmp_size="$(setting TMP_SIZE)"; home_size="$(setting HOME_SIZE)"
   workspace_size="$(setting WORKSPACE_SIZE)"; WORKSPACE_DRIVER="$(setting WORKSPACE_DRIVER)"
   STORE="$(setting STORE)"; store_device="$(setting STORE_DEVICE)"
-  BRANCH="" GIT_RELAY=0 SERVICES=""
+  BRANCH="" GIT_RELAY=0 GIT_TOKEN=0 SERVICES=""
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -1200,6 +1293,7 @@ cmd_run() {
       --auto)      auto=1 ;;
       --strict)    strict=1 ;;
       --git-relay) GIT_RELAY=1 ;;
+      --git-token) GIT_TOKEN=1 ;;
       --keep)
         die "--keep no longer exists. A session always stays until you run ./sandbox destroy; its workspace outlives the time limit." ;;
       --accept-rootful)
@@ -1329,6 +1423,28 @@ cmd_run() {
 
   trap run_cleanup EXIT
   trap 'exit 130' INT TERM
+  # --- The session directory  [closes L1: all of it is in one place, and
+  # `destroy` removes that place] --------------------------------------------
+  mkdir -m 700 "$SESSION_DIR"
+  RUN_UNFINISHED="$SESSION"      # from here on, a failure removes the session again
+
+  if [ "$GIT_TOKEN" = 1 ]; then
+    case "$source" in
+      https://*) ;;
+      *) die "--git-token is for an https:// repository address; a path or an ssh address needs no token (this one is $source)" ;;
+    esac
+    say "The token is held in memory for this session's time limit, and used by this"
+    say "host to clone, push and open the request. It is never put in a container."
+    # Typed here, or piped in on stdin; it is not stored anywhere on this host.
+    read -rsp "A git token that can read and push that one repository and nothing else: " git_token \
+      || die "--git-token needs a git token, typed or on standard input"
+    if [ -t 0 ]; then printf '\n' >&2; fi
+    looks_like_token "$git_token" || die "that does not look like a token"
+    printf '%s' "$git_token" | git_token_store "$source" "$ttl_seconds" \
+      || die "git's credential cache did not take the token"
+    git_token=""
+  fi
+  set_git_credential_opts
   import_repository "$source"
 
   if [ "$GIT_RELAY" = 1 ]; then
@@ -1350,17 +1466,20 @@ cmd_run() {
     relay_remote="http://$SANDBOX_RELAY_IP:8081/repo.git"
     say "The git relay lets the agent push branch $BRANCH to $ORIGIN_URL by itself."
     say "What it pushes does NOT go through export: no diff review, no secret scan."
-    # Typed here, or piped in on stdin; it is not stored anywhere on this host.
-    read -rsp "A git token that can push to that one repository and nothing else: " relay_token \
-      || die "--git-relay needs a git token, typed or on standard input"
-    if [ -t 0 ]; then printf '\n' >&2; fi
-    looks_like_token "$relay_token" || die "that does not look like a token"
+    if [ "$GIT_TOKEN" = 1 ]; then
+      # One token for the session: the relay gets the same one.
+      relay_token="$(git_token_get "$ORIGIN_URL")"
+      [ -n "$relay_token" ] || die "the session's git token is already gone"
+    else
+      # Typed here, or piped in on stdin; it is not stored anywhere on this host.
+      read -rsp "A git token that can push to that one repository and nothing else: " relay_token \
+        || die "--git-relay needs a git token, typed or on standard input"
+      if [ -t 0 ]; then printf '\n' >&2; fi
+      looks_like_token "$relay_token" || die "that does not look like a token"
+    fi
   fi
 
-  # --- The session directory and its state  [closes L1: all of it is in one
-  # place, and `destroy` removes that place] ---------------------------------
-  mkdir -m 700 "$SESSION_DIR"
-  RUN_UNFINISHED="$SESSION"      # from here on, a failure removes the session again
+  # --- The session's state ---------------------------------------------------
   mkdir -m 755 "$SESSION_DIR/proxy"
   mkdir "$SESSION_DIR/export"
   CREATED_EPOCH="$(date +%s)"
@@ -1745,15 +1864,28 @@ cmd_push() {
   [ $# -eq 0 ] || die "usage: ./sandbox push"
   load_session
   exported_repository
-  info "pushing $BRANCH to $ORIGIN_URL from your environment"
+  set_git_credential_opts
+  if [ "$GIT_TOKEN" = 1 ]; then
+    if [ -n "$(git_token_get "$ORIGIN_URL")" ]; then
+      info "pushing $BRANCH to $ORIGIN_URL with the session's token"
+    else
+      info "pushing $BRANCH to $ORIGIN_URL; the session's token is gone (its time limit passed), so git will ask"
+    fi
+  else
+    info "pushing $BRANCH to $ORIGIN_URL from your environment"
+  fi
   # No force: if the branch moved on the remote, you decide what happens.
-  git --git-dir="$EXPORT_REPO" -c core.hooksPath=/dev/null push "$ORIGIN_URL" "refs/heads/$BRANCH:refs/heads/$BRANCH"
+  git --git-dir="$EXPORT_REPO" -c core.hooksPath=/dev/null ${GIT_CREDENTIAL_OPTS[@]+"${GIT_CREDENTIAL_OPTS[@]}"} \
+    push "$ORIGIN_URL" "refs/heads/$BRANCH:refs/heads/$BRANCH"
 }
 
 cmd_pr() {
-  local host path title
+  local host path title token=""
   [ $# -eq 0 ] || die "usage: ./sandbox pr"
   cmd_push
+  # The session's token, for the one process that opens the request; with
+  # none, the tool's own login applies.
+  [ "$GIT_TOKEN" != 1 ] || token="$(git_token_get "$ORIGIN_URL")"
   host="$(url_host "$ORIGIN_URL")"
   path="$(url_path "$ORIGIN_URL")"
   [ -n "$host" ] || die "the repository address is a local path; there is nowhere to open a request"
@@ -1765,14 +1897,22 @@ cmd_pr() {
   case "$host" in
     github.com)
       if command -v gh >/dev/null 2>&1; then
-        gh pr create --repo "$host/$path" --head "$BRANCH" --title "$title" --body ""
+        if [ -n "$token" ]; then
+          GH_TOKEN="$token" gh pr create --repo "$host/$path" --head "$BRANCH" --title "$title" --body ""
+        else
+          gh pr create --repo "$host/$path" --head "$BRANCH" --title "$title" --body ""
+        fi
         return
       fi
       say "Open the pull request here:"
       say "  https://$host/$path/compare/$BRANCH?expand=1" ;;
     *)
       if command -v glab >/dev/null 2>&1; then
-        glab mr create --repo "https://$host/$path" --source-branch "$BRANCH" --title "$title" --description "" --yes
+        if [ -n "$token" ]; then
+          GITLAB_TOKEN="$token" glab mr create --repo "https://$host/$path" --source-branch "$BRANCH" --title "$title" --description "" --yes
+        else
+          glab mr create --repo "https://$host/$path" --source-branch "$BRANCH" --title "$title" --description "" --yes
+        fi
         return
       fi
       say "Open the merge request here:"
@@ -1785,7 +1925,7 @@ cmd_pr() {
 # ---------------------------------------------------------------------------
 
 cmd_login() {
-  local agent auth secret="" path=""
+  local agent auth secret="" path="" trouble=""
   agent="$(setting AGENT)"
   auth="$(setting AUTH)"
   while [ $# -gt 0 ]; do
@@ -1799,8 +1939,12 @@ cmd_login() {
   agent_exists "$agent" || die "--agent: there is no agents/$agent"
   case "$auth" in oauth|apikey) ;; *) die "--auth is oauth or apikey, not '$auth'" ;; esac
   require_auth_mode "$agent" "$auth"
-  if [ "$(uname -s)" != Darwin ] && ! command -v secret-tool >/dev/null 2>&1; then
-    die "secret-tool is not installed (apt install libsecret-tools, dnf install libsecret). Without a keyring, ./sandbox run asks for the credential each time."
+  if [ "$(uname -s)" != Darwin ]; then
+    command -v secret-tool >/dev/null 2>&1 \
+      || die "secret-tool is not installed (apt install libsecret-tools, dnf install libsecret). Without a keyring, ./sandbox run asks for the credential each time."
+    # Found out before the credential is asked for, not after it has been pasted.
+    trouble="$(keyring_trouble "$(keyring_state)")"
+    [ -z "$trouble" ] || die "$trouble"
   fi
 
   case "$agent/$auth" in
@@ -1832,7 +1976,8 @@ cmd_login() {
   if [ "$agent/$auth" != codex/oauth ]; then
     looks_like_token "$secret" || die "that does not look like a token"
   fi
-  printf '%s' "$secret" | keyring_put "$agent" "$auth" || die "the keyring did not take the credential (is it unlocked?)"
+  printf '%s' "$secret" | keyring_put "$agent" "$auth" \
+    || die "the keyring did not take the credential. If it is locked or missing, $SANDBOX_ROOT/scripts/keyring-unlock.py fixes that."
   secret=""
 
   say ""
@@ -1868,6 +2013,7 @@ cmd_login() {
 destroy_session() {
   local session="$1" dir="$SANDBOX_STATE_DIR/$1" filter="label=$LABEL=$1" id ids driver store store_dir left=0
   stop_watchdog "$session"
+  git_token_forget "$dir"
   # A listing that fails must not pass for "nothing there".
   ids="$(podman ps -aq --filter "$filter")" || left=1
   for id in $ids; do

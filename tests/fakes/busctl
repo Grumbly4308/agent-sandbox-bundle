@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# A stand-in for `busctl`, for the launcher's tests. It answers the two
+# questions ./sandbox and doctor put to the Secret Service: is there a default
+# keyring, and is it unlocked. Nothing else is understood.
+#
+#   FAKE_BUSCTL_KEYRING=ready      a keyring exists and is unlocked (default)
+#   FAKE_BUSCTL_KEYRING=locked     it exists and is locked
+#   FAKE_BUSCTL_KEYRING=missing    the account has no keyring
+case "${FAKE_BUSCTL_KEYRING:-ready}/$*" in
+  missing/*" ReadAlias s default") printf 'o "/"\n' ;;
+  */*" ReadAlias s default")       printf 'o "/org/freedesktop/secrets/collection/login"\n' ;;
+  locked/*" Locked")               printf 'b true\n' ;;
+  */*" Locked")                    printf 'b false\n' ;;
+  *) printf 'fake busctl: unexpected call: %s\n' "$*" >&2; exit 1 ;;
+esac

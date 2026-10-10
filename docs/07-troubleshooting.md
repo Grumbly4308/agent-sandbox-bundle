@@ -13,6 +13,15 @@ fixes it.
 > [docs/archive/phase-b/results.md](archive/phase-b/results.md). The rest of
 > this page is what the design expects.
 
+## `login` will not store the credential
+
+| Message | Why | What to do |
+|---|---|---|
+| `your account has no keyring` | On Linux the keyring is made by your desktop login. An account reached over SSH with no password never had one, and gnome-keyring can only create one through a graphical prompt. | `scripts/keyring-unlock.py` creates it over D-Bus with a password you choose. `gnome-keyring-daemon --unlock` does not help: on the systemd-managed daemon (gnome-keyring 48) it returns 0 and changes nothing. |
+| `your keyring is locked` | It is locked after every reboot, and nothing without a display can prompt you to unlock it. | `scripts/keyring-unlock.py`, with the keyring's password. Or skip it: `run` asks for the credential when the keyring will not answer. |
+| `that is not the keyring's password` (from the script) | The keyring was made earlier, by PAM at a password login or by an earlier attempt, with another password. | If nothing in it matters: `rm ~/.local/share/keyrings/login.keyring && systemctl --user restart gnome-keyring-daemon`, then run the script again to make a new one. |
+| `secret-tool: Cannot create an item in a locked collection` | The same two causes, reported by `secret-tool` itself on a version of `./sandbox` before this check existed, or when `busctl` is not installed and the state could not be read. | As above. `./sandbox doctor` says which it is when it can. |
+
 ## `run` refuses to start
 
 | Message | Why | What to do |
@@ -22,6 +31,9 @@ fixes it.
 | `this host uses cgroup v1` | The kernel would ignore the memory, CPU and process limits. | Boot with cgroup v2. Any current distribution does by default. |
 | `your user may not set limits for: cpu` | systemd has not handed that controller to your user (older than 252). | The fix doctor prints: a one-line drop-in under `/etc/systemd/system/user@.service.d/`, then log in again. |
 | `Podman ... is too old` | 4.4 or newer is needed. Ubuntu 22.04 ships 3.4, Debian 12 ships 4.3. | Use a newer distribution (Ubuntu 24.04, Debian 13, current Fedora), or run the sandbox in a VM (`extras/vm-wrapper/`). |
+| `--git-token is for an https:// repository address` | The token is presented over HTTPS. A local path needs no credential; an `ssh://` address uses a key, which is the thing `--git-token` exists to avoid. | Give the `https://` address of the repository. |
+| `could not clone https://...` with `--git-token` | The token cannot read that repository, or has expired. | Make a fine-grained token with *Contents* read access on that repository, and check its expiry. |
+| `push` says `the session's token is gone` and git asks for a password | The cache forgets the token at the session's time limit. | Type the token at git's prompt (user name `x-access-token`), or push from your workstation after pulling the exported branch. |
 | `your subordinate uid range does not reach 61003` | Podman maps container users onto a range of ids your account owns; it is too small. | `sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $USER`, then `podman system migrate`. |
 | `images/PINS still has UNPINNED base images` | Base images are pinned by exact version, and the placeholders have not been filled in. | `scripts/pin-images.sh` |
 | `the session may use up to N of memory and this host has M` | The session's ceiling (your `--mem` plus `/tmp` and home, plus the workspace if it is held in memory) is more than the host has free. | Make the disk store if you have none (`./sandbox doctor` prints how), lower `--mem`, or destroy an old session. |

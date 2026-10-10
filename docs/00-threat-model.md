@@ -354,9 +354,14 @@ you should read it first.
 ## How code gets in and out
 
 **In.** `run` clones the repository on the host, without checking files out,
-using your credentials if it needs them. It records the starting commit and
-pipes a `git bundle` into the session volume. The sandbox never sees a
-credential, and the repository's host does not need to be on its allowlist.
+using a credential of the host's if it needs one: with `--git-token`, a token
+for that session held in memory by git's credential cache and consulted
+instead of anything else on the host; otherwise your own git configuration.
+It records the starting commit and pipes a `git bundle` into the session
+volume. The sandbox never sees a credential, and the repository's host does
+not need to be on its allowlist. Which credential to let the host hold, given
+that a breakout takes what the account has, is weighed in
+[03 — Credentials](03-credentials.md#git-credentials).
 
 **Out.** `export` starts a fresh container with no network, which writes a
 `git bundle` of the session branch. The agent wrote the repository that bundle
