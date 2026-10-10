@@ -730,8 +730,11 @@ build_image() {
   case "$what" in
     agent-*:*)
       # One image per agent and toolchain. Context: the repository root.
+      # The label says which plug-in files it was built from (ensure_image).
       name="${what#agent-}"
-      args+=(--build-arg "AGENT=${name%%:*}" --build-arg "TOOLCHAIN=${what##*:}")
+      check_cli_version "${name%%:*}"
+      args+=(--build-arg "AGENT=${name%%:*}" --build-arg "TOOLCHAIN=${what##*:}"
+             --label "agent-sandbox.plugin=$(plugin_sum "${name%%:*}")")
       file="$SANDBOX_ROOT/images/agent/Containerfile"; context="$SANDBOX_ROOT" ;;
     credsidecar)
       file="$SANDBOX_ROOT/images/credsidecar/Containerfile"; context="$SANDBOX_ROOT" ;;
@@ -744,8 +747,74 @@ build_image() {
     --tag "$(image_tag "$what")" --file "$file" "$context"
 }
 
+# Builds an image that is missing, and an agent image built from other
+# agents/<agent> files than these: the tag stays the same when a CLI pin or
+# the launch script changes, so the tag alone would keep the old CLI.
 ensure_image() {
-  podman image exists "$(image_tag "$1")" || build_image "$1"
+  local tag agent
+  tag="$(image_tag "$1")"
+  if ! podman image exists "$tag"; then
+    build_image "$1"
+    return
+  fi
+  case "$1" in
+    agent-*:*)
+      agent="${1#agent-}"; agent="${agent%%:*}"
+      if [ "$(podman image inspect --format '{{index .Labels "agent-sandbox.plugin"}}' "$tag" 2>/dev/null || true)" != "$(plugin_sum "$agent")" ]; then
+        info "$tag was built from other agents/$agent files than these (a new CLI pin, or a changed launch); rebuilding it"
+        build_image "$1"
+      fi ;;
+  esac
+}
+
+# A checksum of every file of the agent plug-in (agents/<agent>/), which is
+# what the image build copies in: install.sh with its CLI pin, launch, env.
+plugin_sum() {   # <agent>
+  (cd "$SANDBOX_ROOT/agents/$1" && find . -maxdepth 1 -type f -print0 | LC_ALL=C sort -z | xargs -0 -r cat) \
+    | cksum | cut -d' ' -f1
+}
+
+# The CLI a plug-in pins, as "<npm package> <version>", read from its
+# install.sh. Nothing is printed for a plug-in that pins none.
+cli_pin() {   # <agent>
+  local file="$SANDBOX_ROOT/agents/$1/install.sh" package version
+  [ -f "$file" ] || return 0
+  # shellcheck disable=SC2016  # the ${VERSION} searched for is install.sh's
+  package="$(sed -n 's/^WRAPPER_SPEC="\(.*\)@\${VERSION}.*"$/\1/p' "$file")"
+  version="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$file")"
+  [ -z "$package" ] || [ -z "$version" ] || printf '%s %s\n' "$package" "$version"
+}
+
+# npm's "latest" version of a package, or nothing when the registry cannot
+# be asked. npm is used when it is installed; otherwise curl and jq.
+cli_latest() {   # <npm package>
+  local registry="${SANDBOX_NPM_REGISTRY:-https://registry.npmjs.org}"
+  if command -v npm >/dev/null 2>&1; then
+    timeout 20 npm view "$1" dist-tags.latest --registry "$registry" 2>/dev/null || true
+  elif command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+    curl -fsS --max-time 20 "$registry/-/package/${1//\//%2f}/dist-tags" 2>/dev/null | jq -r '.latest // empty' 2>/dev/null || true
+  fi
+}
+
+# Warns when the CLI pinned for <agent> is not npm's latest. Never stops a
+# build or a session: moving a pin means reading new hashes (the top of the
+# plug-in's install.sh says how), which is for you to do, not for run.
+CLI_CHECKED=""
+check_cli_version() {   # <agent>
+  local pin package version latest
+  case " $CLI_CHECKED " in *" $1 "*) return 0 ;; esac
+  CLI_CHECKED="$CLI_CHECKED $1"
+  pin="$(cli_pin "$1")"
+  [ -n "$pin" ] || return 0
+  read -r package version <<<"$pin"
+  latest="$(cli_latest "$package" | head -n 1)"
+  case "$latest" in
+    ''|*[!0-9A-Za-z.+-]*)
+      warn "could not ask npm which $package is the latest; carrying on with the pinned $version" ;;
+    "$version") ;;
+    *)
+      warn "agents/$1/install.sh pins $package $version; npm's latest is $latest. To move the pin, follow the top of that file, then ./sandbox upgrade" ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -1268,6 +1337,7 @@ cmd_run() {
   # its own path prefix; the proxy's rules for those come before the refusal.
 
   # --- Images: built here when missing, never pulled at start ---------------
+  check_cli_version "$AGENT"
   ensure_image "agent-$AGENT:$TOOLCHAIN"
   ensure_image proxy
   ensure_image credsidecar

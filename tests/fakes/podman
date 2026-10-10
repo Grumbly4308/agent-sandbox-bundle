@@ -34,6 +34,8 @@
 #   FAKE_PODMAN_DU=N                 bytes `podman unshare du` reports
 #   FAKE_PODMAN_VERSIONS_OLD / _NEW  /usr/share/sandbox/versions before and
 #                                    after an image is rebuilt
+#   FAKE_PODMAN_PLUGIN=sum           the agent-sandbox.plugin label of an image
+#                                    that exists without having been built here
 set -euo pipefail
 
 log="${FAKE_PODMAN_LOG:?set FAKE_PODMAN_LOG to the file that records the calls}"
@@ -258,6 +260,15 @@ case "$command" in
         [ "${FAKE_PODMAN_IMAGES:-present}" = present ] || [ -e "$(image_file "$1")" ]
         ;;
       inspect)
+        if [ "$(option_value --format "$@")" = '{{index .Labels "agent-sandbox.plugin"}}' ]; then
+          name="$(last_arg "$@")"
+          if [ -e "$(image_file "$name").label" ]; then
+            sed -n 's/^agent-sandbox\.plugin=//p' "$(image_file "$name").label"
+          else
+            printf '%s\n' "${FAKE_PODMAN_PLUGIN:-}"
+          fi
+          exit 0
+        fi
         [ "$(option_value --format "$@")" = '{{.Id}}' ] || fail "image inspect: unknown format"
         for name in "$@"; do
           case "$name" in --format|'{{.Id}}') continue ;; esac
@@ -285,6 +296,7 @@ case "$command" in
     generation=0
     if [ -e "$(image_file "$tag")" ]; then generation="$(cat "$(image_file "$tag")")"; fi
     printf '%s\n' "$(( generation + 1 ))" > "$(image_file "$tag")"
+    option_value --label "$@" > "$(image_file "$tag").label"
     ;;
 
   pull)
