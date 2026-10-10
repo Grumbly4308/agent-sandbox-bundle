@@ -34,7 +34,7 @@
 #   FAKE_PODMAN_DU=N                 bytes `podman unshare du` reports
 #   FAKE_PODMAN_VERSIONS_OLD / _NEW  /usr/share/sandbox/versions before and
 #                                    after an image is rebuilt
-#   FAKE_PODMAN_PLUGIN=sum           the agent-sandbox.plugin label of an image
+#   FAKE_PODMAN_INPUTS=sum           the agent-sandbox.inputs label of an image
 #                                    that exists without having been built here
 set -euo pipefail
 
@@ -260,12 +260,12 @@ case "$command" in
         [ "${FAKE_PODMAN_IMAGES:-present}" = present ] || [ -e "$(image_file "$1")" ]
         ;;
       inspect)
-        if [ "$(option_value --format "$@")" = '{{index .Labels "agent-sandbox.plugin"}}' ]; then
+        if [ "$(option_value --format "$@")" = '{{index .Labels "agent-sandbox.inputs"}}' ]; then
           name="$(last_arg "$@")"
           if [ -e "$(image_file "$name").label" ]; then
-            sed -n 's/^agent-sandbox\.plugin=//p' "$(image_file "$name").label"
+            sed -n 's/^agent-sandbox\.inputs=//p' "$(image_file "$name").label"
           else
-            printf '%s\n' "${FAKE_PODMAN_PLUGIN:-}"
+            printf '%s\n' "${FAKE_PODMAN_INPUTS:-}"
           fi
           exit 0
         fi

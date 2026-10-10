@@ -730,11 +730,9 @@ build_image() {
   case "$what" in
     agent-*:*)
       # One image per agent and toolchain. Context: the repository root.
-      # The label says which plug-in files it was built from (ensure_image).
       name="${what#agent-}"
       check_cli_version "${name%%:*}"
-      args+=(--build-arg "AGENT=${name%%:*}" --build-arg "TOOLCHAIN=${what##*:}"
-             --label "agent-sandbox.plugin=$(plugin_sum "${name%%:*}")")
+      args+=(--build-arg "AGENT=${name%%:*}" --build-arg "TOOLCHAIN=${what##*:}")
       file="$SANDBOX_ROOT/images/agent/Containerfile"; context="$SANDBOX_ROOT" ;;
     credsidecar)
       file="$SANDBOX_ROOT/images/credsidecar/Containerfile"; context="$SANDBOX_ROOT" ;;
@@ -742,36 +740,47 @@ build_image() {
       file="$SANDBOX_ROOT/images/$what/Containerfile"; context="$SANDBOX_ROOT/images/$what" ;;
     *) die "there is no image called $what" ;;
   esac
+  # Which files it was built from (ensure_image).
+  args+=(--label "agent-sandbox.inputs=$(inputs_sum "$what")")
   info "building $(image_tag "$what")"
   podman build ${args[@]+"${args[@]}"} "$@" --build-arg "SANDBOX_VERSION=$SANDBOX_VERSION" \
     --tag "$(image_tag "$what")" --file "$file" "$context"
 }
 
-# Builds an image that is missing, and an agent image built from other
-# agents/<agent> files than these: the tag stays the same when a CLI pin or
-# the launch script changes, so the tag alone would keep the old CLI.
+# Builds an image that is missing, and one built from other files than these:
+# the tag stays the same when a CLI pin, a launch script or the sidecar
+# changes, so the tag alone would keep the old image.
 ensure_image() {
-  local tag agent
+  local tag
   tag="$(image_tag "$1")"
   if ! podman image exists "$tag"; then
     build_image "$1"
-    return
+  elif [ "$(podman image inspect --format '{{index .Labels "agent-sandbox.inputs"}}' "$tag" 2>/dev/null || true)" != "$(inputs_sum "$1")" ]; then
+    info "$tag was built from other files than these ($(image_inputs "$1" | tr '\n' ' ' | sed 's/ $//')); rebuilding it"
+    build_image "$1"
   fi
-  case "$1" in
-    agent-*:*)
-      agent="${1#agent-}"; agent="${agent%%:*}"
-      if [ "$(podman image inspect --format '{{index .Labels "agent-sandbox.plugin"}}' "$tag" 2>/dev/null || true)" != "$(plugin_sum "$agent")" ]; then
-        info "$tag was built from other agents/$agent files than these (a new CLI pin, or a changed launch); rebuilding it"
-        build_image "$1"
-      fi ;;
-  esac
 }
 
-# A checksum of every file of the agent plug-in (agents/<agent>/), which is
-# what the image build copies in: install.sh with its CLI pin, launch, env.
-plugin_sum() {   # <agent>
-  (cd "$SANDBOX_ROOT/agents/$1" && find . -maxdepth 1 -type f -print0 | LC_ALL=C sort -z | xargs -0 -r cat) \
-    | cksum | cut -d' ' -f1
+# The files and directories, under the repository, an image is built from:
+# what its Containerfile copies in, and the pinned base images.
+image_inputs() {   # <what>
+  case "$1" in
+    agent-*:*)   local agent="${1#agent-}"; printf '%s\n' images/agent "agents/${agent%%:*}" ;;
+    credsidecar) printf '%s\n' images/credsidecar agents/*/sidecar.json ;;
+    *)           printf '%s\n' "images/$1" ;;
+  esac
+  printf '%s\n' images/PINS
+}
+
+# A checksum of every file among them, names and contents.
+inputs_sum() {   # <what>
+  local paths=() path
+  while IFS= read -r path; do
+    [ -e "$SANDBOX_ROOT/$path" ] && paths+=("$path")
+  done < <(cd "$SANDBOX_ROOT" && image_inputs "$1")
+  # shellcheck disable=SC2016  # the $f is the inner shell's
+  (cd "$SANDBOX_ROOT" && find ${paths[@]+"${paths[@]}"} -type f -print0 2>/dev/null | LC_ALL=C sort -z \
+     | xargs -0 -r sh -c 'for f; do printf "%s\n" "$f"; cat "$f"; done' sh) | cksum | cut -d' ' -f1
 }
 
 # The CLI a plug-in pins, as "<npm package> <version>", read from its

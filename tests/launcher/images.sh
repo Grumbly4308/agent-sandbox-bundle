@@ -38,8 +38,8 @@ check "proxy image: context is its own directory" \
   grep -qE "^build${tab}.*--tag${tab}localhost/agent-sandbox/proxy:$version${tab}--file${tab}$ROOT/images/proxy/Containerfile${tab}$ROOT/images/proxy$" "$log"
 if grep -q "^build${tab}.*gitrelay" "$log"; then fail "the git relay image was built without --git-relay"; else pass "the git relay image is not built unless asked for"; fi
 if grep -qE "^build${tab}.*(--no-cache|--pull)" "$log"; then fail "an ordinary build ignored the cache"; else pass "an ordinary build uses the cache"; fi
-check "the agent image is labelled with the plug-in files it was built from" \
-  grep -qE "^build${tab}.*--label${tab}agent-sandbox\.plugin=[0-9]+${tab}.*agent-claude:python-$version" "$log"
+check "the agent image is labelled with the files it was built from" \
+  grep -qE "^build${tab}.*--label${tab}agent-sandbox\.inputs=[0-9]+${tab}.*agent-claude:python-$version" "$log"
 
 : > "$log"
 "$ROOT/sandbox" run "$T/src" --toolchain python </dev/null >/dev/null 2>&1 || fail "second run failed"
@@ -54,7 +54,7 @@ out="$(FAKE_PODMAN_VERSIONS_OLD="$(printf 'sandbox=2.0.0\nclaude-code=2.1.283')"
 check "every image that exists is rebuilt" test "$(grep -c "^build${tab}" "$log")" -eq 3
 check "each rebuild ignores the cache and re-pulls the base" test "$(grep -c "^build${tab}.*--no-cache${tab}--pull" "$log")" -eq 3
 check "the agent image keeps its agent and toolchain" \
-  grep -qE "^build${tab}.*AGENT=claude${tab}--build-arg${tab}TOOLCHAIN=python${tab}--label${tab}agent-sandbox\.plugin=[0-9]+${tab}--no-cache${tab}--pull.*--tag${tab}localhost/agent-sandbox/agent-claude:python-$version" "$log"
+  grep -qE "^build${tab}.*AGENT=claude${tab}--build-arg${tab}TOOLCHAIN=python${tab}--label${tab}agent-sandbox\.inputs=[0-9]+${tab}--no-cache${tab}--pull.*--tag${tab}localhost/agent-sandbox/agent-claude:python-$version" "$log"
 check "versions are read from an image with no network" \
   grep -qE "^run${tab}--rm${tab}--network${tab}none${tab}.*--entrypoint${tab}cat${tab}localhost/agent-sandbox/.*${tab}/usr/share/sandbox/versions$" "$log"
 case "$out" in *"claude-code 2.1.283 -> 2.1.290"*) pass "upgrade prints old -> new versions" ;; *) fail "no version change in: $out" ;; esac
@@ -67,10 +67,26 @@ printf '%s\n' '# stand-in, changed' 'DISABLE_AUTOUPDATER=1' > "$ROOT/agents/clau
 out="$("$ROOT/sandbox" run "$T/src" --toolchain python </dev/null 2>&1)" || fail "run after a plug-in change failed: $out"
 check "a changed plug-in rebuilds the agent image" grep -qE "^build${tab}.*agent-claude:python-$version" "$log"
 if grep -qE "^build${tab}.*(proxy|credsidecar):" "$log"; then fail "a changed plug-in rebuilt other images"; else pass "and only the agent image"; fi
-case "$out" in *"built from other agents/claude files"*) pass "run says why it rebuilds" ;; *) fail "no reason given in: $out" ;; esac
+case "$out" in *"built from other files than these (images/agent agents/claude images/PINS)"*) pass "run says why it rebuilds" ;; *) fail "no reason given in: $out" ;; esac
 : > "$log"
 "$ROOT/sandbox" run "$T/src" --toolchain python </dev/null >/dev/null 2>&1 || fail "run after the rebuild failed"
 if grep -q "^build${tab}" "$log"; then fail "the rebuilt image was rebuilt again"; else pass "the rebuilt image is used from then on"; fi
+
+# --- so does any other image's ---------------------------------------------------
+mkdir -p "$ROOT/images/credsidecar"
+printf '// changed\n' > "$ROOT/images/credsidecar/sidecar-load"
+: > "$log"
+out="$("$ROOT/sandbox" run "$T/src" --toolchain python </dev/null 2>&1)" || fail "run after a sidecar change failed: $out"
+check "a changed sidecar rebuilds the sidecar image" grep -qE "^build${tab}.*credsidecar:$version" "$log"
+if grep -qE "^build${tab}.*(agent-claude|proxy):" "$log"; then fail "a changed sidecar rebuilt other images"; else pass "and only that image"; fi
+check "the sidecar image is labelled with the files it was built from" \
+  grep -qE "^build${tab}.*--label${tab}agent-sandbox\.inputs=[0-9]+${tab}.*credsidecar:$version" "$log"
+# The sidecar image carries every agent's routes, not only this session's.
+mkdir -p "$ROOT/agents/opencode" && printf '{}\n' > "$ROOT/agents/opencode/sidecar.json"
+: > "$log"
+"$ROOT/sandbox" run "$T/src" --toolchain python </dev/null >/dev/null 2>&1 || fail "run after a route change failed"
+check "a changed agents/*/sidecar.json rebuilds the sidecar image too" grep -qE "^build${tab}.*credsidecar:$version" "$log"
+rm -rf "$ROOT/agents/opencode"
 
 # --- the pinned CLI is compared with npm's latest --------------------------------
 # shellcheck disable=SC2016  # install.sh's own ${VERSION}, written literally
