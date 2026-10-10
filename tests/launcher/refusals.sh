@@ -176,4 +176,13 @@ out="$(SANDBOX_STATE_DIR="$T/state-link" "$ROOT/sandbox" allow docs.example.com 
 case "$out" in *"not a directory of yours"*) pass "a state directory that is a link is refused, for every command" ;; *) fail "linked state directory: $out" ;; esac
 check "and the place it points to was not touched" test "$(stat -c %a "$T/elsewhere" 2>/dev/null || stat -f %Lp "$T/elsewhere")" != 700
 
+# A bare repository that was pushed to, with HEAD still where `git init` left
+# it: the branches are named and so is the fix, instead of "no commits yet".
+git init --quiet --bare --initial-branch=master "$T/pushed.git"
+git -C "$T/src" push --quiet "$T/pushed.git" main
+says "a repository whose HEAD points at no commit names its branches" "it has branches: main." "$ROOT/sandbox" run "$T/pushed.git" </dev/null
+says "... and the fix" "symbolic-ref HEAD refs/heads/<branch>" "$ROOT/sandbox" run "$T/pushed.git" </dev/null
+git init --quiet --bare "$T/empty.git"
+says "a repository with no commits says so" "has no commits yet" "$ROOT/sandbox" run "$T/empty.git" </dev/null
+
 finish
