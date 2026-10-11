@@ -67,7 +67,7 @@ if [ -z "$uncovered" ]; then ok "every barrier of the register (B01-B16, B20-B33
 
 # 5 ---------------------------------------------------------------------------
 legitimate="$(sed -n 's/^LEGITIMATE="\(.*\)"$/\1/p' "$host")"
-expected="no-selinux no-swap no-setuid-files no-remote no-git-relay branch-rule http-allowed memory-workspace no-store no-runtime-class quick separate"
+expected="no-selinux no-swap no-setuid-files no-remote no-git-relay branch-rule http-allowed memory-workspace no-store no-runtime-class no-limit quick separate"
 if [ "$legitimate" = "$expected" ]; then ok "the list of legitimate skip reasons is the reviewed one"; else not_ok "the list of legitimate skip reasons changed: review it, then update this test ('$legitimate')"; fi
 # Reasons the in-container script uses, and which side of the line each is on.
 counted=""

@@ -179,6 +179,9 @@ _topo_limits() {
 # [logical B26] The deadline. Podman's own monitor, a process outside the
 # container, kills the container when the time is up, whether or not
 # ./sandbox is still running. Every container gets one except the keeper.
+# 0 is Podman's own "no timeout": a session started with `--ttl none` (the
+# default) runs until `destroy`. The timer starts again whenever the
+# container does (`resume`).
 _topo_deadline() {
   TOPO+=(--timeout "${SANDBOX_TTL_SECONDS:?}")
 }

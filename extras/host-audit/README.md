@@ -42,8 +42,7 @@ a session):
 ```sh
 start="$(awk -F: -v u="$USER" '$1 == u { print $2; exit }' /etc/subuid)"
 # The same rule ./sandbox uses to find its state directory.
-if [ -n "${XDG_RUNTIME_DIR:-}" ]; then state="$XDG_RUNTIME_DIR/agent-sandbox"
-else state="${TMPDIR:-/tmp}/agent-sandbox-$(id -u)"; fi
+state="${SANDBOX_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox}"
 sed -e "s|@AGENT_HOST_UID@|$((start + 61000 - 1))|g" -e "s|@STATE_DIR@|$state|g" \
     agent-sandbox.rules | sudo tee /etc/audit/agent-sandbox.rules >/dev/null
 sudo auditctl -R /etc/audit/agent-sandbox.rules
@@ -58,9 +57,11 @@ for key in agent-sandbox-exec agent-sandbox-connect agent-sandbox-state; do sudo
 sudo rm /etc/audit/agent-sandbox.rules
 ```
 
-Rules loaded with `auditctl` are gone after a reboot. That is deliberate
-here: the state directory usually lives under `/run/user/<uid>`, which does
-not exist at boot, so the rules cannot be loaded from `/etc/audit/rules.d/`.
+Rules loaded with `auditctl` are gone after a reboot. The state directory
+(`~/.local/state/agent-sandbox` by default) survives one, so the rules could
+be put in `/etc/audit/rules.d/` with the placeholders filled in; they are
+loaded by hand here so that nothing watches a directory that may not exist
+yet.
 
 ## Falco
 

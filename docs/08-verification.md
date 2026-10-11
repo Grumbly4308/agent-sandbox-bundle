@@ -73,6 +73,7 @@ not be, so nothing is claimed for them.
 - **Whether `CODEX_CA_CERTIFICATE` adds to or replaces Codex's trusted roots.** What the agent can reach is decided by the proxy either way.
 - **Claude Code with `--auto`:** whether its one-time "bypass permissions" dialog appears. Codex's interface in API-key mode. OpenCode's interface.
 - **Other hosts.** Fedora with SELinux (B05 is a stated SKIP on Debian and Ubuntu); macOS with `podman machine`, where everything is unproven, the `security` keyring tool in particular; gVisor (`SANDBOX_RUNTIME_CLASS=runsc`); that Podman 4.4 is really the oldest that works (5.4.2 is the only version run).
+- **`resume`, and sessions that outlive a reboot.** Both are covered by the launcher tests against the stand-in Podman (what is started, in which order, what is handed in again, what is refused), and `--ttl none` by the topology test. A real cycle (reboot, `resume`, work, `export`) has not been run on the host.
 - **The extras.** Nothing under `extras/` has been loaded: the auditd rules, the Falco rules, the Tetragon policy, the Lima template, the Multipass file.
 - **The CI Podman job** (`workflow_dispatch`, needs the key as a repository secret) has not been run.
 

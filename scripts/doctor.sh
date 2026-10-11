@@ -22,12 +22,9 @@
 set -euo pipefail
 
 SANDBOX_ROOT="${SANDBOX_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# The same place ./sandbox keeps its sessions.
 if [ -z "${SANDBOX_STATE_DIR:-}" ]; then
-  if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
-    SANDBOX_STATE_DIR="$XDG_RUNTIME_DIR/agent-sandbox"
-  else
-    SANDBOX_STATE_DIR="${TMPDIR:-/tmp}/agent-sandbox-$(id -u)"
-  fi
+  SANDBOX_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox"
 fi
 
 MODE=full          # full | runtime | preflight
@@ -463,7 +460,7 @@ check_memory() {
   case "$available" in ''|*[!0-9]*) available=0 ;; esac
   if [ "$NEED_MEMORY" -gt "$available" ]; then
     bad "the session may use up to $(human_bytes "$NEED_MEMORY") of memory and this host has $(human_bytes "$available") available" \
-        "lower --mem or --workspace-size, destroy sessions you no longer need, or use --workspace-driver local"
+        "to get back into a session that already exists, use ./sandbox resume instead of run (it takes no new memory); otherwise lower --mem or --workspace-size, destroy sessions you no longer need, or use --workspace-driver local"
   else
     ok "memory: the session may use up to $(human_bytes "$NEED_MEMORY"); $(human_bytes "$available") is available"
   fi
@@ -481,10 +478,10 @@ check_sessions() {
     while IFS='=' read -r key value; do
       [ "$key" = DEADLINE_EPOCH ] && deadline="$value"
     done < "$dir/state"
-    case "$deadline" in ''|*[!0-9]*) continue ;; esac
+    case "$deadline" in ''|0|*[!0-9]*) continue ;; esac     # 0: no time limit
     if [ "$now" -ge "$deadline" ]; then
       found=1
-      warn "session ${dir##*/} is past its time limit and still holds its workspace: SANDBOX_SESSION=${dir##*/} ./sandbox export, then destroy"
+      warn "session ${dir##*/} is past its time limit and still holds its workspace: SANDBOX_SESSION=${dir##*/} ./sandbox resume to carry on, or export, then destroy"
     fi
   done
   [ "$found" -eq 1 ] || ok "no session is past its time limit"

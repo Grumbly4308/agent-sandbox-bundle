@@ -52,4 +52,13 @@ if ! "${g[@]}" rev-parse --quiet --verify "refs/heads/$branch^{commit}" >/dev/nu
   exit 1
 fi
 
+# A bundle carries commits only. Say so when the work tree holds more, so
+# an agent that stopped before committing does not look like one that did
+# nothing. (Counted without touching the index: the workspace is read-only
+# here.)
+pending="$("${g[@]}" status --porcelain --untracked-files=all 2>/dev/null | wc -l | tr -d ' ')"
+if [ "${pending:-0}" -gt 0 ]; then
+  echo "sandbox-bundle: $pending uncommitted change(s) in the workspace are NOT in this bundle (only commits on $branch are). Commit them first: ./sandbox export --commit, or ask the agent" >&2
+fi
+
 exec "${g[@]}" bundle create --quiet - "refs/heads/$branch"

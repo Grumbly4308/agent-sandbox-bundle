@@ -517,8 +517,9 @@ scripts/keyring-unlock.py
 It asks: `Choose a password for the new keyring:`. Type a new password (it
 does not show as you type) and press Enter. It asks **only once**, with no
 second prompt to catch a typo, so it is easiest to paste one from your
-password manager. **Keep this password**: you type it again after every
-reboot (step 21).
+password manager. **Keep this password**: after every reboot the keyring is
+locked again, and the next `./sandbox run` (or `login`) asks for it before
+going on (step 21).
 
 Good: it prints `created a keyring and made it the default` and
 `the keyring is unlocked; ./sandbox login can store the credential now`.
@@ -740,7 +741,8 @@ What you see, in order:
    Podman, kernel). If any line says `FAIL`, the session is not started; read
    the line and [07 — Troubleshooting](07-troubleshooting.md). **Do not work
    around it.**
-6. `Session asb-... runs until <time>, at most 500 model requests.`
+6. `Session asb-... has no time limit (it runs until you destroy it), at most
+   500 model requests.` (With `--ttl`, `runs until <time>` instead.)
 7. The agent: Claude Code or Codex, with **no login prompt**. If it asks a
    first-time question (a colour theme, whether to trust this folder),
    answer it.
@@ -760,7 +762,18 @@ is the boundary either way; see
 
 When it is done, leave the agent: type `/exit` (Claude Code) or `/quit`
 (Codex) and press Enter. You are back at the VM's prompt, and the session is
-still there with its work. Nothing is lost until you destroy it.
+still there with its work. Nothing is lost until you destroy it. To get back
+in, with the same workspace:
+
+```bash
+./sandbox resume
+```
+
+The agent starts again in the same repository. The conversation it had is
+kept while its container lives (Claude Code: `./sandbox resume -- --continue`
+picks it up); after a reboot or the time limit the container is started
+afresh and only the files remain, so ask the agent to write anything you want
+to keep (a review, notes) **into a file in the repository**.
 
 Other options for `run`:
 
@@ -770,7 +783,7 @@ Other options for `run`:
 | `--auto` | The agent acts without asking you. |
 | `--toolchain node\|python\|full` | What is installed in the image. Default `node`; `full` adds build tools and a browser. |
 | `--service postgres:16` | Start a database beside the agent. See [06](06-services.md). |
-| `--ttl 2h` | The time limit. Default four hours. |
+| `--ttl 2h` | A time limit, after which Podman stops the session's containers (the work stays, and `resume` starts them again). By default there is **none**: the session runs until you destroy it. `TTL=` in your settings file makes one the default. |
 | `--budget 200` | How many model requests the session may make. Default 500. |
 | `--mem 4g --cpus 2 --pids 512` | Resource limits. |
 | `--workspace-size 10g` | This session's share of the disk store. Default 4 GB. |
@@ -852,9 +865,9 @@ them:
 rm -rf ~/agent-sandbox-out/<session>
 ```
 
-A session you forget keeps its workspace, even after its time limit has cut
-it off from everything else. Every `./sandbox` command reminds you which
-sessions are still there.
+A session you forget keeps its workspace, even after a time limit has cut it
+off from everything else. Every `./sandbox` command reminds you which
+sessions are still there, and `./sandbox resume` gets back into one.
 
 If you made a GitHub token for option 1, delete it on GitHub when you are
 done (**Settings → Developer settings → Personal access tokens →
@@ -915,20 +928,31 @@ or from the VM with `--git-token`.
 
 ```bash
 cd ~/agent-sandbox
-scripts/keyring-unlock.py       # the keyring is locked again: at "Keyring password:", type the step 13 password
-./sandbox doctor                # should end with: This host is ready.
+./sandbox doctor                # should end with: This host is ready (a locked keyring is a warning, not a failure)
+./sandbox resume                # back into the session you had
 ```
 
-A reboot ends every session. Workspaces on the disk store survive it; the
-sessions around them do not. Exports in `~/agent-sandbox-out/` survive too.
-Clean up what is left:
+The keyring is locked again after a reboot. `resume` (like `run` and
+`login`) notices and asks `Keyring password:` first: type the step 13
+password. Nothing else is needed.
+
+A reboot stops every session's containers, but the sessions themselves
+survive: their workspaces on the disk store, and what `./sandbox` knows about
+them. `resume` starts the containers again and puts you back in. What a
+reboot does lose is everything held in memory: the agent's home directory
+(its conversation, caches, settings it changed), `/tmp`, a sibling service's
+data, and a workspace that was in memory because there was no disk store
+(`resume` then refuses, and says so). Exports in `~/agent-sandbox-out/`
+survive too.
+
+To remove sessions you no longer need instead:
 
 ```bash
-./sandbox destroy --all
+./sandbox destroy --all        # or SANDBOX_SESSION=<name> ./sandbox destroy, one at a time
 ```
 
 If you still needed a workspace that was not exported, read
-[07 — Troubleshooting](07-troubleshooting.md#cleaning-up-after-a-crash-or-a-reboot)
+[07 — Troubleshooting](07-troubleshooting.md#getting-back-into-a-session)
 **before** running that.
 
 ## 22. Updating the sandbox
@@ -966,12 +990,13 @@ cd ~/agent-sandbox
 | `./sandbox doctor` | Is this host safe to run on? |
 | `./sandbox login [--agent A]` | Store the model credential in your keyring |
 | `./sandbox run <repo>` | Start a session and attach to the agent |
+| `./sandbox resume` | Back into the session: after the agent exited, a time limit, or a reboot |
 | `./sandbox shell` | A shell inside the agent container |
 | `./sandbox verify` | Attempt every bypass in the barrier register |
 | `./sandbox allow <host> --reason "<why>"` | Let the agent reach one more host. See [02](02-egress.md) |
 | `./sandbox deny <host>` | Take it off again |
 | `./sandbox logs [agent\|proxy\|sidecar\|relay\|service]` | What each container printed |
-| `./sandbox export` | Bring the branch out and review it |
+| `./sandbox export [--commit]` | Bring the branch out and review it; `--commit` first commits what the agent left uncommitted |
 | `./sandbox push` / `./sandbox pr` | Send the reviewed branch to the repository |
 | `./sandbox destroy [--all]` | Remove the session, or every session |
 | `./sandbox upgrade` | Rebuild the images from scratch and show old → new versions |

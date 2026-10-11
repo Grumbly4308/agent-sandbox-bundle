@@ -30,6 +30,7 @@
 #   FAKE_PODMAN_BUNDLE=file          what the export helper writes to stdout
 #   FAKE_PODMAN_BUNDLE_BYTES=N       ... or N bytes of filler instead
 #   FAKE_PODMAN_LAUNCH_EXIT=N        exit status of `exec ... sandbox-launch`
+#   FAKE_PODMAN_GIT_STATUS=text      what `exec ... git ... status` prints
 #   FAKE_PODMAN_LOGS=text            what `podman logs` prints
 #   FAKE_PODMAN_DU=N                 bytes `podman unshare du` reports
 #   FAKE_PODMAN_VERSIONS_OLD / _NEW  /usr/share/sandbox/versions before and
@@ -359,6 +360,10 @@ case "$command" in
       sandbox-launch)
         printf 'fake agent CLI: started with %s\n' "$*"
         exit "${FAKE_PODMAN_LAUNCH_EXIT:-0}"
+        ;;
+      git)
+        # `export --commit` asks the agent's git what is uncommitted.
+        if has_arg status "$@"; then printf '%b' "${FAKE_PODMAN_GIT_STATUS:-}"; fi
         ;;
       bash|sh) ;;
       *)

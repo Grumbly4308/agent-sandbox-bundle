@@ -20,8 +20,8 @@
 # Two placeholders to replace before loading (README.md has the commands):
 #   @AGENT_HOST_UID@   the host id worked out as above
 #   @STATE_DIR@        the sandbox's state directory, e.g.
-#                      /run/user/1000/agent-sandbox (it must exist when the
-#                      rules are loaded)
+#                      /home/you/.local/state/agent-sandbox (it must exist
+#                      when the rules are loaded)
 
 # Every program the agent's user starts.
 -a always,exit -F arch=b64 -S execve,execveat -F uid=@AGENT_HOST_UID@ -k agent-sandbox-exec

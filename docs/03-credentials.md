@@ -118,9 +118,11 @@ On Linux the keyring is created and unlocked by your desktop login. The
 headless account the quickstart recommends has no desktop, so it starts with no
 keyring and no way to make one: gnome-keyring does both through a graphical
 prompt. `scripts/keyring-unlock.py` does it over D-Bus instead, with a
-password you choose, and `login` and `doctor` point at it when needed. The
-keyring then stays open until the daemon stops (a reboot); run the script again
-to reopen it.
+password you choose. The keyring then stays open until the daemon stops (a
+reboot). After that, `run`, `resume` and `login` find it locked and run the
+script for you at the terminal: you type the keyring's password, and they go
+on. Without a terminal (a script piping the credential in) nothing is asked
+and `run` reads the credential from standard input as before.
 
 Be clear about what the keyring buys. It keeps the token out of files,
 environments, command lines and shell history, and encrypted at rest (a VM

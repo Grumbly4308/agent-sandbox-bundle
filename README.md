@@ -23,10 +23,16 @@ number of model requests you chose, and a short list of hosts.
 scripts/pin-images.sh                    # first time: pin the base images
 ./sandbox login                          # first time: store the model credential
 ./sandbox run https://github.com/you/project.git
+./sandbox resume                         # back into the same session, any time later
 ./sandbox export                         # bring the work out and read it
 ./sandbox push                           # with your credentials, from a clean copy
 ./sandbox destroy
 ```
+
+A session stays until you `destroy` it: through the agent exiting, through a
+reboot (with the disk store), and with no time limit unless you set one with
+`--ttl`. `resume` puts you back in. [09 — Sessions](docs/09-sessions.md) has
+the details.
 
 You need rootless Podman, git and bash, on Linux or macOS, and an account that
 cannot become root.

@@ -74,7 +74,7 @@ SESSION_PATTERN='^asb-[a-z0-9]([a-z0-9-]*[a-z0-9])?-[0-9a-f]{6}$'
 #   no-runtime-class  SANDBOX_RUNTIME_CLASS is not set
 #   quick             left out because you passed --quick
 #   separate          has a command of its own (--deadline-test, --store-test)
-LEGITIMATE="no-selinux no-swap no-setuid-files no-remote no-git-relay branch-rule http-allowed memory-workspace no-store no-runtime-class quick separate"
+LEGITIMATE="no-selinux no-swap no-setuid-files no-remote no-git-relay branch-rule http-allowed memory-workspace no-store no-runtime-class no-limit quick separate"
 
 die() { printf 'verify: %s\n' "$*" >&2; exit 1; }
 
@@ -138,8 +138,7 @@ kv() {
 # ./sandbox).
 state_dir() {
   if [ -n "${SANDBOX_STATE_DIR:-}" ]; then printf '%s' "$SANDBOX_STATE_DIR"
-  elif [ -n "${XDG_RUNTIME_DIR:-}" ]; then printf '%s' "$XDG_RUNTIME_DIR/agent-sandbox"
-  else printf '%s' "${TMPDIR:-/tmp}/agent-sandbox-$(id -u)"; fi
+  else printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox"; fi
 }
 config_dir() { printf '%s' "${SANDBOX_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-sandbox}"; }
 
@@ -579,7 +578,14 @@ check_B13_network_no_gateway() {
 
 check_B26_deadline_set() {
   local role value want bad=""
-  want=$((DEADLINE_EPOCH - CREATED_EPOCH))
+  # The limit the session was started with; an older state file has only
+  # the two times.
+  want="$TTL_SECONDS"
+  [ -n "$want" ] || want=$((DEADLINE_EPOCH - CREATED_EPOCH))
+  if [ "$want" -eq 0 ]; then
+    skip B26-deadline-set no-limit "this session was started with no time limit (--ttl none, the default): there is no kill timer to check. Start one with --ttl to check B26" "none needed"
+    return
+  fi
   for role in $ROLES; do
     value="$(field "$role" timeout)"
     if [ "$role" = keeper ]; then
@@ -1100,6 +1106,8 @@ verify_session() {
   SUBNET="$(kv "$state_file" SUBNET)"
   ORIGIN_URL="$(kv "$state_file" ORIGIN_URL)"
   DEADLINE_EPOCH="$(kv "$state_file" DEADLINE_EPOCH)"; CREATED_EPOCH="$(kv "$state_file" CREATED_EPOCH)"
+  TTL_SECONDS="$(kv "$state_file" TTL_SECONDS)"
+  case "$TTL_SECONDS" in *[!0-9]*) TTL_SECONDS="" ;; esac
   WORKSPACE_DRIVER="$(kv "$state_file" WORKSPACE_DRIVER)"; WORKSPACE_BYTES="$(kv "$state_file" WORKSPACE_BYTES)"
   STORE="$(kv "$state_file" STORE)"; GIT_RELAY="$(kv "$state_file" GIT_RELAY)"
   PREFIX="${SUBNET%.0/24}"
@@ -1296,7 +1304,7 @@ own_session() {
       if [ -f "$dir/state" ]; then OWN="${dir##*/}"; fi
     done
     if [ -n "$OWN" ] && [ "$(podman inspect --format '{{.State.Running}}' "$OWN-agent" 2>/dev/null || true)" = true ] \
-       && grep -q 'runs until' "$T/run.log" 2>/dev/null; then
+       && grep -q 'runs until\|has no time limit' "$T/run.log" 2>/dev/null; then
       break
     fi
     if ! kill -0 "$RUN_PID" 2>/dev/null; then break; fi

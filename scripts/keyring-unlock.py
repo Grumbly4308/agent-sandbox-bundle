@@ -20,8 +20,10 @@
 # This asks the daemon directly over D-Bus, through the interface gnome-keyring
 # keeps for exactly this (its own name admits what it is), with the password as
 # data. No prompt is involved. The keyring stays unlocked until the daemon
-# stops; after a reboot run this again, or let ./sandbox run ask for the
-# credential (it does when the keyring will not answer).
+# stops; after a reboot `./sandbox run` and `./sandbox login` run this for
+# you when they find the keyring locked, so you type its password there.
+# Exit status 3 means the password was wrong (./sandbox asks again); any
+# other failure is not retried.
 #
 # Needs python3-gi, which gnome-keyring's distribution packages pull in.
 import getpass
@@ -80,9 +82,13 @@ def main():
             call(ROOT, INTERNAL, "UnlockWithMasterPassword", GLib.Variant("(o(oayays))", (collection, secret)))
         except GLib.Error as e:
             if (Gio.DBusError.get_remote_error(e) or "").endswith(".Denied"):
-                sys.exit("that is not the keyring's password. If you do not know it and the keyring holds nothing you need,"
-                         " remove it and run this again to make a new one:\n"
-                         "    rm ~/.local/share/keyrings/login.keyring && systemctl --user restart gnome-keyring-daemon")
+                # Exit status 3 means "wrong password" to ./sandbox, which
+                # then asks again; any other failure it does not retry.
+                print("that is not the keyring's password. If you do not know it and the keyring holds nothing you need,"
+                      " remove it and run this again to make a new one:\n"
+                      "    rm ~/.local/share/keyrings/login.keyring && systemctl --user restart gnome-keyring-daemon",
+                      file=sys.stderr)
+                sys.exit(3)
             sys.exit(f"the keyring could not be unlocked: {e.message}")
 
     (locked,) = call(collection, "org.freedesktop.DBus.Properties", "Get",
