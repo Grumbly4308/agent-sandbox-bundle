@@ -31,6 +31,8 @@
 #   FAKE_PODMAN_BUNDLE_BYTES=N       ... or N bytes of filler instead
 #   FAKE_PODMAN_LAUNCH_EXIT=N        exit status of `exec ... sandbox-launch`
 #   FAKE_PODMAN_GIT_STATUS=text      what `exec ... git ... status` prints
+#   FAKE_PODMAN_GIT_HEAD=branch      what `exec ... git symbolic-ref HEAD` prints
+#                                    (default: detached, which fails as git does)
 #   FAKE_PODMAN_LOGS=text            what `podman logs` prints
 #   FAKE_PODMAN_DU=N                 bytes `podman unshare du` reports
 #   FAKE_PODMAN_VERSIONS_OLD / _NEW  /usr/share/sandbox/versions before and
@@ -362,7 +364,13 @@ case "$command" in
         exit "${FAKE_PODMAN_LAUNCH_EXIT:-0}"
         ;;
       git)
-        # `export --commit` asks the agent's git what is uncommitted.
+        # `export --commit` asks the agent's git which branch is checked out
+        # (FAKE_PODMAN_GIT_HEAD; `detached` means none, as git answers with
+        # nothing and status 1) and what is uncommitted.
+        if has_arg symbolic-ref "$@"; then
+          [ "${FAKE_PODMAN_GIT_HEAD:-detached}" != detached ] || exit 1
+          printf '%s\n' "$FAKE_PODMAN_GIT_HEAD"
+        fi
         if has_arg status "$@"; then printf '%b' "${FAKE_PODMAN_GIT_STATUS:-}"; fi
         ;;
       bash|sh) ;;

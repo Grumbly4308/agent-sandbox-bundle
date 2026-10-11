@@ -1872,6 +1872,10 @@ cmd_resume() {
     if [ "$WORKSPACE_DRIVER" = local ] || { [ "$AGENT" = codex ] && [ "$AUTH" = oauth ]; }; then
       start_watchdog
     fi
+    # The sidecar counts requests in memory [logical B24]; started again, it
+    # counts from zero. Said here so a resumed session is not taken for one
+    # still within its first budget.
+    say "The credential sidecar was started again, so the request budget counts from zero: ${BUDGET:-?} requests again."
   fi
   if [ "$GIT_TOKEN" = 1 ] && [ -z "$(git_token_get "$ORIGIN_URL")" ]; then
     warn "the session's git token is gone (a reboot, or its time passed). push and pr will ask for one; the next run --git-token takes a new one"
@@ -2028,7 +2032,7 @@ cmd_deny() {
 # ---------------------------------------------------------------------------
 
 cmd_export() {
-  local out="" bundle size status=0 commit=0 pending
+  local out="" bundle size status=0 commit=0 pending head where
   while [ $# -gt 0 ]; do
     case "$1" in
       --out)    [ $# -ge 2 ] || die "--out needs a directory"; out="$2"; shift ;;
@@ -2054,6 +2058,16 @@ cmd_export() {
     agent_running "$SESSION" \
       || die "--commit needs the agent container running, and it is not: ./sandbox resume starts the session again"
     exec_environment
+    # The commit lands on whatever HEAD names, and export takes the session
+    # branch only. An agent that switched branches or detached HEAD would
+    # get its work committed somewhere export never looks, and `destroy`
+    # would then remove the only copy. So: the session branch, or nothing.
+    head="$(podman exec "${EXEC_ENV[@]}" "$SESSION-agent" git -C /workspace/repo -c core.hooksPath=/dev/null symbolic-ref --quiet --short HEAD 2>/dev/null | filter_control || true)"
+    if [ "$head" != "$BRANCH" ]; then
+      where="a detached HEAD"
+      [ -z "$head" ] || where="branch $head"
+      die "the workspace has $where checked out, not the session branch $BRANCH, and export takes that branch only. Nothing was committed. Put the work on $BRANCH first (./sandbox shell, or ask the agent: git switch $BRANCH, or git switch -c tmp && git switch $BRANCH && git merge tmp), then export --commit again"
+    fi
     pending="$(podman exec "${EXEC_ENV[@]}" "$SESSION-agent" git -C /workspace/repo -c core.hooksPath=/dev/null status --porcelain --untracked-files=all 2>&1 | filter_control)" \
       || die "git status in the workspace failed: $pending"
     pending="$(printf '%s' "$pending" | grep -c . || true)"

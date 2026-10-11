@@ -117,7 +117,8 @@ settings file. At the deadline everything except the workspace is stopped:
 the agent's container is killed, and so are the proxy and the sidecar. The
 work is still there. `./sandbox export` works; `./sandbox shell` does not;
 `./sandbox resume` starts the session again, with a fresh deadline of the
-same length.
+same length and the request budget counted from zero again (the sidecar
+counts in memory; see [09](09-sessions.md#coming-back-to-a-session)).
 
 ## Export
 
@@ -128,7 +129,11 @@ workspace. Either ask the agent to commit (`./sandbox resume`, then "commit
 it"), or let export do it: `./sandbox export --commit` commits everything
 uncommitted in the workspace as one commit, "Uncommitted work at export",
 under your git identity, and then exports as usual. The agent container has
-to be running for that (`resume` if it is not).
+to be running for that (`resume` if it is not), and the workspace has to
+have the **session branch checked out**: a commit lands wherever HEAD is,
+and export takes the session branch only, so with another branch or a
+detached HEAD `export --commit` refuses and commits nothing. Put the work on
+the session branch first, from `./sandbox shell` or by asking the agent.
 
 **Export did not change the repository I started from.** It is not meant
 to: `export` writes a reviewed copy to `~/agent-sandbox-out/<session>/repo.git`

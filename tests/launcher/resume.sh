@@ -69,6 +69,7 @@ before "the sidecar is waited for before the credential goes in" "^exec${tab}$s-
 before "the service is waited for" "^exec${tab}$s-svc-redis${tab}redis-cli" "sandbox-launch"
 before "the credential goes in before the CLI starts" "sidecar-load" "sandbox-launch"
 check "the sidecar is handed the credential again (its memory was emptied)" test "$(loads_of "$s")" -eq 2
+case "$out" in *"request budget counts from zero: 50 requests again"*) pass "resume says the budget starts over with the sidecar" ;; *) fail "no budget notice: $out" ;; esac
 loaded="$(find "$FAKE_PODMAN_STATE/stdin" -name "*.$s-credsidecar.sidecar-load" | sort -n | tail -1)"
 check "... the same credential, as one JSON object" test "$(cat "$loaded")" = "{\"token\":\"$SECRET\"}"
 if grep -qF "$SECRET" "$log"; then fail "the credential is on a podman command line"; else pass "the credential is on no podman command line"; fi
@@ -173,6 +174,20 @@ git -C "$T/work" checkout --quiet -b "agent/$s"
 printf 'more\n' >> "$T/work/README.md"
 git -C "$T/work" commit --quiet -am "agent's change"
 git -C "$T/work" bundle create --quiet "$T/agent.bundle" "agent/$s"
+
+# The commit lands where HEAD is, and export takes the session branch only:
+# any other branch, or none, is refused before anything is committed.
+: > "$log"
+out="$(FAKE_PODMAN_BUNDLE="$T/agent.bundle" FAKE_PODMAN_GIT_HEAD=experiment FAKE_PODMAN_GIT_STATUS='?? notes.md\n' "$ROOT/sandbox" export --out "$T/exported" --commit 2>&1)" && fail "export --commit on another branch succeeded"
+case "$out" in *"has branch experiment checked out, not the session branch agent/$s"*"Nothing was committed"*"git switch agent/$s"*) pass "export --commit refuses another branch, and says how to recover" ;; *) fail "another branch: $out" ;; esac
+not_called "... nothing is committed there" "git -c core.hooksPath=/dev/null add -A"
+not_called "... and nothing is exported" "sandbox-bundle"
+: > "$log"
+out="$(FAKE_PODMAN_BUNDLE="$T/agent.bundle" FAKE_PODMAN_GIT_HEAD=detached FAKE_PODMAN_GIT_STATUS='?? notes.md\n' "$ROOT/sandbox" export --out "$T/exported" --commit 2>&1)" && fail "export --commit on a detached HEAD succeeded"
+case "$out" in *"has a detached HEAD checked out, not the session branch"*) pass "export --commit refuses a detached HEAD" ;; *) fail "detached HEAD: $out" ;; esac
+not_called "... and commits nothing" "git -c core.hooksPath=/dev/null add -A"
+export FAKE_PODMAN_GIT_HEAD="agent/$s"
+
 : > "$log"
 out="$(FAKE_PODMAN_BUNDLE="$T/agent.bundle" "$ROOT/sandbox" export --out "$T/exported" --commit 2>&1)" || fail "export --commit on a clean tree failed: $out"
 case "$out" in *"no uncommitted changes"*) pass "export --commit on a clean tree commits nothing" ;; *) fail "clean tree: $out" ;; esac

@@ -97,6 +97,10 @@ setup() {
   git config --global user.name "Test Operator"
   git config --global user.email "operator@example.test"
   git config --global init.defaultBranch main
+  # Out of the checkout: ./sandbox reads your git identity from wherever it
+  # runs, and a user.name set in this repository's own .git/config would
+  # otherwise override the one above.
+  cd "$T" || exit 1
   # Small sizes, so the memory check passes on any machine that runs this.
   printf '%s\n' AGENT=claude AUTH=apikey TOOLCHAIN=node MEM=64m CPUS=1 PIDS=128 NPROC=128 \
     TTL=1h BUDGET=50 TMP_SIZE=16m HOME_SIZE=16m WORKSPACE_SIZE=32m WORKSPACE_DRIVER=auto \

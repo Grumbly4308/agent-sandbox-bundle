@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **`export --commit` commits on the session branch or not at all.** It
+  committed on whatever HEAD named, while export bundles the session branch
+  only: an agent that had switched branches or detached HEAD would have had
+  its work committed where export never looks, and `destroy` would then have
+  removed the only copy. It now checks HEAD first and refuses, with the
+  recovery steps, when it is not the session branch. Found by review.
+- **`resume` says that the request budget starts over.** The sidecar counts
+  requests in memory, so starting it again (after a time limit, a reboot, or
+  the agent ending its container) resets the count to zero. That was so but
+  unsaid; `resume` now says it, and [09](docs/09-sessions.md) and the threat
+  model (B24) state the contract: a cap per start of the sidecar, with the
+  account's spend limit as the cap that always holds.
+- **Tests.** The launcher tests now run from outside the checkout, so a git
+  identity set in this repository's own `.git/config` no longer overrides
+  the test identity (two identity checks in `resume.sh` failed in such a
+  checkout).
+
 - **Sessions have no time limit unless you give them one.** `TTL` defaults to
   `none`, and `--ttl 4h` (or `TTL=4h` in the settings file) is what sets a
   limit. With none, every container is created with Podman's `--timeout 0`

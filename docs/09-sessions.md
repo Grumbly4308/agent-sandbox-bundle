@@ -82,6 +82,15 @@ in your settings file gives every session one; at the limit Podman stops the
 containers from outside ([B26](00-threat-model.md)), the work stays, and
 `resume` starts them again with a fresh limit of the same length.
 
+**The request budget starts over too.** The sidecar counts requests in
+memory ([B24](00-threat-model.md)), so whenever `resume` starts it again
+(after a time limit, a reboot, or the agent ending its container) the count
+is back at zero and the session may spend the full `--budget` again; `resume`
+says so. A `resume` that only re-attaches, with everything still running,
+changes nothing. The budget is therefore a cap per start of the sidecar, not
+per session for its whole life; the spend limit on the model account is the
+cap that always holds.
+
 ## Several sessions side by side
 
 Each `run` makes a separate session with a name of its own, and they do not
