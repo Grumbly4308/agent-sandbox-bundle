@@ -81,6 +81,37 @@ else
   pass "the cache no longer answers after destroy"
 fi
 
+# --- a path whose origin is https:// ----------------------------------------------------
+# A session started from a path (an earlier session's export, say) clones
+# without a token and pushes to the path's origin. The token is for that.
+git clone --quiet --bare "$T/src" "$T/fromexport.git"
+git --git-dir="$T/fromexport.git" remote set-url origin "$URL"
+: > "$log"
+out="$(printf '%s\n' "$TOKEN" | "$ROOT/sandbox" run "$T/fromexport.git" --git-token --branch agent/again 2>&1)" \
+  || fail "run --git-token from a path with an https origin failed: $out"
+s="$(only_session)"
+dir="$SANDBOX_STATE_DIR/$s"
+socket="$dir/git-credential"
+check "a path with an https origin records that origin" grep -qx "ORIGIN_URL=$URL" "$dir/state"
+held="$(printf 'protocol=https\nhost=github.com\n' | git credential-cache --socket="$socket" get | sed -n 's/^password=//p')"
+check "... and the token is held for the origin's host" test "$held" = "$TOKEN"
+git -C "$T/work" checkout --quiet -b agent/again
+printf 'again\n' >> "$T/work/README.md"
+git -C "$T/work" commit --quiet -am "second agent's change"
+tip="$(git -C "$T/work" rev-parse HEAD)"
+git -C "$T/work" bundle create --quiet "$T/again.bundle" agent/again
+FAKE_PODMAN_BUNDLE="$T/again.bundle" "$ROOT/sandbox" export --out "$T/exported" >/dev/null 2>&1 || fail "export failed"
+out="$("$ROOT/sandbox" push 2>&1)" || fail "push failed: $out"
+case "$out" in *"with the session's token"*) pass "push from that session uses the token" ;; *) fail "push: $out" ;; esac
+check "... and sends the branch to the origin" test "$(git --git-dir="$T/remote.git" rev-parse refs/heads/agent/again)" = "$tip"
+"$ROOT/sandbox" destroy >/dev/null 2>&1 || fail "destroy failed"
+
+git clone --quiet --bare "$T/src" "$T/sshorigin.git"
+git --git-dir="$T/sshorigin.git" remote set-url origin git@github.com:example/private.git
+says "a path whose origin is ssh needs no token" "an ssh address needs no token" \
+  bash -c "printf '%s\n' '$TOKEN' | '$ROOT/sandbox' run '$T/sshorigin.git' --git-token"
+check "... and leaves no session behind" test -z "$(only_session)"
+
 # --- without the option, nothing of this exists ---------------------------------------
 : > "$log"
 "$ROOT/sandbox" run "$T/src" </dev/null >/dev/null 2>&1 || fail "plain run failed"

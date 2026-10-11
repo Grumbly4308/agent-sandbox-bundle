@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **`run --git-token` from a path with an `https://` origin.** The check
+  looked at the address given to `run`, so a path was always refused, though
+  the token is never used for the clone: it is for `push`, `pr` and the
+  relay, which go to the session's origin. It now looks at that origin (the
+  address itself, or a path's `remote.origin.url`) and holds the token for
+  its host. A session started from an earlier export, with the real
+  repository added as its origin, can now push with a session token instead
+  of a credential kept on the host. A path with no origin, or an `ssh`
+  origin, is still refused, with a message saying why.
 - **Docs: the quickstart starts from a brand-new VM.** Rewritten for
   someone who has never set up a Linux host: Debian 13, Ubuntu 24.04 or
   Fedora 41, every command written out with which machine and which account
