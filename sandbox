@@ -1264,7 +1264,7 @@ cmd_run() {
   local source="" auto=0 strict=0 io_limit="" store_device service names count=0
   local mem cpus pids nproc ttl budget tmp_size home_size workspace_size
   local mem_bytes tmp_bytes home_bytes ttl_seconds total helpers used credential
-  local relay_host="" relay_token="" relay_user=x-access-token relay_remote="" image_ids git_token=""
+  local relay_host="" relay_token="" relay_user=x-access-token relay_remote="" image_ids git_token="" push_url=""
   local doctor_args=() tty=(-i) launch_args=() cli_args=() status=0
 
   AGENT="$(setting AGENT)"; AUTH="$(setting AUTH)"; TOOLCHAIN="$(setting TOOLCHAIN)"
@@ -1434,9 +1434,16 @@ cmd_run() {
   RUN_UNFINISHED="$SESSION"      # from here on, a failure removes the session again
 
   if [ "$GIT_TOKEN" = 1 ]; then
-    case "$source" in
+    # The token is for where `push` will send the work, which is what
+    # import_repository records as ORIGIN_URL: the address itself, or a
+    # path's own origin. Cloning a path needs no token; pushing to its
+    # https:// origin does (a session started from an export, for one).
+    push_url="$source"
+    if [ -d "$source" ]; then push_url="$(git -C "$source" config --get remote.origin.url || true)"; fi
+    case "$push_url" in
       https://*) ;;
-      *) die "--git-token is for an https:// repository address; a path or an ssh address needs no token (this one is $source)" ;;
+      '') die "--git-token is for pushing to an https:// repository, and $source has no origin to push to: a local path needs no token to clone. To push from this session, give it one: git -C $source remote add origin https://..." ;;
+      *) die "--git-token is for pushing to an https:// repository, and this session would push to $(printf '%s' "$push_url" | filter_control): an ssh address needs no token, it uses a key" ;;
     esac
     say "The token is held in memory for this session's time limit, and used by this"
     say "host to clone, push and open the request. It is never put in a container."
@@ -1445,7 +1452,7 @@ cmd_run() {
       || die "--git-token needs a git token, typed or on standard input"
     if [ -t 0 ]; then printf '\n' >&2; fi
     looks_like_token "$git_token" || die "that does not look like a token"
-    printf '%s' "$git_token" | git_token_store "$source" "$ttl_seconds" \
+    printf '%s' "$git_token" | git_token_store "$push_url" "$ttl_seconds" \
       || die "git's credential cache did not take the token"
     git_token=""
   fi

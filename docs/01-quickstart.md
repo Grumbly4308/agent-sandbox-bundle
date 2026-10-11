@@ -892,8 +892,8 @@ to come out first. Two ways:
       --branch agent/<first session> --git-token
   ```
 
-- **Option B, straight from the export** (nothing is pushed in between; works
-  with option 2):
+- **Option B, straight from the export** (nothing is pushed in between;
+  works with either option from step 15):
 
   ```bash
   ./sandbox export                        # read it
@@ -906,7 +906,8 @@ to come out first. Two ways:
 from the first one's last commit. Read the first export, RUNS LATER above
 all, before the second agent starts building on it.
 [09 — Sessions](09-sessions.md#carrying-on-from-another-agent) has both ways
-in full, including how to push the result of option B.
+in full, including how to push the result of option B, from your workstation
+or from the VM with `--git-token`.
 
 ## 21. After a reboot
 

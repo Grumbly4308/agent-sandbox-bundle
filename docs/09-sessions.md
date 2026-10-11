@@ -197,8 +197,8 @@ there. Use this when the host may push: you started the first session with
 #### Option B: straight from the export, nothing pushed
 
 Codex is started from Claude's export on this host, with no push in between.
-Use this when the host has **no git credential**, or when you want to review
-both agents' work before anything reaches the remote.
+Use this when you want to review both agents' work before anything reaches
+the remote, or when the host has **no git credential** at all.
 
 `export` leaves a clean repository at
 `~/agent-sandbox-out/<session>/repo.git`, and `run` takes a path. That export
@@ -234,27 +234,35 @@ Getting the result to the remote. Pick one:
   git push origin FETCH_HEAD:refs/heads/agent/asb-project-1a2b3c
   ```
 
-- **From the host, with `./sandbox push`.** Before step 2, give the first
-  export the real repository's address. The second session then takes that
-  as the place to push to:
+- **From the host, with `./sandbox push` and a session token.** Before
+  step 2, give the first export the real repository's address. The second
+  session takes that as the place to push to, and `--git-token` then works
+  for it as for any session: the clone is a local copy and needs no token,
+  and the token is held for `push` and `pr`, in memory, until `destroy`.
 
   ```bash
   git --git-dir ~/agent-sandbox-out/asb-project-1a2b3c/repo.git \
       remote add origin https://github.com/you/project.git
+  ./sandbox run ~/agent-sandbox-out/asb-project-1a2b3c/repo.git --agent codex \
+      --branch agent/asb-project-1a2b3c --git-token
+  #    ... work with Codex, have it commit, leave ...
+  ./sandbox export
+  ./sandbox push            # or ./sandbox pr
   ```
 
-  `push` then uses whatever git credential this host has. `--git-token`
-  cannot be used here: it is for `https://` addresses, and this session was
-  started from a path. Without the `remote add`, `push` would send the
-  branch back into the first export, which is not what you want.
+  Without `--git-token`, `push` uses whatever git credential this host has.
+  Without the `remote add`, `run` refuses `--git-token` (there is nowhere to
+  push a token to), and `push` would send the branch back into the first
+  export, which is not what you want.
 
 `pr` is refused for a session started from a path with no remote, since
-there is nowhere to open a request. Open it in the web page instead.
+there is nowhere to open a request. With the `remote add` above it works.
 
 > The way `run` takes in an exported repository (an existing branch is
-> carried on, and the repository's `origin` decides where `push` goes) was
-> checked against the real code. A whole run of Option B, with two agents on
-> a real host, has not been done yet.
+> carried on, the repository's `origin` decides where `push` goes, and
+> `--git-token` is held for that origin) is covered by the launcher tests.
+> A whole run of Option B, with two agents on a real host, has not been done
+> yet.
 
 ### Read each export before the next agent starts
 
