@@ -212,7 +212,7 @@ check_id_range() {
       ok "subordinate ${kind}s cover the container users (61000-61003)"
     else
       bad "your subordinate ${kind} range does not reach 61003" \
-          "sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $user && podman system migrate"
+          "check what is there: grep $user /etc/subuid /etc/subgid. No line: sudo usermod --add-subuids 300000-365535 --add-subgids 300000-365535 $user (a range no other line overlaps). A line that is too small: remove it with --del-subuids/--del-subgids first, never add a second one. Then: podman system migrate"
     fi
   done
 }
