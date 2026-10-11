@@ -36,6 +36,15 @@
   did nothing; `export --commit` commits them first, in the agent's container
   under your git identity. `export`'s closing lines say that nothing has
   reached the repository yet and that `push` is what sends the branch there.
+- **Docs and `doctor`: subordinate ids.** The quickstart's step 4 and the
+  fix for `your subordinate UID range does not reach 61003` told you to run
+  `usermod --add-subuids` without looking at what was there. On an account
+  that already had a range from `useradd`, that added a second, overlapping
+  one, and every Podman command then failed with `newuidmap: write to
+  uid_map failed: Invalid argument`. Both now say to check first, to add a
+  range only when there is none (and one that overlaps nothing), and to
+  replace rather than add when it is too small; [07](docs/07-troubleshooting.md)
+  has the error and the fix.
 - **Tests.** `make test` ran only one of the eleven launcher suites: the
   harness took `tests/launcher/run.sh` (the test of `run`) for a directory
   runner. It is now `start.sh`, and all of them run; one check in

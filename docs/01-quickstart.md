@@ -229,13 +229,24 @@ Podman needs:
 grep sandboxer /etc/subuid /etc/subgid
 ```
 
-You should see two lines, like `/etc/subuid:sandboxer:165536:65536` and the
-same for `/etc/subgid`. The numbers may differ. If nothing is printed, add a
-range:
+You should see **exactly one line in each file**, like
+`/etc/subuid:sandboxer:165536:65536` and the same for `/etc/subgid`. The
+numbers may differ. That is the usual case on a new VM, and nothing more is
+needed: go on to step 5.
+
+**Only if nothing is printed**, add a range. Pick one that no other line in
+either file overlaps (each line is `user:start:count`, so a line
+`x:165536:65536` reaches 231071):
 
 ```bash
-sudo usermod --add-subuids 200000-265535 --add-subgids 200000-265535 sandboxer
+cat /etc/subuid /etc/subgid                   # the ranges already taken
+sudo usermod --add-subuids 300000-365535 --add-subgids 300000-365535 sandboxer
 ```
+
+Do not add a range when one is already there. A second line for the same
+account whose numbers overlap the first makes Podman fail at every command
+with `newuidmap: write to uid_map failed: Invalid argument`; the fix is in
+[07 — Troubleshooting](07-troubleshooting.md#run-refuses-to-start).
 
 ## 5. Let that account set resource limits
 
@@ -496,7 +507,7 @@ The `FAIL`s you might see on a new VM:
 | `FAIL` line | Fix |
 |---|---|
 | `cgroup v2, but your user may not set limits for: ...` | Step 5 was skipped. Do it as admin, then log out of `sandboxer` and back in. |
-| `your subordinate UID range does not reach 61003` | As admin: `sudo usermod --add-subuids 200000-265535 --add-subgids 200000-265535 sandboxer`; then, as sandboxer, `podman system migrate`. |
+| `your subordinate UID range does not reach 61003` | Step 4: as admin, `grep sandboxer /etc/subuid /etc/subgid`. If there is no line, add a range that overlaps nothing in those files (step 4 shows how); if there is one, it is too small: replace it (`sudo usermod --del-subuids <start>-<end> --del-subgids <start>-<end> sandboxer`, then add a 65536-wide one). Then, as sandboxer, `podman system migrate`. |
 | `images/PINS still has UNPINNED base images` | Step 11: `scripts/pin-images.sh`. |
 | `Podman ... is too old` | The distribution is too old; see step 1. |
 
