@@ -106,10 +106,17 @@ for c in $containers; do
   # The deadline: everything but the keeper (B26).
   if [ "$c" = keeper ]; then
     has --timeout && fail "keeper: must have no deadline, it holds the workspace"
+  elif [ "$c" = export ]; then
+    has --timeout || fail "export: no deadline of its own"     # fixed, not the session's: it is short-lived
   else
-    has --timeout || fail "$c: no deadline"
+    has_pair --timeout 14400 || fail "$c: no deadline of the session's length"
   fi
 done
+
+# No time limit: Podman's own "never" is 0, on the same flag, so a session
+# started with --ttl none differs from one with a limit in that number only.
+SANDBOX_TTL_SECONDS=0 topo_agent
+has_pair --timeout 0 || fail "agent: with no time limit --timeout must be 0"
 
 # The agent specifically.
 topo_agent

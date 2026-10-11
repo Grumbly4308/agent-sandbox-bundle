@@ -6,7 +6,14 @@
 #   FAKE_BUSCTL_KEYRING=ready      a keyring exists and is unlocked (default)
 #   FAKE_BUSCTL_KEYRING=locked     it exists and is locked
 #   FAKE_BUSCTL_KEYRING=missing    the account has no keyring
-case "${FAKE_BUSCTL_KEYRING:-ready}/$*" in
+#   FAKE_BUSCTL_STATE_FILE=path    read the state from this file instead, when
+#                                  it exists (a stand-in unlock script writes
+#                                  `ready` into it)
+state="${FAKE_BUSCTL_KEYRING:-ready}"
+if [ -n "${FAKE_BUSCTL_STATE_FILE:-}" ] && [ -f "$FAKE_BUSCTL_STATE_FILE" ]; then
+  IFS= read -r state < "$FAKE_BUSCTL_STATE_FILE" || true
+fi
+case "$state/$*" in
   missing/*" ReadAlias s default") printf 'o "/"\n' ;;
   */*" ReadAlias s default")       printf 'o "/org/freedesktop/secrets/collection/login"\n' ;;
   locked/*" Locked")               printf 'b true\n' ;;

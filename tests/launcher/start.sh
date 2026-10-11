@@ -166,7 +166,7 @@ case "$out" in *"SANDBOX_SESSION=$s ./sandbox export"*"SANDBOX_SESSION=$s ./sand
 check "no watchdog is started when none is needed" test ! -e "$dir/watchdog.pid"
 
 # --- the state file -------------------------------------------------------------
-for key in SESSION AGENT AUTH TOOLCHAIN BRANCH BASE_COMMIT ORIGIN_URL DEADLINE_EPOCH SUBNET EGRESS_SUBNET WORKSPACE_DRIVER SERVICES GIT_RELAY CREATED_EPOCH; do
+for key in SESSION AGENT AUTH TOOLCHAIN BRANCH BASE_COMMIT ORIGIN_URL DEADLINE_EPOCH SUBNET EGRESS_SUBNET WORKSPACE_DRIVER SERVICES GIT_RELAY CREATED_EPOCH TTL_SECONDS BUDGET BOOT_ID; do
   grep -q "^$key=" "$dir/state" || fail "state has no $key"
 done
 has "state records the starting commit"   "$dir/state" "BASE_COMMIT=$base"

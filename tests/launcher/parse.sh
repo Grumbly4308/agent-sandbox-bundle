@@ -34,6 +34,12 @@ equals "45s is 45 seconds"    45     parse_duration --ttl 45s
 for bad in 4 4H 1w 0h -2h 1.5h '' h '4h30m' '4 h'; do
   refuse "duration '$bad' is rejected" parse_duration --ttl "$bad"
 done
+# A time limit is a duration or none (0 seconds: no limit).
+equals "a time limit of none is 0"   0     parse_ttl --ttl none
+equals "a time limit of 4h is 14400" 14400 parse_ttl --ttl 4h
+for bad in 1w never '' unlimited; do
+  refuse "time limit '$bad' is rejected" parse_ttl --ttl "$bad"
+done
 
 # --- counts ------------------------------------------------------------------
 equals "512 is a count" 512 parse_count --pids 512

@@ -203,7 +203,7 @@ Unless a line says otherwise, these describe the agent container.
 | B23 | **The sidecar forwards only what the CLI needs.** Only the API paths the CLI uses. It refuses request features that make the vendor's servers contact other hosts for the agent (server-side URL fetch, MCP connectors). Web search is let through and logged. | Requests another path; sends a model request asking for a server-side fetch and one naming an MCP server; expects refusals. |
 | B24 | **Request budget.** The sidecar counts model requests before forwarding and stops at the number you set. It caps request size and how many run at once. This is a count, not a spend limit. | Sends one request past a budget of N; sends an oversized one. |
 | B25 | **Request log.** The proxy logs every request line; the sidecar logs every model request and any web search query in it. For Claude Code the query is in the request. For Codex it depends on the model: for one the vendor's catalogue marks "Responses Lite" (every ChatGPT model on 2026-10-10) the CLI posts its searches to a search endpoint of its own, through the sidecar, and every query and page address is logged from that request (proven against the vendor, 2026-10-10); for any other model the query comes back in the reply, which is not yet seen. Entries are fixed-size and escaped. | Runs one search against the mock and looks for the query in the sidecar's log. |
-| B26 | **Time limit, enforced from outside every container.** The agent, the proxy, the sidecar, the git relay and the services are each created with a deadline, and Podman's own monitor (a process outside the container) kills each one when it passes, whether or not the launcher is still running. The **keeper**, a container with no network and nothing to do, holds the workspace open, so the work is still there for `export` until you run `destroy`. The agent cannot signal or reach the keeper. Nothing inside the agent container counts as part of the time limit. | Runs with a short limit and the launcher's terminal closed; checks every container but the keeper is dead at the deadline, including an agent that is forking as fast as it can; checks the workspace can still be exported. |
+| B26 | **Time limit, enforced from outside every container, when you set one** (`--ttl`; there is none by default). The agent, the proxy, the sidecar, the git relay and the services are each created with that deadline, and Podman's own monitor (a process outside the container) kills each one when it passes, whether or not the launcher is still running. The **keeper**, a container with no network and nothing to do, holds the workspace open, so the work is still there for `export` until you run `destroy`. The agent cannot signal or reach the keeper. Nothing inside the agent container counts as part of the time limit. | Runs with a short limit and the launcher's terminal closed; checks every container but the keeper is dead at the deadline, including an agent that is forking as fast as it can; checks the workspace can still be exported. |
 | B27 | **Export, on your host.** See [How code gets in and out](#how-code-gets-in-and-out). The bundle is written by a fresh container with no network, which the agent's processes are not in. The host never runs git, gitleaks or any other tool inside a tree the agent wrote. | Plants a hostile `.git/config` and hook; an attribution trailer; a fake secret with a `.gitleaksignore` entry and a `gitleaks:allow` comment; a lockfile change hidden with `.gitattributes`; a symlink to a host path; an endless output stream. Expects each caught or harmless. |
 | B28 | **Logs are collected by Podman** from each container's standard output, into a file that belongs to the container and is deleted with it. No log path is mounted into any container. | Fails if any log path is mounted writable; checks the log driver from the host. |
 | B29 | **The launcher refuses unsafe hosts.** It will not run as root. It requires Podman to report that it is running rootless and locally, and refuses a connection to a remote or root-run Podman. It refuses when Podman is too old, when the kernel cannot enforce the limits, and when the session's memory total exceeds what the host has. | `doctor` checks each condition. |
@@ -291,7 +291,7 @@ subtly harmful code. It stops that code from reaching anything before you have
 read it.
 
 **Your model account, within the request budget.** The agent can spend requests
-up to the budget and the time limit. The budget is a count of requests, not of
+up to the budget, and the time limit if you set one. The budget is a count of requests, not of
 money: the money limit is the one you set on the account (a dedicated
 subscription with overage billing off, or an API workspace with a spend cap).
 The agent can also send your code to the vendor, because that is what using a
@@ -316,11 +316,18 @@ their output is only as trustworthy as the container.
 
 **Work you have not exported.** The workspace survives the time limit, and it
 survives the agent container ending, and stays until you run `destroy`. On the
-disk store it also survives a reboot: the files stay in the store, where your
-account can read them, until `destroy` removes them. Held in memory, it does
-not survive a reboot or the host running out of memory, and until you destroy
-the session it keeps holding the memory its files occupy. Export before you
-walk away, and destroy when you are done.
+disk store it also survives a reboot, and so does the session: the files stay
+in the store, where your account can read them, and `resume` starts the
+session's containers again around them. Held in memory, it does not survive a
+reboot or the host running out of memory, and until you destroy the session
+it keeps holding the memory its files occupy. Export before you walk away,
+and destroy when you are done.
+
+**A session with no time limit.** By default a session has none (B26 is in
+force only with `--ttl`): an agent left alone keeps its containers, its
+workspace's share of the store and its memory allowance until you destroy it,
+and keeps spending requests until the budget (B24) is spent. Set `--ttl` when
+you start sessions you may forget.
 
 **One session crowding out your others.** On the disk store the cap for a
 single session is a watch, not a wall (B33). A session can fill the store

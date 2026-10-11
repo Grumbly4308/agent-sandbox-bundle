@@ -1,8 +1,8 @@
 # 09 — Sessions: repositories and agents
 
 A **session** is what `./sandbox run` makes: one agent, one copy of one
-repository, its own containers, networks and workspace, a time limit and a
-request budget. This page is about using more than one: one repository after
+repository, its own containers, networks and workspace, a request budget and,
+if you ask for one, a time limit. This page is about using more than one: one repository after
 another, several side by side, and handing a repository from one agent to
 another.
 
@@ -45,10 +45,42 @@ work exists until `export` brings it out. `destroy` does not ask.
 
 The agent's work comes out only if it is **committed**. Tell the agent to
 commit when it is done (or commit yourself from `./sandbox shell`); `export`
-takes the session branch, not loose files.
+takes the session branch, not loose files, and says how many uncommitted
+changes it is leaving behind. `./sandbox export --commit` commits them first,
+as one commit under your name, for the times the agent stopped short.
 
 A private repository needs `--git-token` again at each `run`: the last
 session's token was forgotten at `destroy`.
+
+## Coming back to a session
+
+A session stays until you `destroy` it. It does not end when the agent's CLI
+exits, when you close the terminal, when the host reboots (with the disk
+store), or at a time limit if you set one. `./sandbox resume` puts you back
+in:
+
+```bash
+./sandbox resume                       # the only session, or SANDBOX_SESSION=<name> ./sandbox resume
+./sandbox resume -- --continue         # Claude Code: pick the conversation up where it stopped
+```
+
+If everything of the session is still running, `resume` only starts the CLI
+again. If something is down (a time limit, a reboot, the agent ended its
+container), it stops what still runs except the keeper, starts everything in
+the order `run` did, gives the sidecar the credential again (and a relay its
+token), and attaches. The containers are the ones `run` made, so the barrier
+checks that passed for them still stand and no memory check is repeated.
+
+What does not survive a container being stopped: the agent's home directory
+(its conversation and caches), `/tmp`, a sibling service's data. The
+workspace does. So `resume -- --continue` finds the conversation after the
+CLI exited, but not after a reboot or a time limit; for those, have the agent
+keep what matters in files in the repository.
+
+**Time limits.** None by default. `--ttl 2h` gives a session one, `TTL=2h`
+in your settings file gives every session one; at the limit Podman stops the
+containers from outside ([B26](00-threat-model.md)), the work stays, and
+`resume` starts them again with a fresh limit of the same length.
 
 ## Several sessions side by side
 
@@ -96,7 +128,7 @@ unset SANDBOX_SESSION
 There is no `list` command. To see which sessions exist:
 
 ```bash
-ls -d "$XDG_RUNTIME_DIR"/agent-sandbox/asb-*
+ls -d ~/.local/state/agent-sandbox/asb-*
 ```
 
 `./sandbox destroy --all` removes every session at once.

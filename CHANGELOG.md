@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+- **Sessions have no time limit unless you give them one.** `TTL` defaults to
+  `none`, and `--ttl 4h` (or `TTL=4h` in the settings file) is what sets a
+  limit. With none, every container is created with Podman's `--timeout 0`
+  (its own "never"), the state records no deadline, and `verify` reports B26
+  as not in force rather than failing it. The threat model says what that
+  means: an agent left alone keeps its containers and its share of the host
+  until `destroy`, and spends requests up to the budget.
+- **`resume`: back into a session.** After the CLI exited, after a time
+  limit, after the agent ended its own container, or after a reboot: `resume`
+  starts whatever of the session is stopped, in the order `run` did, hands the
+  sidecar the credential again (and a relay its token), and attaches. Nothing
+  is created and no memory check is repeated, so it also answers "the session
+  may use up to 6.6 GB and this host has less" when all you wanted was to get
+  back in. `resume -- --continue` lets Claude Code pick up its conversation
+  while its container lives. A workspace that was held in memory is refused
+  after a reboot, since it is gone.
+- **The session records outlive a reboot.** They move from `$XDG_RUNTIME_DIR`
+  (emptied at boot) to `~/.local/state/agent-sandbox`. Nothing in them is a
+  secret. A session on the disk store is therefore still a session after a
+  reboot, not an orphaned directory. Sessions started by 2.0.0 are not found
+  after a reboot; [07](docs/07-troubleshooting.md#getting-back-into-a-session)
+  says how to read their workspaces.
+- **The keyring is unlocked at the prompt.** After a reboot the keyring is
+  locked, and `run` went straight to asking for the credential, with the
+  unlock script named in a warning. At a terminal, `run`, `resume` and `login`
+  now run `scripts/keyring-unlock.py` themselves, so you type the keyring's
+  password and they go on (three tries at a wrong one). `login` also creates
+  the keyring that way when there is none. Without a terminal nothing changes.
+- **Uncommitted work is named, and `export --commit` brings it out.** The
+  export helper says how many changes in the workspace are not in the bundle,
+  so an agent that stopped before committing no longer looks like one that
+  did nothing; `export --commit` commits them first, in the agent's container
+  under your git identity. `export`'s closing lines say that nothing has
+  reached the repository yet and that `push` is what sends the branch there.
+- **Tests.** `make test` ran only one of the eleven launcher suites: the
+  harness took `tests/launcher/run.sh` (the test of `run`) for a directory
+  runner. It is now `start.sh`, and all of them run; one check in
+  `session.sh` is skipped when a real `gh` is installed. New: `resume.sh`,
+  the locked-keyring prompts at a pseudo-terminal in `credentials.sh`.
+
 - **`run --git-token` from a path with an `https://` origin.** The check
   looked at the address given to `run`, so a path was always refused, though
   the token is never used for the clone: it is for `push`, `pr` and the

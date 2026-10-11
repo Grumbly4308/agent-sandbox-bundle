@@ -158,7 +158,11 @@ check  "pr names the branch explicitly" grep -qx "agent/test" "$T/gh.call"
 check  "pr runs outside any repository" test "$(head -1 "$T/gh.call")" = "$T/exported/$s"
 check  "pr takes its title from the exported commit" grep -qx "agent's change" "$T/gh.call"
 rm -f "$T/bin/gh"
-says   "without gh, pr prints the address to open" "https://github.com/example/project/compare/agent/test?expand=1" "$ROOT/sandbox" pr
+if command -v gh >/dev/null 2>&1; then
+  echo "SKIP without gh, pr prints the address to open: a real gh is installed on this machine"
+else
+  says "without gh, pr prints the address to open" "https://github.com/example/project/compare/agent/test?expand=1" "$ROOT/sandbox" pr
+fi
 
 # --- a session past its deadline  [logical B26] --------------------------------------
 sed "s/^DEADLINE_EPOCH=.*/DEADLINE_EPOCH=1/" "$dir/state" > "$T/state.edit" && cp "$T/state.edit" "$dir/state"

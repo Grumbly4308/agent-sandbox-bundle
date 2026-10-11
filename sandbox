@@ -26,14 +26,14 @@ set -euo pipefail
 SANDBOX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IFS= read -r SANDBOX_VERSION < "$SANDBOX_ROOT/VERSION"
 
-# Where sessions are recorded: memory-backed and private to you where the
-# system offers such a place, so nothing about a session outlives a reboot.
+# Where sessions are recorded: a private directory of yours that outlives a
+# reboot, so a session whose workspace is on the disk store can be resumed
+# after one. Nothing in it is a secret: the facts of each session, the
+# proxy's lists, the sidecar's public certificate. The credential never
+# touches it. (Up to 2.0.0 this was under $XDG_RUNTIME_DIR, which a reboot
+# empties; a session from then is gone with its directory.)
 if [ -z "${SANDBOX_STATE_DIR:-}" ]; then
-  if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
-    SANDBOX_STATE_DIR="$XDG_RUNTIME_DIR/agent-sandbox"
-  else
-    SANDBOX_STATE_DIR="${TMPDIR:-/tmp}/agent-sandbox-$(id -u)"
-  fi
+  SANDBOX_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/agent-sandbox"
 fi
 # Your settings and your own allowlist entries.
 SANDBOX_CONFIG_DIR="${SANDBOX_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-sandbox}"
@@ -48,6 +48,7 @@ WATCH_INTERVAL=30     # seconds between two looks by the host watchdog
 SESSION="" SESSION_DIR="" AGENT="" AUTH="" TOOLCHAIN="" BRANCH="" BASE_COMMIT=""
 ORIGIN_URL="" DEADLINE_EPOCH="" SUBNET="" EGRESS_SUBNET="" WORKSPACE_DRIVER=""
 SERVICES="" GIT_RELAY="" CREATED_EPOCH="" WORKSPACE_BYTES="" STORE=""
+TTL_SECONDS="" BOOT_ID="" BUDGET=""
 
 say()  { printf '%s\n' "$*"; }
 info() { printf '==> %s\n' "$*"; }
@@ -70,23 +71,28 @@ usage: ./sandbox <command>
       --git-relay   let the agent push the session branch itself (skips export)
       --git-token   type a git token for this session: this host clones, pushes
                     and opens the request with it; held in memory, gone at destroy
-      --mem N  --cpus N  --pids N  --ttl D  --budget N
+      --mem N  --cpus N  --pids N  --ttl D|none  --budget N
       --workspace-size N  --workspace-driver memory|local  --io-limit N
       -- args...    everything after -- goes to the agent's CLI unchanged
+  resume [-- args...]         back into the session: after the CLI exited, after
+                              its time limit, or after a reboot (workspace on disk)
   shell                       a shell inside the agent container
   verify [--quick]            attempt every bypass in the barrier register
   allow <host>[:port] --reason "<why>" [--until YYYY-MM-DD]
   allow --url <url> --reason "<why>"      allow --preset <name> --reason "<why>"
   deny <host>                 remove an entry you added
-  export [--out dir]          bring the session branch out and review it
+  export [--out dir] [--commit]
+                              bring the session branch out and review it;
+                              --commit first commits uncommitted work in the workspace
   push                        push the exported branch to the repository
   pr                          push, then open a pull or merge request
   logs [agent|proxy|sidecar|relay|service]
   destroy [--all]             remove the session: containers, networks, workspace
   upgrade                     rebuild every image from scratch
 
-Sizes are written 512m or 4g; durations 90m, 4h or 2d. Defaults live in your
-settings file. Commands other than run act on the session named by
+Sizes are written 512m or 4g; durations 90m, 4h or 2d. A session has no time
+limit unless --ttl (or TTL in your settings file) gives it one. Defaults live
+in your settings file. Commands other than run act on the session named by
 SANDBOX_SESSION, or on the only session there is.
 USAGE
 }
@@ -151,6 +157,15 @@ parse_duration() {
   esac
 }
 
+# parse_ttl <what> <value> — a session's time limit in seconds: a duration,
+# or `none` for a session that runs until you destroy it, printed as 0.
+parse_ttl() {
+  case "$2" in
+    none|0) printf '0' ;;
+    *) parse_duration "$1" "$2" ;;
+  esac
+}
+
 # parse_count <what> <value> — a whole number above zero.
 parse_count() {
   if ! [[ "$2" =~ ^[1-9][0-9]{0,8}$ ]]; then
@@ -191,7 +206,7 @@ MEM|4g|Memory for the agent's processes.
 CPUS|2|Processor cores for the agent.
 PIDS|512|How many processes and threads the agent container may have.
 NPROC|512|The same ceiling per user id, shared by sessions that run side by side.
-TTL|4h|How long a session runs before Podman stops it.
+TTL|none|A time limit after which Podman stops the session (4h, 2d ...), or none: it runs until you destroy it.
 BUDGET|500|How many model requests a session may make.
 TMP_SIZE|1g|Size of /tmp, held in memory.
 HOME_SIZE|1g|Size of the home directory, held in memory.
@@ -315,9 +330,20 @@ write_state() {
       WORKSPACE_DRIVER "$WORKSPACE_DRIVER" SERVICES "$SERVICES" GIT_RELAY "$GIT_RELAY" \
       GIT_TOKEN "$GIT_TOKEN" \
       CREATED_EPOCH "$CREATED_EPOCH" WORKSPACE_BYTES "$WORKSPACE_BYTES" STORE "$STORE" \
+      TTL_SECONDS "$TTL_SECONDS" BOOT_ID "$BOOT_ID" BUDGET "$BUDGET" \
       VERSION "$SANDBOX_VERSION" \
       > "$file.tmp" )
   mv -f "$file.tmp" "$file"
+}
+
+# This boot, so `resume` can tell whether a workspace held in memory is
+# still there. Empty where the kernel does not say (macOS).
+host_boot_id() {
+  local id=""
+  if [ -r /proc/sys/kernel/random/boot_id ]; then
+    IFS= read -r id < /proc/sys/kernel/random/boot_id || true
+  fi
+  printf '%s' "$id"
 }
 
 # Reads one session's state into the variables above and exports what
@@ -344,6 +370,16 @@ read_state() {
   CREATED_EPOCH="$(kv_get "$file" CREATED_EPOCH)"
   WORKSPACE_BYTES="$(kv_get "$file" WORKSPACE_BYTES)"
   STORE="$(kv_get "$file" STORE)"
+  TTL_SECONDS="$(kv_get "$file" TTL_SECONDS)"
+  BOOT_ID="$(kv_get "$file" BOOT_ID)"
+  BUDGET="$(kv_get "$file" BUDGET)"
+  # A session from before the limit was recorded on its own: it is the
+  # distance between the two times.
+  case "$TTL_SECONDS" in ''|*[!0-9]*)
+    TTL_SECONDS=0
+    case "$DEADLINE_EPOCH$CREATED_EPOCH" in *[!0-9]*|'') ;; *) TTL_SECONDS=$(( DEADLINE_EPOCH - CREATED_EPOCH )) ;; esac
+    [ "$TTL_SECONDS" -gt 0 ] || TTL_SECONDS=0 ;;
+  esac
   # The session's images carry the version it was started with. After you
   # update this checkout, `export` must still name those images.
   if [ -n "$(kv_get "$file" VERSION)" ]; then
@@ -399,13 +435,19 @@ sweep_sessions() {
       warn "session $session was stopped: $reason"
     fi
     deadline="$(kv_get "$dir/state" DEADLINE_EPOCH)"
-    case "$deadline" in ''|*[!0-9]*) continue ;; esac
+    # 0: the session has no time limit.
+    case "$deadline" in ''|0|*[!0-9]*) continue ;; esac
     [ "$now" -ge "$deadline" ] || continue
     if "$SANDBOX_ROOT/scripts/doctor.sh" --runtime-only 2>/dev/null; then
       stop_session_containers "$session" || true
     fi
-    warn "session $session reached its time limit ($(epoch_to_date "$deadline")) and still holds its workspace: SANDBOX_SESSION=$session ./sandbox export, then destroy"
+    warn "session $session reached its time limit ($(epoch_to_date "$deadline")) and still holds its workspace: SANDBOX_SESSION=$session ./sandbox resume to carry on, or export, then destroy"
   done
+}
+
+# Is the session's agent container running?
+agent_running() {   # <session>
+  [ "$(podman inspect --format '{{.State.Running}}' "$1-agent" 2>/dev/null || true)" = true ]
 }
 
 # ---------------------------------------------------------------------------
@@ -462,6 +504,34 @@ keyring_trouble() {   # <state>
   esac
 }
 
+# Linux, at a terminal: a keyring that is locked (it is, after every reboot)
+# or missing is opened or made here and now, by asking for its password,
+# instead of sending you off to run the script by hand and come back. Up to
+# three tries at a wrong password. Returns 0 when the keyring is open.
+# Nothing is asked when there is no terminal to ask at: a script that pipes
+# the credential in gets the old behaviour.
+keyring_open() {   # <state: locked|missing>
+  local tries=0 status
+  [ "$(uname -s)" != Darwin ] || return 1
+  [ -t 0 ] || return 1
+  case "$1" in locked|missing) ;; *) return 1 ;; esac
+  case "$1" in
+    locked)  say "Your keyring is locked (it is after every reboot). Its password opens it for this boot." >&2 ;;
+    missing) say "Your account has no keyring yet. Choose a password for a new one, and keep it: it is asked after every reboot." >&2 ;;
+  esac
+  while :; do
+    status=0
+    # Its report goes to the terminal, not into whatever is capturing this
+    # function's caller (credential_json's stdout is the credential).
+    "$SANDBOX_ROOT/scripts/keyring-unlock.py" >&2 || status=$?
+    [ "$status" -ne 0 ] || return 0
+    tries=$((tries + 1))
+    # 3 is the script's "wrong password"; anything else will not get better
+    # by trying again.
+    if [ "$status" -ne 3 ] || [ "$tries" -ge 3 ]; then return 1; fi
+  done
+}
+
 keyring_put() {   # <agent> <auth>; the secret on stdin; replaces what is there
   local hex
   if [ "$(uname -s)" = Darwin ]; then
@@ -497,7 +567,7 @@ valid_branch() {
 
 # Prints the JSON object the sidecar's loader reads: {"token":"..."}.
 credential_json() {
-  local agent="$1" auth="$2" secret="" trouble=""
+  local agent="$1" auth="$2" secret="" trouble="" state=""
   if [ "$agent" = codex ] && [ "$auth" = oauth ]; then
     codex_sidecar_json 600
     return
@@ -508,10 +578,21 @@ credential_json() {
     secret="$SANDBOX_TEST_ANTHROPIC_KEY"
   elif ! secret="$(keyring_get "$agent" "$auth")" || [ -z "$secret" ]; then
     if [ "$(uname -s)" != Darwin ]; then
-      trouble="$(keyring_trouble "$(keyring_state)")"
-      [ -z "$trouble" ] || warn "$trouble"
+      state="$(keyring_state)"
+      # Locked after a reboot: ask for the keyring's password, then look
+      # again. Only when that is not possible is the credential itself
+      # asked for.
+      if [ "$state" = locked ] && keyring_open "$state"; then
+        secret="$(keyring_get "$agent" "$auth")" || secret=""
+      fi
+      if [ -z "$secret" ]; then
+        trouble="$(keyring_trouble "$state")"
+        [ -z "$trouble" ] || warn "$trouble"
+      fi
     fi
-    if [ -t 0 ]; then
+    if [ -n "$secret" ]; then
+      :
+    elif [ -t 0 ]; then
       read -rsp "Credential for $agent ($auth), used for this session only: " secret
       printf '\n' >&2
     else
@@ -558,11 +639,15 @@ git_token_user() {   # <url>
   case "$(url_host "$1")" in *gitlab*) printf oauth2 ;; *) printf x-access-token ;; esac
 }
 
-git_token_store() {   # <url> <seconds>; the token on stdin
+git_token_store() {   # <url> <seconds, 0 = until destroy>; the token on stdin
+  local seconds="$2"
+  # The cache wants a number. With no time limit it holds the token until
+  # `destroy` tells it to exit, or a reboot ends it: a year is "forever" here.
+  [ "$seconds" -gt 0 ] || seconds=31536000
   { printf 'protocol=https\nhost=%s\nusername=%s\npassword=' "$(url_host "$1")" "$(git_token_user "$1")"
     cat
     printf '\n'
-  } | git credential-cache --socket="$(git_token_socket)" --timeout="$2" store
+  } | git credential-cache --socket="$(git_token_socket)" --timeout="$seconds" store
 }
 
 git_token_get() {   # <url>; the token on stdout, nothing once it is gone
@@ -633,12 +718,21 @@ codex_unlock() { rm -rf "$SANDBOX_STATE_DIR/codex-refresh.lock"; }
 # codex_sidecar_json <seconds> — prints {"token":...,"account_id":...} for the
 # sidecar, renewing the access token first if it has less than <seconds> left.
 codex_sidecar_json() {
-  local margin="$1" login reply renewed
+  local margin="$1" login reply renewed state="" trouble=""
   command -v jq >/dev/null 2>&1 || die "a Codex subscription login needs jq on this host"
   codex_lock || die "another session has been renewing the Codex login for over a minute; try again"
   if ! login="$(keyring_get codex oauth)" || [ -z "$login" ]; then
-    codex_unlock
-    die "no Codex login in your keyring. Store one first: ./sandbox login --agent codex --auth oauth"
+    # A locked keyring (after a reboot) is opened at the terminal first.
+    state="$(keyring_state)"
+    if [ "$state" = locked ] && keyring_open "$state"; then
+      login="$(keyring_get codex oauth)" || login=""
+    fi
+    if [ -z "$login" ]; then
+      codex_unlock
+      trouble="$(keyring_trouble "$state")"
+      [ -z "$trouble" ] || warn "$trouble"
+      die "no Codex login in your keyring. Store one first: ./sandbox login --agent codex --auth oauth"
+    fi
   fi
   if [ "$(printf '%s' "$login" | codex_seconds_left)" -lt "$margin" ]; then
     if ! reply="$(printf '%s' "$login" | jq -j '.tokens.refresh_token' | codex_token_request)"; then
@@ -678,8 +772,12 @@ WATCH_LAST_JSON=""
 watchdog_tick() {
   local used json
   [ -f "$SESSION_DIR/state" ] || return 1
-  [ "$(date +%s)" -lt "$DEADLINE_EPOCH" ] || return 1
-  [ "$(podman inspect --format '{{.State.Running}}' "$SESSION-agent" 2>/dev/null || true)" = true ] || return 1
+  # Re-read each time: `resume` moves the deadline when it starts the
+  # containers again.
+  DEADLINE_EPOCH="$(kv_get "$SESSION_DIR/state" DEADLINE_EPOCH)"
+  case "$DEADLINE_EPOCH" in ''|*[!0-9]*) DEADLINE_EPOCH=0 ;; esac
+  if [ "$DEADLINE_EPOCH" -ne 0 ] && [ "$(date +%s)" -ge "$DEADLINE_EPOCH" ]; then return 1; fi
+  agent_running "$SESSION" || return 1
 
   if [ "$WORKSPACE_DRIVER" = local ]; then
     # [logical B33] The store is shared by every session that uses it, and
@@ -1233,12 +1331,14 @@ exec_environment() {
 sidecar_tls() { [ "$AGENT" = codex ] && [ "$AUTH" = oauth ]; }
 
 # sidecar_tls_json <address> <seconds>: a new key and a certificate for the
-# sidecar's address, valid a day longer than the session, as the JSON
-# `sidecar-load --tls` reads. The key exists only in this pipe and in the
-# sidecar's memory; the certificate alone is kept, in the session directory,
-# for the agent to trust (exec_environment).
+# sidecar's address, valid a day longer than the session (a year, for a
+# session with no time limit), as the JSON `sidecar-load --tls` reads. The
+# key exists only in this pipe and in the sidecar's memory; the certificate
+# alone is kept, in the session directory, for the agent to trust
+# (exec_environment).
 sidecar_tls_json() {
   local address="$1" days=$(( $2 / 86400 + 2 )) key cert
+  [ "$2" -gt 0 ] || days=366
   command -v openssl >/dev/null 2>&1 || die "a Codex subscription session needs openssl on this host"
   key="$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 2>/dev/null)" \
     || die "openssl could not make a key for the sidecar"
@@ -1265,7 +1365,7 @@ cmd_run() {
   local mem cpus pids nproc ttl budget tmp_size home_size workspace_size
   local mem_bytes tmp_bytes home_bytes ttl_seconds total helpers used credential
   local relay_host="" relay_token="" relay_user=x-access-token relay_remote="" image_ids git_token="" push_url=""
-  local doctor_args=() tty=(-i) launch_args=() cli_args=() status=0
+  local doctor_args=() launch_args=() cli_args=() status=0
 
   AGENT="$(setting AGENT)"; AUTH="$(setting AUTH)"; TOOLCHAIN="$(setting TOOLCHAIN)"
   mem="$(setting MEM)"; cpus="$(setting CPUS)"; pids="$(setting PIDS)"; nproc="$(setting NPROC)"
@@ -1331,13 +1431,16 @@ cmd_run() {
   tmp_bytes="$(parse_size TMP_SIZE "$tmp_size")"
   home_bytes="$(parse_size HOME_SIZE "$home_size")"
   WORKSPACE_BYTES="$(parse_size --workspace-size "$workspace_size")"
-  ttl_seconds="$(parse_duration --ttl "$ttl")"
+  ttl_seconds="$(parse_ttl --ttl "$ttl")"
+  TTL_SECONDS="$ttl_seconds"
+  BOOT_ID="$(host_boot_id)"
   pids="$(parse_count --pids "$pids")"
   nproc="$(parse_count NPROC "$nproc")"
   # The per-user limit must never be the tighter of the two, or raising
   # --pids would appear to do nothing.
   if [ "$nproc" -lt "$pids" ]; then nproc="$pids"; fi
   budget="$(parse_count --budget "$budget")"
+  BUDGET="$budget"
   # Optional: an agent whose settings all depend on the session has none.
   [ ! -f "$SANDBOX_ROOT/agents/$AGENT/env" ] || check_env_file "$SANDBOX_ROOT/agents/$AGENT/env"
   command -v git >/dev/null 2>&1 || die "git is not installed"
@@ -1445,7 +1548,7 @@ cmd_run() {
       '') die "--git-token is for pushing to an https:// repository, and $source has no origin to push to: a local path needs no token to clone. To push from this session, give it one: git -C $source remote add origin https://..." ;;
       *) die "--git-token is for pushing to an https:// repository, and this session would push to $(printf '%s' "$push_url" | filter_control): an ssh address needs no token, it uses a key" ;;
     esac
-    say "The token is held in memory for this session's time limit, and used by this"
+    say "The token is held in memory until the session is destroyed (or its time limit passes), and used by this"
     say "host to clone, push and open the request. It is never put in a container."
     # Typed here, or piped in on stdin; it is not stored anywhere on this host.
     read -rsp "A git token that can read and push that one repository and nothing else: " git_token \
@@ -1495,7 +1598,8 @@ cmd_run() {
   mkdir -m 755 "$SESSION_DIR/proxy"
   mkdir "$SESSION_DIR/export"
   CREATED_EPOCH="$(date +%s)"
-  DEADLINE_EPOCH=$(( CREATED_EPOCH + ttl_seconds ))
+  DEADLINE_EPOCH=0
+  [ "$ttl_seconds" -eq 0 ] || DEADLINE_EPOCH=$(( CREATED_EPOCH + ttl_seconds ))
   write_state
 
   # --- The proxy's lists  [logical B20, B21] --------------------------------
@@ -1520,7 +1624,7 @@ cmd_run() {
   # The time limit counts from now, not from before the images were built:
   # Podman's own deadline starts when each container does.
   CREATED_EPOCH="$(date +%s)"
-  DEADLINE_EPOCH=$(( CREATED_EPOCH + ttl_seconds ))
+  [ "$ttl_seconds" -eq 0 ] || DEADLINE_EPOCH=$(( CREATED_EPOCH + ttl_seconds ))
   write_state
 
   # --- Create: networks, workspace, then the containers ---------------------
@@ -1624,17 +1728,155 @@ cmd_run() {
   # --- Attach ----------------------------------------------------------------
   RUN_UNFINISHED=""
   trap - EXIT INT TERM
-  say "Session $SESSION runs until $(epoch_to_date "$DEADLINE_EPOCH"), at most $budget model requests."
+  if [ "$auto" -eq 1 ]; then launch_args=(--auto); fi
+  attach_agent "$budget" ${launch_args[@]+"${launch_args[@]}"} ${cli_args[@]+"${cli_args[@]}"} || status=$?
+  return "$status"
+}
+
+# The session's time limit in one line, for `run` and `resume`.
+deadline_sentence() {
+  if [ "${DEADLINE_EPOCH:-0}" -eq 0 ]; then
+    printf 'has no time limit (it runs until you destroy it)'
+  else
+    printf 'runs until %s' "$(epoch_to_date "$DEADLINE_EPOCH")"
+  fi
+}
+
+# attach_agent <budget> [launch args...]: start the CLI in the agent
+# container and hand the terminal over; say what to do when it exits.
+attach_agent() {
+  local budget="$1" tty=(-i) status=0
+  shift
+  exec_environment
+  say "Session $SESSION $(deadline_sentence), at most $budget model requests."
   say "From here on every byte on this screen is the agent's. Do not type a password into it."
   if [ -t 0 ] && [ -t 1 ]; then tty=(-it); fi
-  if [ "$auto" -eq 1 ]; then launch_args=(--auto); fi
-  podman exec "${tty[@]}" "${EXEC_ENV[@]}" "$SESSION-agent" sandbox-launch \
-    ${launch_args[@]+"${launch_args[@]}"} ${cli_args[@]+"${cli_args[@]}"} || status=$?
+  podman exec "${tty[@]}" "${EXEC_ENV[@]}" "$SESSION-agent" sandbox-launch "$@" || status=$?
 
   say ""
   say "The agent's CLI has exited$([ "$status" -eq 0 ] || printf ' with status %s' "$status"). Session $SESSION is still there, holding its workspace."
+  say "  carry on with it:     SANDBOX_SESSION=$SESSION ./sandbox resume"
   say "  bring the work out:   SANDBOX_SESSION=$SESSION ./sandbox export"
   say "  remove the session:   SANDBOX_SESSION=$SESSION ./sandbox destroy"
+  return "$status"
+}
+
+# ---------------------------------------------------------------------------
+# resume — back into a session that is still there.
+# The CLI exited, or the time limit killed the containers, or the host
+# rebooted: the workspace is still there (on the disk store, across a
+# reboot too), and the session's facts are in its directory. Everything
+# that was stopped is started again; what Podman's restart does not bring
+# back (the sidecar's token, a relay's token, a --git-token: all held in
+# memory only) is handed in again the way `run` did it. Nothing is created:
+# the containers, networks and volume are the ones `run` made, with the
+# flags topology.sh gave them, and the barrier checks that passed for them
+# still stand.
+# ---------------------------------------------------------------------------
+cmd_resume() {
+  local names name running stopped="" status=0 credential relay_token="" relay_user=x-access-token
+  local cli_args=() reason=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --) shift; cli_args=("$@"); break ;;
+      *) die "usage: ./sandbox resume [-- args for the agent's CLI]" ;;
+    esac
+  done
+  load_session
+  require_podman
+  set_selinux_opt
+  [ "$WORKSPACE_DRIVER" != memory ] || [ -z "$BOOT_ID" ] || [ "$BOOT_ID" = "$(host_boot_id)" ] \
+    || die "session $SESSION held its workspace in memory, and this host has rebooted since: the work is gone. Remove the session: ./sandbox destroy"
+  if [ -f "$SESSION_DIR/stopped" ]; then
+    IFS= read -r reason < "$SESSION_DIR/stopped" || true
+    warn "session $SESSION was stopped because $reason. It is started again as it is; if the workspace is still past its share, the watch stops it again within $WATCH_INTERVAL seconds."
+    rm -f "$SESSION_DIR/stopped"
+  fi
+
+  session_addresses      # the sidecar's address, for a new TLS certificate
+
+  # The order `run` starts them in: the keeper first, the agent last.
+  names="$SESSION-keeper $SESSION-proxy $SESSION-credsidecar"
+  if [ "$GIT_RELAY" = 1 ]; then names="$names $SESSION-gitrelay"; fi
+  for name in $SERVICES; do names="$names $SESSION-svc-${name%%:*}"; done
+  names="$names $SESSION-agent"
+  for name in $names; do
+    podman container exists "$name" 2>/dev/null \
+      || die "container $name of session $SESSION is gone; the session cannot be resumed. What is left of it: ./sandbox export, then destroy"
+  done
+  running="$(podman ps --filter "label=$LABEL=$SESSION" --format '{{.Names}}')"
+  for name in $names; do
+    case "$name" in *-keeper) continue ;; esac
+    printf '%s\n' "$running" | grep -qxF "$name" || stopped="$stopped $name"
+  done
+
+  if [ -z "$stopped" ]; then
+    # Everything is up: the CLI simply exited. Back in, with nothing touched.
+    info "session $SESSION is running; attaching"
+  else
+    # Something is down: the time limit, a stop, or a reboot. What still
+    # runs is stopped too (except the keeper), and everything starts afresh
+    # in order, so the session is in one state, not half of two. A dead
+    # container's memory-backed places (/tmp, home, a service's data) start
+    # out empty again; the workspace is untouched.
+    info "session $SESSION is stopped ($(printf '%s' "$stopped" | wc -w | tr -d ' ') of its containers are down); starting it again"
+    credential="$(credential_json "$AGENT" "$AUTH")"
+    [ -n "$credential" ] || die "no credential"
+    if [ "$GIT_RELAY" = 1 ]; then
+      case "$(url_host "$ORIGIN_URL")" in *gitlab*) relay_user=oauth2 ;; esac
+      if [ "$GIT_TOKEN" = 1 ]; then relay_token="$(git_token_get "$ORIGIN_URL")"; fi
+      if [ -z "$relay_token" ]; then
+        say "The git relay's token was held in memory and is gone. It is needed again for the agent to push."
+        read -rsp "A git token that can push to that one repository and nothing else: " relay_token \
+          || die "the relay needs a git token, typed or on standard input"
+        if [ -t 0 ]; then printf '\n' >&2; fi
+        looks_like_token "$relay_token" || die "that does not look like a token"
+      fi
+    fi
+    stop_watchdog "$SESSION"
+    stop_session_containers "$SESSION"
+    # The keeper too, if a reboot left it down: it holds the workspace.
+    printf '%s\n' "$running" | grep -qxF "$SESSION-keeper" || podman start "$SESSION-keeper" >/dev/null
+    for name in $names; do
+      case "$name" in *-keeper) continue ;; esac
+      podman start "$name" >/dev/null
+    done
+    # Podman's kill timers started again with the containers.
+    CREATED_EPOCH="$(date +%s)"
+    DEADLINE_EPOCH=0
+    [ "$TTL_SECONDS" -eq 0 ] || DEADLINE_EPOCH=$(( CREATED_EPOCH + TTL_SECONDS ))
+    write_state
+    wait_for "the proxy" 30 podman exec "$SESSION-proxy" squid -k check -f /var/run/squid/squid.conf
+    if sidecar_tls; then
+      sidecar_tls_json "$SANDBOX_SIDECAR_IP" "$TTL_SECONDS" | podman exec -i "$SESSION-credsidecar" sidecar-load --tls >/dev/null \
+        || die "the credential sidecar did not accept its TLS key and certificate"
+    fi
+    wait_for "the credential sidecar" 30 podman exec "$SESSION-credsidecar" sidecar-healthcheck
+    for name in $SERVICES; do
+      load_service "$name"
+      if [ -n "$SVC_HEALTH" ]; then
+        # shellcheck disable=SC2086  # the health check is a command and its arguments
+        wait_for "service ${name%%:*}" 60 podman exec "$SESSION-svc-${name%%:*}" $SVC_HEALTH
+      fi
+    done
+    printf '%s' "$credential" | podman exec -i "$SESSION-credsidecar" sidecar-load >/dev/null \
+      || die "the credential sidecar did not accept the credential"
+    credential=""
+    if [ "$GIT_RELAY" = 1 ]; then
+      wait_for "the git relay" 30 podman exec "$SESSION-gitrelay" gitrelay-healthcheck
+      printf '{"token":"%s","username":"%s"}' "$relay_token" "$relay_user" \
+        | podman exec -i "$SESSION-gitrelay" relay-load >/dev/null \
+        || die "the git relay did not accept the token"
+      relay_token=""
+    fi
+    if [ "$WORKSPACE_DRIVER" = local ] || { [ "$AGENT" = codex ] && [ "$AUTH" = oauth ]; }; then
+      start_watchdog
+    fi
+  fi
+  if [ "$GIT_TOKEN" = 1 ] && [ -z "$(git_token_get "$ORIGIN_URL")" ]; then
+    warn "the session's git token is gone (a reboot, or its time passed). push and pr will ask for one; the next run --git-token takes a new one"
+  fi
+  attach_agent "${BUDGET:-?}" ${cli_args[@]+"${cli_args[@]}"} || status=$?
   return "$status"
 }
 
@@ -1647,8 +1889,8 @@ cmd_shell() {
   [ $# -eq 0 ] || die "usage: ./sandbox shell"
   load_session
   require_podman
-  [ "$(podman inspect --format '{{.State.Running}}' "$SESSION-agent" 2>/dev/null || true)" = true ] \
-    || die "the agent container of $SESSION is not running (its time limit may have passed). The work is still there: ./sandbox export"
+  agent_running "$SESSION" \
+    || die "the agent container of $SESSION is not running (its time limit passed, or the host rebooted). The work is still there: ./sandbox resume starts the session again, ./sandbox export brings the work out"
   if [ -t 0 ] && [ -t 1 ]; then tty=(-it); fi
   exec_environment
   podman exec "${tty[@]}" "${EXEC_ENV[@]}" "$SESSION-agent" bash
@@ -1786,11 +2028,12 @@ cmd_deny() {
 # ---------------------------------------------------------------------------
 
 cmd_export() {
-  local out="" bundle size status=0
+  local out="" bundle size status=0 commit=0 pending
   while [ $# -gt 0 ]; do
     case "$1" in
-      --out) [ $# -ge 2 ] || die "--out needs a directory"; out="$2"; shift ;;
-      *) die "usage: ./sandbox export [--out dir]" ;;
+      --out)    [ $# -ge 2 ] || die "--out needs a directory"; out="$2"; shift ;;
+      --commit) commit=1 ;;
+      *) die "usage: ./sandbox export [--out dir] [--commit]" ;;
     esac
     shift
   done
@@ -1801,9 +2044,31 @@ cmd_export() {
   mkdir -p "$out"
   out="$(cd "$out" && pwd)"
 
-  # The bundle goes next to where it will be unpacked, on disk. The session
-  # directory is held in memory, and a bundle can be as large as the
-  # workspace. It is removed as soon as export.sh has read it.
+  if [ "$commit" -eq 1 ]; then
+    # Only commits leave a session. An agent that stopped before committing
+    # (or was never told to) leaves its work in the tree; this commits it,
+    # inside the agent's own container, under your git identity, so the
+    # export can carry it. It is the agent's git acting on the agent's tree,
+    # which is what the agent does all day; the barrier is still the export
+    # below, which reads the result in a container of its own.
+    agent_running "$SESSION" \
+      || die "--commit needs the agent container running, and it is not: ./sandbox resume starts the session again"
+    exec_environment
+    pending="$(podman exec "${EXEC_ENV[@]}" "$SESSION-agent" git -C /workspace/repo -c core.hooksPath=/dev/null status --porcelain --untracked-files=all 2>&1 | filter_control)" \
+      || die "git status in the workspace failed: $pending"
+    pending="$(printf '%s' "$pending" | grep -c . || true)"
+    if [ "${pending:-0}" -gt 0 ]; then
+      info "committing $pending uncommitted change(s) in the workspace on branch $BRANCH"
+      podman exec "${EXEC_ENV[@]}" "$SESSION-agent" sh -c 'cd /workspace/repo && git -c core.hooksPath=/dev/null add -A && git -c core.hooksPath=/dev/null commit --quiet -m "Uncommitted work at export"' 2>&1 | filter_control \
+        || die "the commit failed (see above). Is your git identity set? export needs user.name and user.email in your git configuration for this"
+    else
+      info "the workspace has no uncommitted changes"
+    fi
+  fi
+
+  # The bundle goes next to where it will be unpacked, on disk, since a
+  # bundle can be as large as the workspace. It is removed as soon as
+  # export.sh has read it.
   bundle="$out/.$SESSION.bundle"
   rm -f "$bundle"
 
@@ -1835,7 +2100,8 @@ cmd_export() {
   say ""
   case "$status" in
     0) say "Exported to $out/$SESSION/repo.git. Read the dependency diff first, then the code diff."
-       say "Then: ./sandbox push   or   ./sandbox pr   and, when you are done,   ./sandbox destroy" ;;
+       say "Nothing has reached $ORIGIN_URL yet. To send branch $BRANCH there: ./sandbox push   or   ./sandbox pr"
+       say "When you are done with the session: ./sandbox destroy" ;;
     2) say "Exported to $out/$SESSION/repo.git, but something above needs you. push and pr refuse until export is clean." ;;
     *) die "export failed (status $status)" ;;
   esac
@@ -1937,7 +2203,7 @@ cmd_pr() {
 # ---------------------------------------------------------------------------
 
 cmd_login() {
-  local agent auth secret="" path="" trouble=""
+  local agent auth secret="" path="" trouble="" state=""
   agent="$(setting AGENT)"
   auth="$(setting AUTH)"
   while [ $# -gt 0 ]; do
@@ -1954,9 +2220,12 @@ cmd_login() {
   if [ "$(uname -s)" != Darwin ]; then
     command -v secret-tool >/dev/null 2>&1 \
       || die "secret-tool is not installed (apt install libsecret-tools, dnf install libsecret). Without a keyring, ./sandbox run asks for the credential each time."
-    # Found out before the credential is asked for, not after it has been pasted.
-    trouble="$(keyring_trouble "$(keyring_state)")"
-    [ -z "$trouble" ] || die "$trouble"
+    # Found out before the credential is asked for, not after it has been
+    # pasted. At a terminal a locked or missing keyring is opened or made
+    # right here; otherwise the fix is named.
+    state="$(keyring_state)"
+    trouble="$(keyring_trouble "$state")"
+    if [ -n "$trouble" ] && ! keyring_open "$state"; then die "$trouble"; fi
   fi
 
   case "$agent/$auth" in
@@ -2179,6 +2448,7 @@ main() {
   sweep_sessions
   case "$command" in
     run)     cmd_run "$@" ;;
+    resume)  cmd_resume "$@" ;;
     shell)   cmd_shell "$@" ;;
     verify)  cmd_verify "$@" ;;
     allow)   cmd_allow "$@" ;;

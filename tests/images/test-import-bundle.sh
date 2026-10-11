@@ -197,6 +197,42 @@ if [ "$(git -C "$scratch/host.git" rev-list --count "$base..$tip")" = 1 ]; then
 else
   fail "bundle: history does not connect to the base"
 fi
+if grep -q uncommitted "$scratch/bundle.err"; then
+  fail "bundle: a clean tree was reported as having uncommitted changes"
+else
+  pass "bundle: a clean tree gets no warning"
+fi
+
+# --- Work the agent did not commit is named, and left out --------------------
+echo four >"$repo/d.txt"                 # untracked
+echo changed >"$repo/c.txt"              # modified
+if SANDBOX_WORKSPACE_FOR_TESTS="$ws" "$bundle" "$branch" >"$scratch/dirty.bundle" 2>"$scratch/dirty.err"; then
+  pass "bundle: still succeeds with uncommitted changes in the tree"
+else
+  fail "bundle: failed on a dirty tree: $(cat "$scratch/dirty.err")"
+fi
+if grep -q '2 uncommitted change(s) in the workspace are NOT in this bundle' "$scratch/dirty.err"; then
+  pass "bundle: says how many changes are uncommitted and that they are left out"
+else
+  fail "bundle: no warning about uncommitted changes: $(cat "$scratch/dirty.err")"
+fi
+if grep -q 'export --commit' "$scratch/dirty.err"; then
+  pass "bundle: names export --commit as the way to bring them out"
+else
+  fail "bundle: the warning names no remedy"
+fi
+if cmp -s "$scratch/out.bundle" "$scratch/dirty.bundle"; then
+  pass "bundle: the bundle itself is the commits only, unchanged"
+else
+  fail "bundle: the bundle differs when the tree is dirty"
+fi
+if [ -z "$(git -C "$repo" diff --cached --name-only)" ]; then
+  pass "bundle: nothing was staged in the agent's repository"
+else
+  fail "bundle: the index was touched"
+fi
+rm -f "$repo/d.txt"
+git -C "$repo" checkout --quiet -- c.txt
 
 # --- Round trip: the exported bundle imports again ------------------------------
 ws6="$scratch/ws6"

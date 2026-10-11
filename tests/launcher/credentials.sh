@@ -28,10 +28,19 @@ if [ "$(uname -s)" = Darwin ]; then
 fi
 
 # A keyring: `store` keeps stdin in a file named after the attributes,
-# `lookup` prints it. Every call's arguments are noted.
+# `lookup` prints it. Every call's arguments are noted. While the keyring is
+# locked or missing (the state file says so; the stand-in busctl reads the
+# same file) it gives nothing and takes nothing, as the real one does.
+export FAKE_BUSCTL_STATE_FILE="$T/keyring.state"
 cat > "$T/bin/secret-tool" <<STANDIN
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$T/secret-tool.calls"
+state=ready
+[ ! -f "$T/keyring.state" ] || IFS= read -r state < "$T/keyring.state"
+if [ "\$state" != ready ]; then
+  echo "secret-tool: Cannot create an item in a locked collection" >&2
+  exit 1
+fi
 verb="\$1"; shift
 if [ "\$verb" = store ]; then shift 2; fi          # --label <text>
 file="$T/keyring/\$4-\$6"                           # service S agent A auth M
@@ -208,5 +217,72 @@ refuse "destroy stops the watchdog" kill -0 "$watchdog"
 left="$(find "$SANDBOX_STATE_DIR" -mindepth 1)"
 if [ -z "$left" ]; then pass "destroy leaves nothing in the state directory"; else fail "left: $left"; fi
 refuse "the watchdog refuses a name that is not a session" "$ROOT/sandbox" __watchdog "../../etc"
+
+# --- a locked keyring, at a terminal: its password is asked for right there ---------
+# After every reboot the keyring is locked. At a terminal, `login` and `run`
+# run scripts/keyring-unlock.py themselves and carry on once it is open. The
+# script is a stand-in here: it reads a password from the terminal, opens the
+# stand-in keyring on the right one, and exits 3 (the real script's "wrong
+# password") on any other. The terminal is a pseudo-terminal from `script`.
+if script --version 2>/dev/null | grep -q util-linux; then
+  cat > "$ROOT/scripts/keyring-unlock.py" <<STANDIN
+#!/usr/bin/env bash
+printf 'called\n' >> "$T/unlock.calls"
+IFS= read -rs password < /dev/tty
+if [ "\$password" = open-sesame ]; then
+  echo ready > "$T/keyring.state"
+  echo "the keyring is unlocked; ./sandbox login can store the credential now"
+  exit 0
+fi
+echo "that is not the keyring's password" >&2
+exit 3
+STANDIN
+  chmod +x "$ROOT/scripts/keyring-unlock.py"
+  at_terminal() {   # <input lines> <command...>: run at a pseudo-terminal, typing the lines
+    local input="$1" cmd
+    shift
+    cmd="$(printf '%q ' "$@")"
+    printf '%b' "$input" | script -q -e -c "$cmd" /dev/null 2>&1 || true
+  }
+  unlock_calls() { if [ -f "$T/unlock.calls" ]; then wc -l < "$T/unlock.calls" | tr -d ' '; else echo 0; fi; }
+
+  echo locked > "$T/keyring.state"
+  out="$(at_terminal 'wrong-one\nopen-sesame\nsk-ant-api03-AFTER-UNLOCK\n' "$ROOT/sandbox" login --agent claude --auth apikey)"
+  case "$out" in *"Your keyring is locked"*) pass "login at a terminal says the keyring is locked and asks for its password" ;; *) fail "login, locked keyring at a terminal: $out" ;; esac
+  check "a wrong password is asked again" test "$(unlock_calls)" -eq 2
+  check "once open, login stores the credential" test "$(cat "$T/keyring/claude-apikey")" = "sk-ant-api03-AFTER-UNLOCK"
+  case "$out" in *"scripts/keyring-unlock.py"*) fail "login sent the operator off to run the script by hand" ;; *) pass "login does not send the operator off to run the script" ;; esac
+
+  echo locked > "$T/keyring.state"
+  : > "$T/unlock.calls"
+  out="$(at_terminal 'open-sesame\n' "$ROOT/sandbox" run "$T/src" --agent claude --auth apikey)"
+  s="$(only_session)"
+  check "run at a terminal opens the locked keyring first" test "$(unlock_calls)" -eq 1
+  loaded="$(find "$FAKE_PODMAN_STATE/stdin" -name "*.$s-credsidecar.sidecar-load")"
+  check "... and the sidecar gets the stored credential" test "$(cat "$loaded")" = '{"token":"sk-ant-api03-AFTER-UNLOCK"}'
+  case "$out" in *"Credential for claude"*) fail "run asked for the credential although the keyring opened" ;; *) pass "run does not ask for the credential once the keyring is open" ;; esac
+  "$ROOT/sandbox" destroy >/dev/null 2>&1
+
+  echo locked > "$T/keyring.state"
+  : > "$T/unlock.calls"
+  out="$(at_terminal 'no\nno\nno\nsk-ant-api03-TYPED-INSTEAD\n' "$ROOT/sandbox" run "$T/src" --agent claude --auth apikey)"
+  s="$(only_session)"
+  check "three wrong passwords, and the keyring is given up on" test "$(unlock_calls)" -eq 3
+  case "$out" in *"your keyring is locked"*"Credential for claude (apikey)"*) pass "run then names the trouble and asks for the credential itself" ;; *) fail "after three wrong passwords: $out" ;; esac
+  loaded="$(find "$FAKE_PODMAN_STATE/stdin" -name "*.$s-credsidecar.sidecar-load")"
+  check "... and uses what was typed" test "$(cat "$loaded")" = '{"token":"sk-ant-api03-TYPED-INSTEAD"}'
+  "$ROOT/sandbox" destroy >/dev/null 2>&1
+
+  # With no terminal nothing is asked: the old behaviour, for scripts.
+  echo locked > "$T/keyring.state"
+  : > "$T/unlock.calls"
+  out="$(printf 'sk-ant-api03-PIPED\n' | "$ROOT/sandbox" run "$T/src" --agent claude --auth apikey 2>&1)" || fail "piped run with a locked keyring failed: $out"
+  check "without a terminal the unlock script is not run" test "$(unlock_calls)" -eq 0
+  case "$out" in *"your keyring is locked"*) pass "... the trouble is named and the credential read from standard input" ;; *) fail "piped, locked: $out" ;; esac
+  "$ROOT/sandbox" destroy >/dev/null 2>&1
+  echo ready > "$T/keyring.state"
+else
+  echo "SKIP the locked-keyring prompt: needs util-linux script for a pseudo-terminal"
+fi
 
 finish
