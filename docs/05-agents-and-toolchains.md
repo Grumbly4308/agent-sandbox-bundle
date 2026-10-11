@@ -18,6 +18,29 @@ any particular agent; a fourth one is a fourth directory.
 Shipped: `claude` (Claude Code 2.1.296), `codex` (Codex CLI 0.162.1),
 `opencode` (OpenCode 1.18.34).
 
+## Switching agents on one repository
+
+A session's agent is fixed when it starts. To use another agent on the same
+repository, start another session with `--agent`, after storing that agent's
+credential once with `./sandbox login --agent <name>`.
+
+- **A fresh start:** `./sandbox run <repo> --agent codex`. It starts from the
+  repository as it is now and knows nothing of other sessions. A Claude
+  session and a Codex session can run on the same repository at once.
+- **Carrying on from the other agent's work**, with
+  `--branch agent/<first session>`, which continues that branch from its
+  last commit. The first agent's work has to come out first, one of two
+  ways:
+  - **A, through the remote:** `export`, `push`, `destroy`, then
+    `run <repo-url> --agent codex --branch agent/<first session>`.
+  - **B, straight from the export, nothing pushed:** `export`, `destroy`,
+    then `run ~/agent-sandbox-out/<first session>/repo.git --agent codex
+    --branch agent/<first session>`.
+
+Read each export, RUNS LATER above all, before the next agent builds on it.
+[09 — Sessions](09-sessions.md#another-agent-on-the-same-repository) has both
+ways in full, with how to push the result of B.
+
 ## Agent configuration is the vendor's default
 
 We ship no `CLAUDE.md`, no `AGENTS.md`, no hooks and no permission rules. Rules

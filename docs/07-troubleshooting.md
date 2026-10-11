@@ -37,6 +37,9 @@ fixes it.
 | `your subordinate uid range does not reach 61003` | Podman maps container users onto a range of ids your account owns; it is too small. | `sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $USER`, then `podman system migrate`. |
 | `images/PINS still has UNPINNED base images` | Base images are pinned by exact version, and the placeholders have not been filled in. | `scripts/pin-images.sh` |
 | `the session may use up to N of memory and this host has M` | The session's ceiling (your `--mem` plus `/tmp` and home, plus the workspace if it is held in memory) is more than the host has free. | Make the disk store if you have none (`./sandbox doctor` prints how), lower `--mem`, or destroy an old session. |
+| `there is more than one session. Set SANDBOX_SESSION to one of:` | Every command but `run` works on one session, and there are several. | Put the one you mean in front: `SANDBOX_SESSION=asb-... ./sandbox export`. See [09 — Sessions](09-sessions.md#several-sessions-side-by-side). |
+| `there is no session` | The session was destroyed, or a reboot ended it. | `./sandbox run` a new one. An export from the old one is still in `~/agent-sandbox-out/`. |
+| `the repository's HEAD points at no commit, but it has branches: ...` | A bare repository you pushed to (option 2 in the quickstart) was made with a different first branch than the one you pushed. | Point HEAD at your branch with the `git ... symbolic-ref` command the message prints, then `run` again. (`--branch <that branch>` also starts, but then the agent works on that branch itself rather than on a branch of its own.) |
 | A barrier check fails at start | `verify` found a barrier that does not hold. The session is stopped. | Read the `fix:` line under the failed check. Do not work around it. |
 
 ## Inside a session
