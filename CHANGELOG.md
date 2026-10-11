@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- **Docs: the quickstart starts from a brand-new VM.** Rewritten for
+  someone who has never set up a Linux host: Debian 13, Ubuntu 24.04 or
+  Fedora 41, every command written out with which machine and which account
+  it is typed on, what each block should print, the account, cgroup
+  delegation, the disk store (with SELinux labelling on Fedora), gitleaks
+  with its checksum checked, Ubuntu's crash reporter, the keyring, both
+  credentials, both ways to get the work back to GitHub, tmux, reboots and
+  updates. The Ubuntu and Fedora commands have not been run by the authors,
+  and the page says so.
+- **Docs: sessions.** New [09 — Sessions](docs/09-sessions.md): one
+  repository after another, several side by side (`SANDBOX_SESSION`, what
+  they share), another agent on the same repository, and two ways to have it
+  carry on from the first agent's work with `--branch`: through the remote,
+  or straight from the export with nothing pushed. The README, the
+  quickstart, [05](docs/05-agents-and-toolchains.md) and
+  [07](docs/07-troubleshooting.md) point to it. The second way's import (an
+  existing branch carried on, `origin` deciding where `push` goes) was
+  checked against the real `import_repository`; a whole run with two agents
+  has not been done.
+- **Docs: fetching an export to a workstation.** The old quickstart's
+  `git push origin agent/<session>` after a plain `git fetch` named a branch
+  the fetch never made; it now pushes `FETCH_HEAD`.
 - **`login` on a headless Linux host.** The account the quickstart recommends
   (no password, reached over SSH) has no keyring, and gnome-keyring can create
   or unlock one only through a graphical prompt, so `./sandbox login` ended in

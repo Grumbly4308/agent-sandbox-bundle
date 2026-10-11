@@ -163,7 +163,7 @@ sandboxes.** The choices, from strongest to weakest:
 | **A deploy key** on the one repository, in `~/.ssh` of the sandbox host. | one repository | until you rotate it | one repository | one setup per repository |
 | A personal key, a classic token, `gh auth login` with its default scopes. | everything | years | everything | none, which is the problem |
 
-The first two are described in the [quickstart](01-quickstart.md#a-private-repository).
+The first two are described in the [quickstart](01-quickstart.md#15-decide-how-the-work-gets-back-to-github).
 For the second, a GitHub fine-grained token with *Contents: read and write* on
 the one repository (and *Pull requests: read and write* if `pr` is to open
 one) and the shortest expiry the form allows is right. Short expiry is the

@@ -50,14 +50,37 @@ the less that account holds, the less a breakout is worth.
 ```
 
 [03 — Credentials](docs/03-credentials.md#git-credentials) weighs the choices;
-the [quickstart](docs/01-quickstart.md#a-private-repository) shows both.
+the [quickstart](docs/01-quickstart.md#15-decide-how-the-work-gets-back-to-github) shows both.
+
+## More than one repository, more than one agent
+
+A session holds **one repository and one agent**, on purpose: that is what
+keeps a hostile agent in one repository away from the others. Everything
+else follows from making more sessions:
+
+- **One repository after another:** `export`, `destroy`, `run` the next one.
+  The stored model credentials and the built images are reused; nothing else
+  carries over.
+- **Several at once:** one `run` each. Other commands then take
+  `SANDBOX_SESSION=<name>` to say which session they mean.
+- **Another agent on the same repository:** `run` it again with
+  `--agent codex` (or `claude`). To have it carry on from the first agent's
+  work, bring that work out first and name its branch with `--branch`:
+  - **A, through the remote:** `export` and `push` the first session, then
+    `run <repo-url> --agent codex --branch agent/<first session>`;
+  - **B, straight from the export, nothing pushed:** `export` the first
+    session, then
+    `run ~/agent-sandbox-out/<first session>/repo.git --agent codex --branch agent/<first session>`.
+
+[09 — Sessions](docs/09-sessions.md) has all of it, with what sessions side
+by side share and how to push the result of B.
 
 ## Read these
 
 | | |
 |---|---|
 | [00 — Threat model](docs/00-threat-model.md) | What this protects, what it does not, and every barrier with its test. **Start here.** |
-| [01 — Quickstart](docs/01-quickstart.md) | From nothing to a running agent |
+| [01 — Quickstart](docs/01-quickstart.md) | From a brand-new Debian, Ubuntu or Fedora VM to a running agent, every command written out |
 | [02 — Egress](docs/02-egress.md) | The proxy and the allowlist |
 | [03 — Credentials](docs/03-credentials.md) | Why the agent never holds your login |
 | [04 — Monitoring](docs/04-monitoring.md) | Logs, and what they can and cannot tell you |
@@ -65,6 +88,7 @@ the [quickstart](docs/01-quickstart.md#a-private-repository) shows both.
 | [06 — Services](docs/06-services.md) | A database beside the agent |
 | [07 — Troubleshooting](docs/07-troubleshooting.md) | When it refuses, and why |
 | [08 — Verification](docs/08-verification.md) | What the real run proved, what it fixed, and what is still unproven |
+| [09 — Sessions](docs/09-sessions.md) | Several repositories, several agents, and handing work from one agent to another |
 | [CHANGELOG](CHANGELOG.md) | What changed from version 1, finding by finding |
 | [docs/archive/phase-b](docs/archive/phase-b/README.md) | The first run on a real host: plan, cards, results, logs |
 
