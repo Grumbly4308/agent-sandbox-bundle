@@ -80,8 +80,11 @@ for agent in claude codex opencode; do
 done
 # Only the pinned lines changed: VERSION, the hashes, the date and the three
 # `npm view` lines of each header. claude and codex pin three hashes, opencode four.
+# A header whose date is already today (a pin moved by hand today) has no
+# date line to change.
+dated_today="$(grep -lx "# Values read on $today with" "$scratch"/root.before/agents/*/install.sh | wc -l)"
 changed="$(diff -r "$scratch/root.before" "$fake_root" | grep -c '^>' || true)"
-is "pin-clis: exactly the pinned lines changed" "$changed" "$((3 * 5 + 3 + 3 + 4))"
+is "pin-clis: exactly the pinned lines changed" "$changed" "$((3 * 5 + 3 + 3 + 4 - dated_today))"
 check "pin-clis: asks for latest once per agent" test "$(grep -c 'dist-tags.latest' "$FAKE_NPM_LOG")" -eq 3
 check "pin-clis: asks the registry given" grep -q -- '--registry https://registry.npmjs.org' "$FAKE_NPM_LOG"
 
