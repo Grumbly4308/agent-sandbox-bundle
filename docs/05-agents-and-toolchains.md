@@ -132,8 +132,13 @@ everything installed in it at `/usr/share/sandbox/sbom.json`.
 ./sandbox upgrade
 ```
 
-rebuilds every image from scratch and prints old → new versions. To move a CLI
-to a newer version, change the version and hashes in its `install.sh` first.
+moves each CLI's pin to the version npm calls `latest` (`scripts/pin-clis.sh`
+reads the new version and the integrity of each package from the registry and
+rewrites `install.sh`; `git diff agents` shows what changed), rebuilds every
+image from scratch, and prints old → new versions. `--keep-clis` rebuilds
+from the pins as they are. To pin a version that is not `latest`, change the
+version and hashes in `install.sh` by hand (the top of the file says how) and
+run `./sandbox upgrade --keep-clis`.
 
 Debian packages inside the image are not pinned to a version: the base image
 digest fixes most of them, and the rest are whatever Debian served on the build

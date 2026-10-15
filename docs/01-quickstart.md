@@ -961,12 +961,19 @@ If you still needed a workspace that was not exported, read
 
 ```bash
 cd ~/agent-sandbox
-git checkout -- images/PINS services     # drop this VM's pins; they are made again below
+git checkout -- images/PINS services agents   # drop this VM's pins; they are made again below
 git pull
 scripts/pin-images.sh
-./sandbox upgrade                        # rebuild every image from scratch, and show old -> new versions
+./sandbox upgrade                        # pin each agent CLI to npm's latest, rebuild every image from scratch, show old -> new
 ./sandbox doctor
 ```
+
+`upgrade` moves the CLI pins (version and package hashes in
+`agents/<agent>/install.sh`) to what npm calls `latest`, for the agents whose
+images exist here, then rebuilds. The hashes it writes are what the build
+verifies every tarball against, so `git diff agents` shows exactly what the
+next build will trust. `./sandbox upgrade --keep-clis` rebuilds from the
+pins as they are, without asking the registry.
 
 ## The whole thing, once more
 
@@ -999,7 +1006,7 @@ cd ~/agent-sandbox
 | `./sandbox export [--commit]` | Bring the branch out and review it; `--commit` first commits what the agent left uncommitted |
 | `./sandbox push` / `./sandbox pr` | Send the reviewed branch to the repository |
 | `./sandbox destroy [--all]` | Remove the session, or every session |
-| `./sandbox upgrade` | Rebuild the images from scratch and show old → new versions |
+| `./sandbox upgrade [--keep-clis]` | Pin each agent CLI to npm's latest, rebuild the images from scratch and show old → new versions |
 
 With more than one session, put `SANDBOX_SESSION=<name>` in front of any
 command but `run`. See [09 — Sessions](09-sessions.md).

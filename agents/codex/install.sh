@@ -36,8 +36,10 @@
 #      without lifecycle scripts, and that is what this relies on. The
 #      program is statically linked (musl), so it needs nothing from Debian.
 #
-# To move to a new version: change VERSION, run the three `npm view` commands
-# above for it, replace the three hashes, rebuild.
+# To move to a new version: `./sandbox upgrade` (scripts/pin-clis.sh) asks the
+# registry for the newest version, rewrites VERSION and the three hashes here, and
+# rebuilds. By hand: change VERSION, run the three `npm view` commands above
+# for it, replace the three hashes, rebuild.
 set -euo pipefail
 
 VERSION="0.162.1"

@@ -35,8 +35,10 @@
 #      2026-10-01 ran the native program directly, installed without
 #      lifecycle scripts, and that is what this relies on.
 #
-# To move to a new version: change VERSION, run the three `npm view` commands
-# above for it, replace the four hashes, rebuild.
+# To move to a new version: `./sandbox upgrade` (scripts/pin-clis.sh) asks the
+# registry for the newest version, rewrites VERSION and the four hashes here, and
+# rebuilds. By hand: change VERSION, run the three `npm view` commands above
+# for it, replace the four hashes, rebuild.
 set -euo pipefail
 
 VERSION="1.18.34"

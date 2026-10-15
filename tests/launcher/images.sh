@@ -116,9 +116,45 @@ out="$(FAKE_NPM_LATEST="$(printf '9.9.9\033[2J')" "$ROOT/sandbox" run "$T/src" -
 case "$out" in *"could not ask npm"*) pass "an answer that is not a version is not printed" ;; *) fail "a garbled answer was trusted: $out" ;; esac
 : > "$FAKE_NPM_LOG"
 : > "$log"
-"$ROOT/sandbox" upgrade >/dev/null 2>&1 || fail "upgrade with a pinned CLI failed"
-check "the build asks npm too" test "$(grep -c 'dist-tags.latest' "$FAKE_NPM_LOG")" -eq 1
-rm -f "$ROOT/agents/claude/install.sh" "$T/bin/npm"
+FAKE_NPM_LATEST=2.1.296 "$ROOT/sandbox" upgrade --keep-clis >/dev/null 2>&1 || fail "upgrade --keep-clis with a pinned CLI failed"
+check "upgrade --keep-clis asks npm too" test "$(grep -c 'dist-tags.latest' "$FAKE_NPM_LOG")" -eq 1
+
+# --- upgrade moves the CLI pins first --------------------------------------------
+# scripts/pin-clis.sh stands in: it notes the agents it was given and moves
+# VERSION= to FAKE_PIN_LATEST; `fail` makes it refuse. (The real script is
+# tested in tests/images/test-pin-clis.sh.)
+cat > "$ROOT/scripts/pin-clis.sh" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_PIN_LOG"
+[ "${FAKE_PIN_LATEST:-}" != fail ] || { echo "pin-clis: stand-in refuses" >&2; exit 1; }
+for agent in "$@"; do
+  sed -i.bak "s/^VERSION=.*/VERSION=\"$FAKE_PIN_LATEST\"/" "$SANDBOX_ROOT/agents/$agent/install.sh" && rm -f "$SANDBOX_ROOT/agents/$agent/install.sh.bak"
+  echo "agents/$agent/install.sh: moved to $FAKE_PIN_LATEST"
+done
+EOF
+chmod +x "$ROOT/scripts/pin-clis.sh"
+export FAKE_PIN_LOG="$T/pin.log"
+: > "$FAKE_PIN_LOG"
+: > "$FAKE_NPM_LOG"
+: > "$log"
+out="$(FAKE_PIN_LATEST=2.1.300 FAKE_NPM_LATEST=2.1.300 "$ROOT/sandbox" upgrade 2>&1)" || fail "upgrade failed: $out"
+check "upgrade moves the pins of the agents whose images are here, before building" grep -qx "claude" "$FAKE_PIN_LOG"
+check "the pin was moved" grep -qx 'VERSION="2.1.300"' "$ROOT/agents/claude/install.sh"
+case "$out" in *"moved to 2.1.300"*) pass "upgrade shows what pin-clis did" ;; *) fail "pin-clis's output is missing from: $out" ;; esac
+check "every image is still rebuilt" test "$(grep -c "^build${tab}" "$log")" -eq 3
+check "the build does not ask npm again after the pins were moved" test "$(grep -c 'dist-tags.latest' "$FAKE_NPM_LOG")" -eq 0
+case "$out" in *"npm's latest"*) fail "a stale-pin warning after the pins were moved: $out" ;; *) pass "and does not warn about a stale pin" ;; esac
+: > "$FAKE_PIN_LOG"
+: > "$log"
+"$ROOT/sandbox" upgrade --keep-clis >/dev/null 2>&1 || fail "upgrade --keep-clis failed"
+check "--keep-clis does not run pin-clis" test ! -s "$FAKE_PIN_LOG"
+check "and still rebuilds" test "$(grep -c "^build${tab}" "$log")" -eq 3
+: > "$log"
+out="$(FAKE_PIN_LATEST=fail "$ROOT/sandbox" upgrade 2>&1)" && fail "upgrade carried on after pin-clis refused"
+case "$out" in *"stand-in refuses"*"the CLI pins were not moved"*"--keep-clis"*) pass "a refused pin stops upgrade, with pin-clis's reason and the way round" ;; *) fail "no refusal in: $out" ;; esac
+if grep -q "^build${tab}" "$log"; then fail "upgrade built after pin-clis refused"; else pass "and nothing is built"; fi
+says "upgrade takes no other option" "usage: ./sandbox upgrade [--keep-clis]" "$ROOT/sandbox" upgrade --now
+rm -f "$ROOT/agents/claude/install.sh" "$T/bin/npm" "$ROOT/scripts/pin-clis.sh"
 
 "$ROOT/sandbox" destroy --all >/dev/null 2>&1
 printf 'NODE_BASE=UNPINNED\nALPINE_BASE=UNPINNED\n' > "$ROOT/images/PINS"
