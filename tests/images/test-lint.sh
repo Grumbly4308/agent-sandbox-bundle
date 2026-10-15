@@ -12,6 +12,7 @@ files=(
   "$root/images/agent/make-sbom.sh"
   "$root/scripts/make-seccomp.sh"
   "$root/scripts/pin-images.sh"
+  "$root/scripts/pin-clis.sh"
 )
 for agent in claude codex opencode; do
   files+=("$root/agents/$agent/install.sh" "$root/agents/$agent/launch")

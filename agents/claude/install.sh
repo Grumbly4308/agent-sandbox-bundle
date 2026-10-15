@@ -32,8 +32,10 @@
 #      same tree an ordinary global install produces, which is the layout the
 #      spike of 2026-10-01 ran.
 #
-# To move to a new version: change VERSION, run the three `npm view` commands
-# above for it, replace the three hashes, rebuild.
+# To move to a new version: `./sandbox upgrade` (scripts/pin-clis.sh) asks the
+# registry for the newest version, rewrites VERSION and the three hashes here, and
+# rebuilds. By hand: change VERSION, run the three `npm view` commands above
+# for it, replace the three hashes, rebuild.
 set -euo pipefail
 
 VERSION="2.1.296"

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **`upgrade` moves the CLI pins.** It rebuilt the images from the version
+  and hashes pinned in each `agents/<agent>/install.sh`, so a newer Claude
+  Code or Codex never arrived until someone read three `npm view` outputs
+  into that file by hand. `./sandbox upgrade` now runs `scripts/pin-clis.sh`
+  first: for each agent whose image exists here it asks the registry which
+  version is `latest`, reads the sha512 integrity of every package the
+  install unpacks at that version, rewrites the pin, and then rebuilds. The
+  build still verifies each tarball against what was written, and the script
+  refuses (changing nothing) when the registry cannot be asked, answers
+  something that is not a version or a sha512, or the wrapper package has
+  gained ordinary dependencies that the install would never fetch.
+  `--keep-clis` rebuilds from the pins as they are.
 - **`export --commit` commits on the session branch or not at all.** It
   committed on whatever HEAD named, while export bundles the session branch
   only: an agent that had switched branches or detached HEAD would have had

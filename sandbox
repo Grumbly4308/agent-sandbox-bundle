@@ -88,7 +88,8 @@ usage: ./sandbox <command>
   pr                          push, then open a pull or merge request
   logs [agent|proxy|sidecar|relay|service]
   destroy [--all]             remove the session: containers, networks, workspace
-  upgrade                     rebuild every image from scratch
+  upgrade [--keep-clis]       pin each agent CLI to npm's latest, rebuild every
+                              image from scratch; --keep-clis leaves the pins
 
 Sizes are written 512m or 4g; durations 90m, 4h or 2d. A session has no time
 limit unless --ttl (or TTL in your settings file) gives it one. Defaults live
@@ -1013,7 +1014,7 @@ check_cli_version() {   # <agent>
       warn "could not ask npm which $package is the latest; carrying on with the pinned $version" ;;
     "$version") ;;
     *)
-      warn "agents/$1/install.sh pins $package $version; npm's latest is $latest. To move the pin, follow the top of that file, then ./sandbox upgrade" ;;
+      warn "agents/$1/install.sh pins $package $version; npm's latest is $latest. ./sandbox upgrade moves the pin and rebuilds" ;;
   esac
 }
 
@@ -2382,8 +2383,11 @@ cmd_destroy() {
 # ---------------------------------------------------------------------------
 # upgrade
 # The images are the artifact: nothing updates itself inside a container with
-# a read-only root. This rebuilds each image that exists here from scratch
-# and shows what changed.
+# a read-only root. This moves each agent CLI's pin (version and hashes in
+# agents/<agent>/install.sh) to npm's latest with scripts/pin-clis.sh, then
+# rebuilds each image that exists here from scratch and shows what changed.
+# --keep-clis skips the first step: the images are rebuilt from the pins as
+# they are, which also works without the registry.
 # ---------------------------------------------------------------------------
 
 # The version list inside an image, as "name version" lines (the file holds
@@ -2394,8 +2398,14 @@ image_versions() {   # <tag>
 }
 
 cmd_upgrade() {
-  local tag what whats="" toolchain before after name old new key value
-  [ $# -eq 0 ] || die "usage: ./sandbox upgrade"
+  local tag what whats="" toolchain before after name old new key value keep="" agents=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --keep-clis) keep=1 ;;
+      *) die "usage: ./sandbox upgrade [--keep-clis]" ;;
+    esac
+    shift
+  done
   require_podman
   for tag in $(podman images --format '{{.Repository}}:{{.Tag}}'); do
     case "$tag" in
@@ -2412,6 +2422,20 @@ cmd_upgrade() {
     case " $whats " in *" $what "*) ;; *) whats="$whats $what" ;; esac
   done
   [ -n "$whats" ] || die "there is no agent-sandbox image here yet; ./sandbox run builds what it needs"
+  # The CLI pins of the agents whose images are here (an agent with no
+  # install.sh, or none built yet, is left alone).
+  for what in $whats; do
+    case "$what" in agent-*:*) name="${what#agent-}"; name="${name%%:*}" ;; *) continue ;; esac
+    [ -f "$SANDBOX_ROOT/agents/$name/install.sh" ] || continue
+    case " $agents " in *" $name "*) ;; *) agents="$agents $name" ;; esac
+  done
+  if [ -z "$keep" ] && [ -n "$agents" ]; then
+    # shellcheck disable=SC2086  # a list of agent names
+    "$SANDBOX_ROOT/scripts/pin-clis.sh" $agents \
+      || die "the CLI pins were not moved (see above); nothing was rebuilt. To rebuild from the pins as they are: ./sandbox upgrade --keep-clis"
+    # The pins are npm's latest now; the build need not ask again.
+    CLI_CHECKED="$agents"
+  fi
   for what in $whats; do
     tag="$(image_tag "$what")"
     before="$(image_versions "$tag")"
