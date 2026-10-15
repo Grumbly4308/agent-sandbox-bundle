@@ -32,8 +32,9 @@
 #      same tree an ordinary global install produces, which is the layout the
 #      spike of 2026-10-01 ran.
 #
-# To move to a new version: change VERSION, run the three `npm view` commands
-# above for it, replace the three hashes, rebuild.
+# To move to a new version: scripts/pin-cli.sh claude [version]. It does what the
+# `npm view` lines above describe, replaces VERSION and the three hashes, and
+# runs this file against the new tarballs. Then ./sandbox upgrade rebuilds.
 set -euo pipefail
 
 VERSION="2.1.300"

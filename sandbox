@@ -997,8 +997,8 @@ cli_latest() {   # <npm package>
 }
 
 # Warns when the CLI pinned for <agent> is not npm's latest. Never stops a
-# build or a session: moving a pin means reading new hashes (the top of the
-# plug-in's install.sh says how), which is for you to do, not for run.
+# build or a session: moving a pin means reading new hashes (scripts/pin-cli.sh
+# does it), which is for you to do, not for run.
 CLI_CHECKED=""
 check_cli_version() {   # <agent>
   local pin package version latest
@@ -1013,7 +1013,7 @@ check_cli_version() {   # <agent>
       warn "could not ask npm which $package is the latest; carrying on with the pinned $version" ;;
     "$version") ;;
     *)
-      warn "agents/$1/install.sh pins $package $version; npm's latest is $latest. To move the pin, follow the top of that file, then ./sandbox upgrade" ;;
+      warn "agents/$1/install.sh pins $package $version; npm's latest is $latest. To move the pin: scripts/pin-cli.sh $1, then ./sandbox upgrade" ;;
   esac
 }
 

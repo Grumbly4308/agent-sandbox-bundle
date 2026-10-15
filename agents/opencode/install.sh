@@ -35,8 +35,9 @@
 #      2026-10-01 ran the native program directly, installed without
 #      lifecycle scripts, and that is what this relies on.
 #
-# To move to a new version: change VERSION, run the three `npm view` commands
-# above for it, replace the four hashes, rebuild.
+# To move to a new version: scripts/pin-cli.sh opencode [version]. It does what the
+# `npm view` lines above describe, replaces VERSION and the four hashes, and
+# runs this file against the new tarballs. Then ./sandbox upgrade rebuilds.
 set -euo pipefail
 
 VERSION="1.18.34"

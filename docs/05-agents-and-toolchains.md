@@ -132,8 +132,22 @@ everything installed in it at `/usr/share/sandbox/sbom.json`.
 ./sandbox upgrade
 ```
 
-rebuilds every image from scratch and prints old → new versions. To move a CLI
-to a newer version, change the version and hashes in its `install.sh` first.
+rebuilds every image from scratch and prints old → new versions. It installs
+whatever each `install.sh` pins; it never moves a pin itself. `./sandbox run`
+warns when a pin is behind npm's latest. To move one:
+
+```bash
+scripts/pin-cli.sh claude            # or codex, opencode; add a version to pick one
+git diff                             # VERSION, the hashes, and the version named in the docs
+git commit -am 'Move claude to <version>'
+./sandbox upgrade
+```
+
+The script reads the new version's hashes from the registry, downloads every
+tarball `install.sh` pins and checks it against them, refuses a package that
+has grown ordinary dependencies, rewrites the pins, and runs the tests and
+`install.sh` itself against the downloaded tarballs before you commit. It
+changes files in the working tree only.
 
 Debian packages inside the image are not pinned to a version: the base image
 digest fixes most of them, and the rest are whatever Debian served on the build
