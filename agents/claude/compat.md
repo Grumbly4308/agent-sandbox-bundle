@@ -1,6 +1,6 @@
 # Claude Code: compatibility settings
 
-Claude Code 2.1.296 (`@anthropic-ai/claude-code`, pinned in `install.sh`).
+Claude Code 2.1.300 (`@anthropic-ai/claude-code`, pinned in `install.sh`).
 
 **Nothing on this page is a control.** Every setting below is applied by, or
 readable and changeable by, the agent's own process. They exist so that the

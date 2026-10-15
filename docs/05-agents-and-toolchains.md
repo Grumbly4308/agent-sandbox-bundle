@@ -15,7 +15,7 @@ any particular agent; a fourth one is a fourth directory.
 | `auth.md` | Which credentials this agent may use, and how `./sandbox login` gets them. |
 | `sidecar.json` | What the credential sidecar forwards for this agent: upstream, paths, which request features are allowed. |
 
-Shipped: `claude` (Claude Code 2.1.296), `codex` (Codex CLI 0.162.1),
+Shipped: `claude` (Claude Code 2.1.300), `codex` (Codex CLI 0.162.1),
 `opencode` (OpenCode 1.18.34).
 
 ## Switching agents on one repository

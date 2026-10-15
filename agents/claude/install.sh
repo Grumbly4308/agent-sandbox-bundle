@@ -10,10 +10,10 @@
 #   * the sha512 of each tarball, as npm's registry published it
 #     (`dist.integrity`). A different tarball under the same version number
 #     fails the build.
-# Values read on 2026-10-10 with
-#   npm view @anthropic-ai/claude-code@2.1.296 dist.integrity
-#   npm view @anthropic-ai/claude-code@2.1.296 optionalDependencies dependencies --json
-#   npm view @anthropic-ai/claude-code-linux-<arch>@2.1.296 dist.integrity
+# Values read on 2026-10-14 with
+#   npm view @anthropic-ai/claude-code@2.1.300 dist.integrity
+#   npm view @anthropic-ai/claude-code@2.1.300 optionalDependencies dependencies --json
+#   npm view @anthropic-ai/claude-code-linux-<arch>@2.1.300 dist.integrity
 # The package has no ordinary `dependencies` ({}), so nothing else would be
 # fetched. Its optionalDependencies are eight per-platform packages, each
 # holding one native program; the two for Debian (glibc) Linux are pinned
@@ -38,16 +38,16 @@
 # for it, replace the three hashes, rebuild.
 set -euo pipefail
 
-VERSION="2.1.296"
+VERSION="2.1.300"
 
 WRAPPER_SPEC="@anthropic-ai/claude-code@${VERSION}"
-WRAPPER_INTEGRITY="sha512-OX/k/rpcthMqnFKOWcpNcbiLsMKtAjLOpQNJHlYiDCFUznWCIwdRTyl/p9SdHVrsrzZuPMCNqZjnpakIni6upw=="
+WRAPPER_INTEGRITY="sha512-EOOmbzTxKxiukfV8T7K2+uDIxt8kR1vn+hgLB464HdjH1fZWS+qAc/nY6GYThcbe4kTqQOCFnyOcFKMXOxl+PQ=="
 
 X64_SPEC="@anthropic-ai/claude-code-linux-x64@${VERSION}"
-X64_INTEGRITY="sha512-+m01urgelnI+VJxPaKPEK0wixgq42uZ8PeCaUk5tX/8YoDBvSmC/REVQG2jQfJAr8dxunpjJ600FvLrcj1WWTw=="
+X64_INTEGRITY="sha512-oW4/i4gBd0Y7vqKToK+RaO/fZm4oZWAA81CJ1s0afg+bP+OH9QJdOXKDDwQ9eizcV78a44mQAbce5WYsN18CAw=="
 
 ARM64_SPEC="@anthropic-ai/claude-code-linux-arm64@${VERSION}"
-ARM64_INTEGRITY="sha512-Q6Qh6qFmwuBG9rQFiDR6bY3XkFnwTN9AAPrnnDgBvr9sbg1Ql5wrf0lfoCDiV369EUHOzxI4i5OdHW9Vf2/oeA=="
+ARM64_INTEGRITY="sha512-LGxXJ2ibRUHG4BVUPWG1S7OQ+H6ctf98Jd/d5XByy3/sm2fG6k7u0892Dc1bF+wJYwb0FvOqRKdOtNj+zUCTuA=="
 
 # Where things go. SANDBOX_INSTALL_PREFIX exists only so tests/images/ can
 # exercise this script without being root. Nothing else sets it.
