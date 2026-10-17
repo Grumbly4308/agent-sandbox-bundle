@@ -162,16 +162,26 @@ sandboxes.** The choices, from strongest to weakest:
 |---|---|---|---|---|
 | **No git credential on the host.** Clone on your workstation, send the code over the SSH link you already have, `run` it from the path, pull the exported branch back and push from the workstation. | none | — | nothing | `push` and `pr` are done from the workstation |
 | **`run --git-token`.** A token for one repository with a short expiry, typed at `run`, held in memory, gone at `destroy`. | one repository | the session | one repository, for the session | a token per session or per day |
+| **A read-only deploy token** (GitLab) on the one repository, used to clone on the host; `run` from the path. | one repository, read | until you revoke it | one repository, to read | `push` and `pr` are done from the workstation |
 | **A deploy key** on the one repository, in `~/.ssh` of the sandbox host. | one repository | until you rotate it | one repository | one setup per repository |
 | A personal key, a classic token, `gh auth login` with its default scopes. | everything | years | everything | none, which is the problem |
 
-The first two are described in the [quickstart](01-quickstart.md#15-decide-how-the-work-gets-back-to-github).
+The first three are described in the [quickstart](01-quickstart.md#15-decide-how-the-work-gets-back-to-github).
 For the second, a GitHub fine-grained token with *Contents: read and write* on
 the one repository (and *Pull requests: read and write* if `pr` is to open
-one) and the shortest expiry the form allows is right. Short expiry is the
+one) and the shortest expiry the form allows is right; on GitLab, a project
+access token with `read_repository` and `write_repository`, which the
+launcher presents under the user name `oauth2`. A GitLab deploy token is not
+accepted that way (it has a user name of its own, and cannot push), which is
+why it gets the third row: it clones, and nothing more. Short expiry is the
 control; `destroy` forgetting the token is hygiene. If the agent got out
 during the session, the token was already exposed, and only the server
 refusing it afterwards limits the damage.
+
+Whatever the credential, it never goes into a repository address. `run`
+refuses an `https://user:token@host/...` address, given directly or found in
+a path's `origin`, because the address is recorded with the session, printed,
+and handed to `export`. Git's credential helpers exist for this.
 
 The order of trust is workstation to sandbox host, never back. The host has
 your key in `authorized_keys`; it holds no key to the workstation. **Do not

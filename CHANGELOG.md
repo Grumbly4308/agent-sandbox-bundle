@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Docs: GitLab, and a repository cloned with a deploy token.** The
+  quickstart named a GitLab project access token in one line and said
+  nothing about deploy tokens, which GitLab accepts only under their own user
+  name and which the launcher therefore cannot present: `run --git-token`
+  failed with `HTTP Basic: Access denied`, and the clone made by hand with the
+  token in its address was then refused by `run` for carrying a credential in
+  its `origin`. The quickstart now has option 3 for exactly this (clone with
+  the deploy token on the host, strip it from `origin`, run from the path,
+  push from the workstation), step 18 says what `push` does without a
+  session token, and [07](docs/07-troubleshooting.md) has a row for each of
+  the two messages. [03](docs/03-credentials.md) gains the deploy token as a
+  row in the table of git credentials.
 - **`upgrade` moves the CLI pins.** It rebuilt the images from the version
   and hashes pinned in each `agents/<agent>/install.sh`, so a newer Claude
   Code or Codex never arrived until someone read three `npm view` outputs

@@ -671,8 +671,18 @@ repositories alike.
 7. **Generate token**, and copy it (it starts with `github_pat_`). GitHub
    shows it only once; keep it in your password manager until you are done.
 
-On GitLab: a project access token with the `write_repository` scope, made
-under the project's **Settings → Access tokens**.
+On GitLab: a **project access token** with the `read_repository` and
+`write_repository` scopes and the Developer role, made under the project's
+**Settings → Access tokens**. The launcher presents it under the user name
+`oauth2`, which GitLab accepts for this kind of token.
+
+A GitLab **deploy token** is not the same thing and does not work with
+`--git-token`. GitLab accepts a deploy token only under the user name shown
+beside it (`gitlab+deploy-token-NNN`), which the launcher does not send, so
+the clone fails with `HTTP Basic: Access denied`; and a deploy token is
+usually read-only, so `push` could not use it either way. If a read-only
+deploy token is all you have, use
+[option 3](#option-3-gitlab-with-a-read-only-deploy-token) below.
 
 You will use it in step 16 with `--git-token`.
 
@@ -704,6 +714,38 @@ in both commands: in `--initial-branch=` on the VM and in `git push` here.)
 You will run the session from `~/repos/project.git` in step 16, and fetch the
 result back in step 18.
 
+### Option 3: GitLab, with a read-only deploy token
+
+A deploy token can clone but not push, and `run` cannot present it (option 1
+says why), so use it for one thing only: making the clone, on the VM. The
+session then runs from that path, like option 2, and the work goes back
+through your workstation, like option 2.
+
+**VM, sandboxer.** Clone with the token's user name and the token in the
+address, then take them out of the clone's `origin` again:
+
+```bash
+git clone https://gitlab+deploy-token-NNN:<token>@gitlab.example.com/<group>/<project>.git ~/repos/project
+git -C ~/repos/project remote set-url origin https://gitlab.example.com/<group>/<project>.git
+```
+
+The user name is the one GitLab shows beside the token under the project's
+**Settings → Repository → Deploy tokens**. The second line matters: `run`
+reads the clone's `origin` as the place `push` would send the work, and
+refuses an address with a credential in it (`the repository address has a
+user name or token in it`), because that address is recorded with the
+session, printed, and handed to `export`.
+
+You will run the session from `~/repos/project` in step 16, without
+`--git-token`, and fetch the result back in step 18 as in option 2. To pull
+later changes into that clone, give git the token through a credential
+helper rather than the address: `git -C ~/repos/project config
+credential.helper store`, then `git -C ~/repos/project pull`, and answer the
+prompt once with the deploy token's user name and the token. That writes them
+in clear to `~/.git-credentials` on the VM: a read-only token for one
+repository, which is the weakest thing the VM should ever hold
+([03 — Credentials](03-credentials.md#git-credentials)).
+
 ## 16. Start your first session
 
 **VM, sandboxer.** Start `tmux` first, so the agent keeps running if your SSH
@@ -733,7 +775,13 @@ else:`. Paste the `github_pat_...` token (nothing appears) and press Enter.
 ./sandbox run ~/repos/project.git
 ```
 
-For **Codex** instead of Claude, add `--agent codex` to either line.
+**Option 3** (a GitLab deploy token) is the same, from the clone it made:
+
+```bash
+./sandbox run ~/repos/project
+```
+
+For **Codex** instead of Claude, add `--agent codex` to any of these lines.
 
 What you see, in order:
 
@@ -742,7 +790,9 @@ What you see, in order:
    /var/lib/agent-sandbox-store.`
 2. `cloning ... on this host`. The repository is cloned **on the VM** and
    handed to the sandbox as a single file; the sandbox never sees a git
-   credential.
+   credential. From a path, `Only committed work goes in` first: the clone
+   takes the commits, and whatever is uncommitted in that directory stays
+   there.
 3. **The first time only:** the images are built. Many screens of build
    output, for 10 to 20 minutes. Let it run. Later sessions skip this.
 4. `creating session asb-<project>-<six characters>`. **That is the
@@ -799,7 +849,7 @@ Other options for `run`:
 | `--mem 4g --cpus 2 --pids 512` | Resource limits. |
 | `--workspace-size 10g` | This session's share of the disk store. Default 4 GB. |
 | `--branch <name>` | Work on that branch. If it exists, carry on from it. See [09](09-sessions.md#carrying-on-from-another-agent). |
-| `--git-token` | Option 1 from step 15. |
+| `--git-token` | Option 1 from step 15. Not for a GitLab deploy token (option 3). |
 | `-- <args>` | Everything after `--` goes to the agent unchanged, such as `-- -p "fix the tests"`. |
 
 ## 17. Bring the work out and read it
@@ -842,6 +892,11 @@ git --git-dir ~/agent-sandbox-out/<session>/repo.git show
 `pr` opens the request itself if `gh` (GitHub) or `glab` (GitLab) is
 installed on the VM; otherwise it prints a link to open it in your browser.
 
+Without `--git-token`, `push` still sends the branch to the address `run` was
+given, or to the path's `origin`, but with whatever git credential the VM's
+own environment holds. With none, or with a read-only one (a GitLab deploy
+token), it fails at the remote; use option 2 below instead.
+
 `push` refuses if the secret scan did not pass, if an AI attribution line
 could not be removed from a commit, or if the agent rewrote history below
 where it started. [07 — Troubleshooting](07-troubleshooting.md#export) says
@@ -857,6 +912,17 @@ git push origin FETCH_HEAD:refs/heads/agent/<session>
 
 Then open the pull request on GitHub as usual. (`./sandbox push` and `pr` are
 not used this way.)
+
+**Option 3** (a GitLab deploy token) ends the same way as option 2: fetch the
+exported branch over SSH and push it with your workstation's credential. If
+your clone's remote is called `origin` and points at GitLab:
+
+```bash
+git fetch sandbox:agent-sandbox-out/<session>/repo.git agent/<session>
+git push origin FETCH_HEAD:refs/heads/agent/<session>
+```
+
+Then open the merge request on GitLab.
 
 ## 19. Clean up
 

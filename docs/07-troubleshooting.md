@@ -33,7 +33,9 @@ fixes it.
 | `Podman ... is too old` | 4.4 or newer is needed. Ubuntu 22.04 ships 3.4, Debian 12 ships 4.3. | Use a newer distribution (Ubuntu 24.04, Debian 13, current Fedora), or run the sandbox in a VM (`extras/vm-wrapper/`). |
 | `--git-token is for pushing to an https:// repository` | The token is for where `push` sends the work: the address you gave, or a path's `origin`. A token is presented over HTTPS only; an `ssh` address uses a key, which is the thing `--git-token` exists to avoid, and a path with no `origin` has nowhere to push. | Give the `https://` address of the repository. For a path (such as an earlier session's export), give it an `https://` origin first: `git -C <path> remote add origin https://...`. |
 | `could not clone https://...` with `--git-token` | The token cannot read that repository, or has expired. | Make a fine-grained token with *Contents* read access on that repository, and check its expiry. |
-| `push` says `the session's token is gone` and git asks for a password | The cache forgets the token at the session's time limit, and a reboot ends the cache. | Type the token at git's prompt (user name `x-access-token`), or push from your workstation after pulling the exported branch. |
+| `could not clone https://gitlab...` with `--git-token`, after `HTTP Basic: Access denied` | The token is a GitLab **deploy token**. GitLab accepts one only under the user name shown beside it (`gitlab+deploy-token-NNN`); the launcher sends `oauth2`, which is right for a project or personal access token and wrong for this one. A deploy token is read-only as a rule, so `push` could not use it either. | Make a project access token with the `read_repository` and `write_repository` scopes and use that with `--git-token`; or clone with the deploy token yourself and run from the path ([quickstart, option 3](01-quickstart.md#option-3-gitlab-with-a-read-only-deploy-token)). |
+| `the repository address has a user name or token in it` | For a path, the address is the clone's `origin`, and it still carries the credential the clone was made with (`https://user:token@host/...`). That address is recorded with the session, printed, and handed to `export`, so a credential in it is refused. | Take it out: `git -C <path> remote set-url origin https://<host>/<group>/<project>.git`. Keep the token in a git credential helper if you need it again. |
+| `push` says `the session's token is gone` and git asks for a password | The cache forgets the token at the session's time limit, and a reboot ends the cache. | Type the token at git's prompt (user name `x-access-token` on GitHub, `oauth2` on GitLab), or push from your workstation after pulling the exported branch. |
 | `your subordinate uid range does not reach 61003` | Podman maps container users onto a range of ids your account owns (`/etc/subuid`, `/etc/subgid`); it is too small, or there is none. | First `grep $USER /etc/subuid /etc/subgid`. With no line: add a 65536-wide range that overlaps no other line in those files, such as `sudo usermod --add-subuids 300000-365535 --add-subgids 300000-365535 $USER`. With a line that is too small: remove it first (`--del-subuids`, `--del-subgids`), then add one. Never add a second line. Then `podman system migrate`. |
 | `newuidmap: write to uid_map failed: Invalid argument`, then `invalid internal status, try resetting the pause process` | Your account has two lines in `/etc/subuid` (or `/etc/subgid`) whose ranges overlap, usually one from `useradd` and one added by hand; the kernel refuses an overlapping id map. The `newuidmap` line in the error shows both ranges. | As admin, keep one line per file: `grep $USER /etc/subuid /etc/subgid`, then `sudo usermod --del-subuids <start>-<end> --del-subgids <start>-<end> $USER` for the extra one. Then, as your user, `podman system migrate`. |
 | `images/PINS still has UNPINNED base images` | Base images are pinned by exact version, and the placeholders have not been filled in. | `scripts/pin-images.sh` |
@@ -139,6 +141,14 @@ the session branch first, from `./sandbox shell` or by asking the agent.
 to: `export` writes a reviewed copy to `~/agent-sandbox-out/<session>/repo.git`
 and nothing else. `./sandbox push` is what sends the branch to the address
 `run` was given (or a path's `origin`); `export`'s last lines say where.
+
+**`push` is refused by the remote** (`403`, `not allowed to push`, or
+`Access denied`), and the session had no `--git-token`. `push` then uses
+whatever git credential the host's environment holds for that address, and
+it is read-only or missing: a GitLab deploy token, for one. Fetch the
+exported branch from the host over SSH and push it from where you have a
+credential that can write
+([quickstart, step 18](01-quickstart.md#18-push-it)).
 
 **`push` refuses: `SCAN=not-run`.** gitleaks is not installed on the host.
 Install it and run `./sandbox export` again.
